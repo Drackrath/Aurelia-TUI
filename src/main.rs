@@ -214,6 +214,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             area,
                         );
                     }
+                // DLC overlay floats above everything.
+                if browser.show_dlc {
+                    let area = ui::centered_rect(70, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::dlc::dlc(&browser), area);
                 }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
@@ -312,6 +317,25 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 browser.confirm_uninstall = false;
                             }
                             _ => browser.confirm_uninstall = false,
+                    if browser.show_dlc {
+                        // DLC overlay: navigate and toggle the highlighted DLC.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_dlc(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.dlc_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.dlc_previous(),
+                            KeyCode::Char('e') => {
+                                if let Some(entry) = browser.selected_dlc() {
+                                    let _ = aurelia::set_dlc(entry.app_id as i32, true);
+                                    let _ = browser.refresh_dlc();
+                                }
+                            }
+                            KeyCode::Char('x') => {
+                                if let Some(entry) = browser.selected_dlc() {
+                                    let _ = aurelia::set_dlc(entry.app_id as i32, false);
+                                    let _ = browser.refresh_dlc();
+                                }
+                            }
+                            _ => {}
                         }
                     } else if browser.show_help {
                         // Any key dismisses the help overlay.
@@ -374,6 +398,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     if game.installed {
                                         browser.confirm_uninstall = true;
                                     }
+                            KeyCode::Char('v') => {
+                                if let Some(game) = browser.selected() {
+                                    client.verify(&game)?;
+                            KeyCode::Char('D') => {
+                                if let Some(game) = browser.selected() {
+                                    // Blocking fetch; failure leaves the overlay closed.
+                                    let _ = browser.open_dlc(game.id);
                                 }
                             }
                             KeyCode::Char('f') => {
@@ -587,7 +618,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

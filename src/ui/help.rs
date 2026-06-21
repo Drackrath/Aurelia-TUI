@@ -51,6 +51,8 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("i", "expand / collapse description"));
     lines.push(binding("d", "install / download"));
     lines.push(binding("x", "uninstall game"));
+    lines.push(binding("v", "verify files"));
+    lines.push(binding("D", "manage DLC"));
     lines.push(binding("f", "toggle favourite"));
     lines.push(binding("H", "hide game"));
     lines.push(binding("r", "refresh library"));

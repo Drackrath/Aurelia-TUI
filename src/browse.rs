@@ -9,8 +9,10 @@ use tui::style::Style;
 use tui::widgets::ListState;
 
 use crate::config::Config;
+use crate::interface::aurelia;
 use crate::interface::game::Game;
 use crate::theme;
+use crate::util::error::STError;
 
 /// The quick-filter tabs along the top of the library.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -143,6 +145,14 @@ pub struct Browser {
     pub expand_description: bool,
     /// Whether the uninstall confirmation prompt is open for the selection.
     pub confirm_uninstall: bool,
+    /// Whether the DLC overlay is open.
+    pub show_dlc: bool,
+    /// DLC for the game the overlay was opened for.
+    pub dlc: Vec<aurelia::DlcJson>,
+    /// The highlighted row within the DLC overlay.
+    pub dlc_index: usize,
+    /// The base app id the DLC overlay is showing (for re-fetching after a toggle).
+    dlc_app_id: i32,
 }
 
 impl Browser {
@@ -157,9 +167,69 @@ impl Browser {
             show_help: false,
             expand_description: false,
             confirm_uninstall: false,
+            show_dlc: false,
+            dlc: Vec::new(),
+            dlc_index: 0,
+            dlc_app_id: 0,
         };
         browser.reset_selection();
         browser
+    }
+
+    // --- DLC overlay ---
+
+    /// Fetch the DLC for `app_id` and open the overlay. Blocks on the `aurelia
+    /// dlc` subprocess; the selection resets to the first row.
+    pub fn open_dlc(&mut self, app_id: i32) -> Result<(), STError> {
+        self.dlc = aurelia::dlc(app_id)?;
+        self.dlc_app_id = app_id;
+        self.dlc_index = 0;
+        self.show_dlc = true;
+        Ok(())
+    }
+
+    /// Close the DLC overlay and drop its contents.
+    pub fn close_dlc(&mut self) {
+        self.show_dlc = false;
+        self.dlc.clear();
+        self.dlc_index = 0;
+    }
+
+    /// The highlighted DLC entry, if any.
+    pub fn selected_dlc(&self) -> Option<&aurelia::DlcJson> {
+        self.dlc.get(self.dlc_index)
+    }
+
+    pub fn dlc_next(&mut self) {
+        if self.dlc.is_empty() {
+            self.dlc_index = 0;
+            return;
+        }
+        self.dlc_index = (self.dlc_index + 1) % self.dlc.len();
+    }
+
+    pub fn dlc_previous(&mut self) {
+        if self.dlc.is_empty() {
+            self.dlc_index = 0;
+            return;
+        }
+        self.dlc_index = if self.dlc_index == 0 {
+            self.dlc.len() - 1
+        } else {
+            self.dlc_index - 1
+        };
+    }
+
+    /// Re-fetch the open overlay's DLC after a toggle, keeping the selection in
+    /// range.
+    pub fn refresh_dlc(&mut self) -> Result<(), STError> {
+        self.dlc = aurelia::dlc(self.dlc_app_id)?;
+        if self.dlc.is_empty() {
+            self.dlc_index = 0;
+        } else if self.dlc_index >= self.dlc.len() {
+            self.dlc_index = self.dlc.len() - 1;
+        }
+        Ok(())
     }
 
     /// Toggle the expanded/collapsed state of the description panel.
