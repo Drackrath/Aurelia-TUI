@@ -48,6 +48,7 @@ pub fn help() -> Paragraph<'static> {
 
     lines.push(header("Actions"));
     lines.push(binding("Enter", "launch game"));
+    lines.push(binding("i", "expand / collapse description"));
     lines.push(binding("d", "install / download"));
     lines.push(binding("f", "toggle favourite"));
     lines.push(binding("H", "hide game"));

@@ -93,6 +93,7 @@ active filter/sort, and your account. Press `?` any time for the full key list.
 | `/` | Focus the live fuzzy filter (type to narrow, `Esc` clears) |
 | `s` | Cycle sort (name / installed-first) |
 | `Enter` | Launch the selected game (`aurelia play`) |
+| `i` | Expand / collapse the description panel |
 | `d` | Install / download the selected game |
 | `f` | Toggle the game as a favourite |
 | `H` | Hide the selected game |

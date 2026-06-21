@@ -24,12 +24,31 @@ use aurelia_tui::client::{Client, State};
 use aurelia_tui::config::Config;
 use aurelia_tui::interface::aurelia::LoginPhase;
 
-// why isn't this in stdlib for floats?
-fn min(a: f32, b: f32) -> f32 {
-    if a < b {
-        return a;
+/// Approximate how many rows `text` occupies once word-wrapped to `width`
+/// (matches `Paragraph`'s word wrapping closely enough to size its panel).
+fn wrapped_lines(text: &str, width: u16) -> u16 {
+    if width == 0 {
+        return 1;
     }
-    b
+    let width = width as usize;
+    let mut total: u16 = 0;
+    for paragraph in text.split('\n') {
+        let mut col = 0usize;
+        let mut lines_here: u16 = 1;
+        for word in paragraph.split_whitespace() {
+            let wlen = word.chars().count().max(1);
+            if col == 0 {
+                col = wlen;
+            } else if col + 1 + wlen <= width {
+                col += 1 + wlen;
+            } else {
+                lines_here += 1;
+                col = wlen;
+            }
+        }
+        total = total.saturating_add(lines_here);
+    }
+    total.max(1)
 }
 
 fn entry() -> Result<(), Box<dyn std::error::Error>> {
@@ -102,34 +121,74 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 frame.render_stateful_widget(list_widget, body[0], &mut browser.state);
 
                 let selected = browser.selected();
-                frame.render_widget(ui::detail::detail(selected.as_ref()), body[1]);
+                let right = body[1];
 
-                // Cover art overlaid on the top-right of the detail pane.
+                // Right pane, top to bottom: the cover art (takes all leftover
+                // height), the fixed-height detail table (sized to exactly its
+                // max rows), and the wrapped description sized to its content
+                // (capped at 10 lines unless expanded). Disjoint chunks, so the
+                // art never overlaps the text.
+                let desc_text = selected
+                    .as_ref()
+                    .map(|g| g.get_description())
+                    .unwrap_or_default();
+                let table_h = ui::detail::TABLE_HEIGHT;
+                let desc_h = if desc_text.is_empty() {
+                    0
+                } else {
+                    let cap = if browser.expand_description {
+                        right.height
+                    } else {
+                        10
+                    };
+                    let lines = wrapped_lines(&desc_text, right.width.saturating_sub(2)).min(cap);
+                    (lines + 2).min(right.height.saturating_sub(table_h.min(right.height)))
+                };
+
+                let constraints: Vec<Constraint> = if desc_h > 0 {
+                    vec![
+                        Constraint::Min(0),
+                        Constraint::Length(table_h),
+                        Constraint::Length(desc_h),
+                    ]
+                } else {
+                    vec![Constraint::Min(0), Constraint::Length(table_h)]
+                };
+                let right_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(constraints)
+                    .split(right);
+
+                // Cover panel with the centered, aspect-correct artwork.
+                let cover_area = right_chunks[0];
+                let cover_block = theme::panel("Cover".to_string());
+                let inner = cover_block.inner(cover_area);
+                frame.render_widget(cover_block, cover_area);
                 if let Some(image) = img.clone() {
-                    let right = body[1];
-                    if right.width >= 16 && right.height >= 12 {
-                        let offset_x = right.width + right.x;
-                        let offset_y = right.height + right.y;
-                        let fw = min((offset_x as f32) * 0.6, 160.0);
-                        let fh = min((offset_y as f32) - 10.0, 80.0);
-                        let width = min(fw, fh * 2.0) as u16;
-                        let height = min(fh, fw / 2.0) as u16;
-                        if width > 0 && height > 0 && width <= right.width && height <= right.height
-                        {
-                            let area = Rect {
-                                x: offset_x - width,
-                                y: offset_y - height,
-                                width,
-                                height,
-                            };
-                            frame.render_widget(
-                                Image::with_img(image)
-                                    .color_mode(ColorMode::Rgba)
-                                    .style(Style::default().bg(theme::BG)),
-                                area,
-                            );
-                        }
+                    let h = (inner.width / 2).min(inner.height);
+                    let w = (h * 2).min(inner.width);
+                    if w >= 2 && h >= 1 {
+                        let area = Rect {
+                            x: inner.x + (inner.width - w) / 2,
+                            y: inner.y + (inner.height - h) / 2,
+                            width: w,
+                            height: h,
+                        };
+                        frame.render_widget(
+                            Image::with_img(image)
+                                .color_mode(ColorMode::Rgba)
+                                .style(Style::default().bg(theme::BG)),
+                            area,
+                        );
                     }
+                }
+
+                frame.render_widget(ui::detail::detail(selected.as_ref()), right_chunks[1]);
+                if desc_h > 0 {
+                    frame.render_widget(
+                        ui::detail::description(selected.as_ref(), browser.expand_description),
+                        right_chunks[2],
+                    );
                 }
 
                 frame.render_widget(
@@ -262,6 +321,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('3') => browser.set_filter(Filter::Updates),
                             KeyCode::Char('4') => browser.set_filter(Filter::Favourites),
                             KeyCode::Char('s') => browser.cycle_sort(),
+                            KeyCode::Char('i') => browser.toggle_description(),
                             KeyCode::Down | KeyCode::Char('j') => browser.next(),
                             KeyCode::Up | KeyCode::Char('k') => browser.previous(),
                             KeyCode::Char('g') => browser.home(),

@@ -139,6 +139,8 @@ pub struct Browser {
     pub filtering: bool,
     /// Whether the help overlay is open.
     pub show_help: bool,
+    /// Whether the description panel is expanded beyond its collapsed cap.
+    pub expand_description: bool,
 }
 
 impl Browser {
@@ -151,9 +153,15 @@ impl Browser {
             state: ListState::default(),
             filtering: false,
             show_help: false,
+            expand_description: false,
         };
         browser.reset_selection();
         browser
+    }
+
+    /// Toggle the expanded/collapsed state of the description panel.
+    pub fn toggle_description(&mut self) {
+        self.expand_description = !self.expand_description;
     }
 
     /// Replace the library contents, keeping the current filter/query/sort and a
