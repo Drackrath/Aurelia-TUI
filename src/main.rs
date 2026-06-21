@@ -22,7 +22,7 @@ use aurelia_tui::util::image::ImageSlot;
 use aurelia_tui::app::{App, Mode};
 use aurelia_tui::client::{Client, State};
 use aurelia_tui::config::Config;
-use aurelia_tui::interface::aurelia::LoginPhase;
+use aurelia_tui::interface::aurelia::{self, LoginPhase};
 
 /// Approximate how many rows `text` occupies once word-wrapped to `width`
 /// (matches `Paragraph`'s word wrapping closely enough to size its panel).
@@ -202,6 +202,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::help::help(), area);
                 }
+
+                // DLC overlay floats above everything.
+                if browser.show_dlc {
+                    let area = ui::centered_rect(70, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::dlc::dlc(&browser), area);
+                }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
                 let layout = App::build_layout();
@@ -283,7 +290,27 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Mode::Browse => {
-                    if browser.show_help {
+                    if browser.show_dlc {
+                        // DLC overlay: navigate and toggle the highlighted DLC.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_dlc(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.dlc_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.dlc_previous(),
+                            KeyCode::Char('e') => {
+                                if let Some(entry) = browser.selected_dlc() {
+                                    let _ = aurelia::set_dlc(entry.app_id as i32, true);
+                                    let _ = browser.refresh_dlc();
+                                }
+                            }
+                            KeyCode::Char('x') => {
+                                if let Some(entry) = browser.selected_dlc() {
+                                    let _ = aurelia::set_dlc(entry.app_id as i32, false);
+                                    let _ = browser.refresh_dlc();
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if browser.show_help {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
                     } else if browser.filtering {
@@ -341,6 +368,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('v') => {
                                 if let Some(game) = browser.selected() {
                                     client.verify(&game)?;
+                            KeyCode::Char('D') => {
+                                if let Some(game) = browser.selected() {
+                                    // Blocking fetch; failure leaves the overlay closed.
+                                    let _ = browser.open_dlc(game.id);
                                 }
                             }
                             KeyCode::Char('f') => {
@@ -554,7 +585,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

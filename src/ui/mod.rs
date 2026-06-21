@@ -3,6 +3,7 @@
 //! event loop only has to lay them out.
 
 pub mod detail;
+pub mod dlc;
 pub mod help;
 pub mod list;
 pub mod status;
