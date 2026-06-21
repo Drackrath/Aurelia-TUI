@@ -3,7 +3,9 @@
 //! event loop only has to lay them out.
 
 pub mod account;
+pub mod confirm;
 pub mod detail;
+pub mod dlc;
 pub mod help;
 pub mod list;
 pub mod status;
