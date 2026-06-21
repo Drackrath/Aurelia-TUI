@@ -338,6 +338,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     client.install(&game)?;
                                 }
                             }
+                            KeyCode::Char('v') => {
+                                if let Some(game) = browser.selected() {
+                                    client.verify(&game)?;
+                                }
+                            }
                             KeyCode::Char('f') => {
                                 if let Some(game) = browser.selected() {
                                     if config.favorite_games.contains(&game.id) {
