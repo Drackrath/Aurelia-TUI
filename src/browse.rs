@@ -10,7 +10,6 @@ use tui::widgets::ListState;
 
 use crate::config::Config;
 use crate::interface::aurelia::{self, AccountJson};
-use crate::interface::aurelia;
 use crate::interface::game::Game;
 use crate::theme;
 use crate::util::error::STError;
@@ -301,6 +300,8 @@ impl Browser {
         self.show_cloud = false;
         self.cloud_files.clear();
         self.cloud_status.clear();
+    }
+
     /// Fetch the selected game's achievements (blocking) and open the overlay.
     /// A fetch error simply opens an empty overlay ("No achievements.").
     pub fn open_achievements(&mut self) {
@@ -330,6 +331,8 @@ impl Browser {
     /// Scroll the achievements overlay up by one row (clamped).
     pub fn ach_scroll_up(&mut self) {
         self.ach_scroll = self.ach_scroll.saturating_sub(1);
+    }
+
     /// Fetch the logged-in account (`aurelia account`) and open the overlay.
     /// Blocking; returns the backend error if the call fails.
     pub fn open_account(&mut self) -> Result<(), STError> {

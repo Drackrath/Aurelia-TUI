@@ -216,11 +216,15 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     let area = ui::centered_rect(70, 80, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::cloud::cloud(&browser), area);
+                }
+
                 // Account overlay floats above everything.
                 if browser.show_account {
                     let area = ui::centered_rect(50, 55, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::account::account(&browser), area);
+                }
+
                 // Uninstall confirmation prompt floats above the library.
                 if browser.confirm_uninstall {
                     if let Some(game) = browser.selected() {
@@ -231,6 +235,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             area,
                         );
                     }
+                }
+
                 // DLC overlay floats above everything.
                 if browser.show_dlc {
                     let area = ui::centered_rect(70, 80, frame.size());
@@ -325,15 +331,20 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('s') => {
                                 if let Some(game) = browser.selected() {
                                     browser.sync_cloud(game.id);
-                    if browser.show_achievements {
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if browser.show_achievements {
                         // Achievements overlay: Esc/q close, j/k scroll.
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_achievements(),
                             KeyCode::Down | KeyCode::Char('j') => browser.ach_scroll_down(),
                             KeyCode::Up | KeyCode::Char('k') => browser.ach_scroll_up(),
-                    if browser.confirm_uninstall {
-                        // Uninstall confirmation prompt: y confirms, anything
-                        // else cancels.
+                            _ => {}
+                        }
+                    } else if browser.confirm_uninstall {
+                        // Uninstall confirmation prompt: y confirms, anything else cancels.
                         match input {
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
                                 if let Some(game) = browser.selected() {
@@ -347,7 +358,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 browser.confirm_uninstall = false;
                             }
                             _ => browser.confirm_uninstall = false,
-                    if browser.show_dlc {
+                        }
+                    } else if browser.show_dlc {
                         // DLC overlay: navigate and toggle the highlighted DLC.
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_dlc(),
@@ -437,9 +449,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     if game.installed {
                                         browser.confirm_uninstall = true;
                                     }
+                                }
+                            }
                             KeyCode::Char('v') => {
                                 if let Some(game) = browser.selected() {
                                     client.verify(&game)?;
+                                }
+                            }
                             KeyCode::Char('D') => {
                                 if let Some(game) = browser.selected() {
                                     // Blocking fetch; failure leaves the overlay closed.

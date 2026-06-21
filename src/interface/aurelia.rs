@@ -182,6 +182,8 @@ pub struct AchievementJson {
 
 fn default_true() -> bool {
     true
+}
+
 /// One DLC entry for a base game, from `aurelia dlc <id> --json` (the `dlc`
 /// array). All status fields are nullable in the CLI output (they come from a
 /// best-effort `DlcState` lookup), so each defaults when absent.
@@ -351,6 +353,9 @@ pub fn cloud_list(app_id: i32) -> Result<Vec<CloudFileJson>, STError> {
 /// blocking call and can be slow; errors surface via `run_json`.
 pub fn cloud_sync(app_id: i32) -> Result<(), STError> {
     run_json(&["cloud", "sync", &app_id.to_string()])?;
+    Ok(())
+}
+
 /// Fetch the selected game's achievements with the logged-in user's unlock
 /// state (`aurelia achievements <id> --json`). The CLI wraps the list in an
 /// object (`{ achievements: [...] }`); we unwrap and parse just the array.
@@ -364,6 +369,8 @@ pub fn achievements(app_id: i32) -> Result<Vec<AchievementJson>, STError> {
         return Ok(Vec::new());
     }
     Ok(serde_json::from_value(list)?)
+}
+
 /// Fetch the DLC list for a base game (`aurelia dlc <id> --json`).
 pub fn dlc(app_id: i32) -> Result<Vec<DlcJson>, STError> {
     let value = run_json(&["dlc", &app_id.to_string()])?;
@@ -635,6 +642,8 @@ pub fn install(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
 pub fn uninstall(app_id: i32) -> Result<(), STError> {
     run_json(&["uninstall", &app_id.to_string()])?;
     Ok(())
+}
+
 /// Verify the integrity of a game's files (`aurelia verify <id> --json`),
 /// streaming progress into the shared status cell. Blocks until verification
 /// finishes; intended to be run on a dedicated thread.
