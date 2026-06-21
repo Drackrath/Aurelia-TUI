@@ -365,6 +365,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     client.install(&game)?;
                                 }
                             }
+                            KeyCode::Char('v') => {
+                                if let Some(game) = browser.selected() {
+                                    client.verify(&game)?;
                             KeyCode::Char('D') => {
                                 if let Some(game) = browser.selected() {
                                     // Blocking fetch; failure leaves the overlay closed.
