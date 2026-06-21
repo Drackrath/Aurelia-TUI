@@ -52,6 +52,7 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("d", "install / download"));
     lines.push(binding("f", "toggle favourite"));
     lines.push(binding("H", "hide game"));
+    lines.push(binding("C", "cloud saves"));
     lines.push(binding("r", "refresh library"));
     lines.push(binding("l", "sign in again"));
     lines.push(Spans::from(""));

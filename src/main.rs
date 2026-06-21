@@ -202,6 +202,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::help::help(), area);
                 }
+
+                // Steam Cloud overlay floats above everything.
+                if browser.show_cloud {
+                    let area = ui::centered_rect(70, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::cloud::cloud(&browser), area);
+                }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
                 let layout = App::build_layout();
@@ -283,7 +290,18 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Mode::Browse => {
-                    if browser.show_help {
+                    if browser.show_cloud {
+                        // Steam Cloud overlay: Esc/q close, s syncs and re-fetches.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_cloud(),
+                            KeyCode::Char('s') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.sync_cloud(game.id);
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if browser.show_help {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
                     } else if browser.filtering {
@@ -354,6 +372,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     config.hidden_games.push(game.id);
                                     Config::save(&config)?;
                                     browser.refresh();
+                                }
+                            }
+                            KeyCode::Char('C') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.open_cloud(game.id);
                                 }
                             }
                             _ => {}
@@ -549,7 +572,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_cloud {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

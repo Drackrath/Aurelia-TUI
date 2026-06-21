@@ -9,6 +9,7 @@ use tui::style::Style;
 use tui::widgets::ListState;
 
 use crate::config::Config;
+use crate::interface::aurelia;
 use crate::interface::game::Game;
 use crate::theme;
 
@@ -139,6 +140,12 @@ pub struct Browser {
     pub filtering: bool,
     /// Whether the help overlay is open.
     pub show_help: bool,
+    /// Whether the Steam Cloud overlay is open.
+    pub show_cloud: bool,
+    /// Cloud files for the game the overlay is showing.
+    pub cloud_files: Vec<aurelia::CloudFileJson>,
+    /// A short status line for the cloud overlay (errors, sync progress).
+    pub cloud_status: String,
     /// Whether the description panel is expanded beyond its collapsed cap.
     pub expand_description: bool,
 }
@@ -153,6 +160,9 @@ impl Browser {
             state: ListState::default(),
             filtering: false,
             show_help: false,
+            show_cloud: false,
+            cloud_files: Vec::new(),
+            cloud_status: String::new(),
             expand_description: false,
         };
         browser.reset_selection();
@@ -162,6 +172,47 @@ impl Browser {
     /// Toggle the expanded/collapsed state of the description panel.
     pub fn toggle_description(&mut self) {
         self.expand_description = !self.expand_description;
+    }
+
+    /// Fetch the Steam Cloud file list for `app_id` (blocking) and open the
+    /// overlay. On failure the overlay still opens, showing the error.
+    pub fn open_cloud(&mut self, app_id: i32) {
+        self.show_cloud = true;
+        self.refresh_cloud(app_id);
+    }
+
+    /// Re-fetch the cloud file list for `app_id`, updating the status line.
+    pub fn refresh_cloud(&mut self, app_id: i32) {
+        match aurelia::cloud_list(app_id) {
+            Ok(files) => {
+                self.cloud_files = files;
+                self.cloud_status.clear();
+            }
+            Err(err) => {
+                self.cloud_files.clear();
+                self.cloud_status = format!("Failed: {}", err);
+            }
+        }
+    }
+
+    /// Sync the game's Steam Cloud saves (blocking), then re-fetch the list.
+    pub fn sync_cloud(&mut self, app_id: i32) {
+        self.cloud_status = "syncing...".to_string();
+        if let Err(err) = aurelia::cloud_sync(app_id) {
+            self.cloud_status = format!("Failed: {}", err);
+            return;
+        }
+        self.refresh_cloud(app_id);
+        if self.cloud_status.is_empty() {
+            self.cloud_status = "synced".to_string();
+        }
+    }
+
+    /// Close the Steam Cloud overlay and drop its state.
+    pub fn close_cloud(&mut self) {
+        self.show_cloud = false;
+        self.cloud_files.clear();
+        self.cloud_status.clear();
     }
 
     /// Replace the library contents, keeping the current filter/query/sort and a
