@@ -2,6 +2,7 @@
 //! [`crate::browse::Browser`] state plus the shared [`crate::theme`], so the
 //! event loop only has to lay them out.
 
+pub mod confirm;
 pub mod detail;
 pub mod dlc;
 pub mod help;

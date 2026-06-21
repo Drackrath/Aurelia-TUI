@@ -539,6 +539,12 @@ pub fn install(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
     }
 }
 
+/// Uninstall a game (`aurelia uninstall <id> --json`). The game's Wine prefix /
+/// compat data is left in place (no `--delete-prefix`). Blocks until the CLI
+/// reports the result; the parsed value is ignored beyond error detection.
+pub fn uninstall(app_id: i32) -> Result<(), STError> {
+    run_json(&["uninstall", &app_id.to_string()])?;
+    Ok(())
 /// Verify the integrity of a game's files (`aurelia verify <id> --json`),
 /// streaming progress into the shared status cell. Blocks until verification
 /// finishes; intended to be run on a dedicated thread.

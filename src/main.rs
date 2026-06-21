@@ -23,6 +23,7 @@ use aurelia_tui::app::{App, Mode};
 use aurelia_tui::client::{Client, State};
 use aurelia_tui::config::Config;
 use aurelia_tui::interface::aurelia::{self, LoginPhase};
+use aurelia_tui::util::stateful::Named;
 
 /// Approximate how many rows `text` occupies once word-wrapped to `width`
 /// (matches `Paragraph`'s word wrapping closely enough to size its panel).
@@ -203,6 +204,16 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::help::help(), area);
                 }
 
+                // Uninstall confirmation prompt floats above the library.
+                if browser.confirm_uninstall {
+                    if let Some(game) = browser.selected() {
+                        let area = ui::centered_rect(40, 20, frame.size());
+                        frame.render_widget(Clear, area);
+                        frame.render_widget(
+                            ui::confirm::confirm_uninstall(&game.get_name()),
+                            area,
+                        );
+                    }
                 // DLC overlay floats above everything.
                 if browser.show_dlc {
                     let area = ui::centered_rect(70, 80, frame.size());
@@ -290,6 +301,22 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Mode::Browse => {
+                    if browser.confirm_uninstall {
+                        // Uninstall confirmation prompt: y confirms, anything
+                        // else cancels.
+                        match input {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                if let Some(game) = browser.selected() {
+                                    aurelia::uninstall(game.id)?;
+                                    // Reload the library so the listing reflects
+                                    // the now-uninstalled game (mirrors 'r').
+                                    cached = false;
+                                    app.mode = Mode::Loading;
+                                    client.restart()?;
+                                }
+                                browser.confirm_uninstall = false;
+                            }
+                            _ => browser.confirm_uninstall = false,
                     if browser.show_dlc {
                         // DLC overlay: navigate and toggle the highlighted DLC.
                         match input {
@@ -365,6 +392,12 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     client.install(&game)?;
                                 }
                             }
+                            KeyCode::Char('x') => {
+                                // Only offer uninstall for installed games.
+                                if let Some(game) = browser.selected() {
+                                    if game.installed {
+                                        browser.confirm_uninstall = true;
+                                    }
                             KeyCode::Char('v') => {
                                 if let Some(game) = browser.selected() {
                                     client.verify(&game)?;

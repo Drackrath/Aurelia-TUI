@@ -143,6 +143,8 @@ pub struct Browser {
     pub show_help: bool,
     /// Whether the description panel is expanded beyond its collapsed cap.
     pub expand_description: bool,
+    /// Whether the uninstall confirmation prompt is open for the selection.
+    pub confirm_uninstall: bool,
     /// Whether the DLC overlay is open.
     pub show_dlc: bool,
     /// DLC for the game the overlay was opened for.
@@ -164,6 +166,7 @@ impl Browser {
             filtering: false,
             show_help: false,
             expand_description: false,
+            confirm_uninstall: false,
             show_dlc: false,
             dlc: Vec::new(),
             dlc_index: 0,
