@@ -5,7 +5,7 @@ library — powered by the [`aurelia`](https://crates.io/crates/aurelia)
 command-line Steam launcher.
 
 <p align="center">
-  <img width="600" alt="Example of aurelia-tui in action" src="screenshot.png">
+  <img width="600" alt="Example of aurelia-tui in action" src="assets/screenshot_1.png">
 </p>
 
 ## About
