@@ -204,6 +204,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::help::help(), area);
                 }
 
+                // Account overlay floats above everything.
+                if browser.show_account {
+                    let area = ui::centered_rect(50, 55, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::account::account(&browser), area);
                 // Uninstall confirmation prompt floats above the library.
                 if browser.confirm_uninstall {
                     if let Some(game) = browser.selected() {
@@ -340,6 +345,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     } else if browser.show_help {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
+                    } else if browser.show_account {
+                        // Any key dismisses the account overlay.
+                        browser.show_account = false;
                     } else if browser.filtering {
                         // Live text filter focused: typing edits the query.
                         match input {
@@ -358,6 +366,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         match input {
                             KeyCode::Char('q') => break,
                             KeyCode::Char('?') => browser.show_help = true,
+                            KeyCode::Char('A') => {
+                                // Fetch the account (blocking) and open the overlay;
+                                // ignore failures so a missing session is non-fatal.
+                                let _ = browser.open_account();
+                            }
                             KeyCode::Char('/') => browser.filtering = true,
                             KeyCode::Char('l') => {
                                 app.mode = Mode::Login;
@@ -618,7 +631,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account{
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

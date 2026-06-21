@@ -69,6 +69,25 @@ pub struct HealthJson {
     pub daemon: bool,
 }
 
+/// The logged-in Steam account, from `aurelia account --json`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccountJson {
+    #[serde(default)]
+    pub steam_id: u64,
+    #[serde(default)]
+    pub account_name: String,
+    #[serde(default)]
+    pub country: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub email_validated: bool,
+    #[serde(default)]
+    pub authed_machines: u32,
+    #[serde(default)]
+    pub vac_bans: u32,
+}
+
 /// Artwork URLs injected by `aurelia list --json`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AssetsJson {
@@ -259,6 +278,12 @@ fn run_json(args: &[&str]) -> Result<serde_json::Value, STError> {
 /// Report whether a Steam session is currently authenticated.
 pub fn health() -> Result<HealthJson, STError> {
     let value = run_json(&["login", "--health"])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Fetch the logged-in Steam account (`aurelia account --json`).
+pub fn account() -> Result<AccountJson, STError> {
+    let value = run_json(&["account"])?;
     Ok(serde_json::from_value(value)?)
 }
 
