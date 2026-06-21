@@ -128,6 +128,31 @@ pub struct InfoJson {
     pub reviews: Option<String>,
 }
 
+/// One achievement entry from `aurelia achievements <id> --json` (an item of
+/// the response's `achievements` array). Only the fields the TUI surfaces are
+/// captured; key names match the CLI's `--json` output. Everything is
+/// `#[serde(default)]` so a missing field never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AchievementJson {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// Whether the logged-in user has unlocked this achievement.
+    #[serde(default)]
+    pub unlocked: bool,
+    /// Whether the achievement is visible (false = hidden until unlocked).
+    #[serde(default = "default_true")]
+    pub visible: bool,
+    /// Global unlock rate across all players, as a percentage (rarity).
+    #[serde(default)]
+    pub rarity: f32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// A `qr_challenge` event line from `aurelia login --qr --json` (emitted on
 /// stderr, re-emitted whenever Steam rotates the code).
 #[derive(Debug, Deserialize)]
@@ -223,6 +248,21 @@ pub fn fetch_library() -> Result<Vec<LibraryGameJson>, STError> {
 pub fn fetch_info(id: i32) -> Result<InfoJson, STError> {
     let value = run_json(&["info", &id.to_string()])?;
     Ok(serde_json::from_value(value)?)
+}
+
+/// Fetch the selected game's achievements with the logged-in user's unlock
+/// state (`aurelia achievements <id> --json`). The CLI wraps the list in an
+/// object (`{ achievements: [...] }`); we unwrap and parse just the array.
+pub fn achievements(app_id: i32) -> Result<Vec<AchievementJson>, STError> {
+    let value = run_json(&["achievements", &app_id.to_string()])?;
+    let list = value
+        .get("achievements")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
 }
 
 /// Log in by QR code (`aurelia login --qr --json`), publishing each challenge
