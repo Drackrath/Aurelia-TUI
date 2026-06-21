@@ -141,6 +141,8 @@ pub struct Browser {
     pub show_help: bool,
     /// Whether the description panel is expanded beyond its collapsed cap.
     pub expand_description: bool,
+    /// Whether the uninstall confirmation prompt is open for the selection.
+    pub confirm_uninstall: bool,
 }
 
 impl Browser {
@@ -154,6 +156,7 @@ impl Browser {
             filtering: false,
             show_help: false,
             expand_description: false,
+            confirm_uninstall: false,
         };
         browser.reset_selection();
         browser
