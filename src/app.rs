@@ -4,14 +4,15 @@ use crate::util::stateful::{Named, StatefulList};
 
 use crate::config::Config;
 use crate::interface::game::Game;
+use crate::theme;
 
 use pretty_bytes::converter::convert;
 
 use tui::{
     layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Span, Spans},
-    widgets::{Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table},
+    widgets::{Cell, List, ListItem, Paragraph, Row, Table},
 };
 
 const SPLASH: &str = include_str!("../assets/splash.txt");
@@ -118,14 +119,9 @@ impl App {
 
     fn build_infobox(title: String, content: String, alignment: Alignment) -> Paragraph<'static> {
         Paragraph::new(content)
-            .style(Style::default())
+            .style(theme::base())
             .alignment(alignment)
-            .block(
-                Block::default()
-                    .borders(Borders::all())
-                    .title(title)
-                    .border_type(BorderType::Plain),
-            )
+            .block(theme::panel(title))
     }
     pub fn build_query(query: String) -> Paragraph<'static> {
         App::build_infobox(
@@ -248,12 +244,9 @@ impl App {
         Paragraph::new(body)
             .style(Style::default().fg(Color::Black).bg(Color::White))
             .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::all())
-                    .title("Scan to sign in ([Esc] cancel, [q] quit)")
-                    .border_type(BorderType::Plain),
-            )
+            .block(theme::panel(
+                "Scan to sign in ([Esc] cancel, [q] quit)".to_string(),
+            ))
     }
 
     /// Render a challenge URL as a terminal QR code (black modules on white).
@@ -302,36 +295,34 @@ impl App {
         highlight: Color,
         game_list: &StatefulList<Game>,
     ) -> (List<'a>, Table<'a>) {
-        let games = Block::default()
-            .borders(Borders::ALL)
-            .title("Games")
-            .border_type(BorderType::Plain);
+        let games = theme::panel("Games".to_string());
 
         let items: Vec<_> = game_list
             .activated()
             .iter()
             .map(|game| {
-                let modifier = {
+                let style = {
                     if let Some(status) = game.get_status() {
-                        if status.state == "uninstalled" || status.state.contains("Failed") {
-                            Modifier::DIM
+                        if status.state.contains("Failed") {
+                            theme::item_failed()
+                        } else if status.state == "uninstalled" {
+                            theme::item_muted()
+                        } else if status.state.contains("update") {
+                            theme::item_update()
                         } else {
-                            Modifier::BOLD
+                            theme::item_installed()
                         }
                     } else {
-                        Modifier::DIM
+                        theme::item_muted()
                     }
                 };
-                ListItem::new(Spans::from(vec![Span::styled(
-                    game.get_name(),
-                    Style::default().add_modifier(modifier),
-                )]))
+                ListItem::new(Spans::from(vec![Span::styled(game.get_name(), style)]))
             })
             .collect();
 
         let list = List::new(items)
             .block(games)
-            .highlight_style(Style::default().bg(highlight).add_modifier(Modifier::BOLD));
+            .highlight_style(theme::selection(highlight));
 
         let details = match game_list.selected() {
             Some(selected) => {
@@ -342,18 +333,12 @@ impl App {
                 // Construct table head (id, name)
                 let mut table = vec![
                     Row::new(vec![
-                        Cell::from(Span::styled(
-                            "ID",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(Span::styled(
-                            "Name",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        )),
+                        Cell::from(Span::styled("ID", theme::label())),
+                        Cell::from(Span::styled("Name", theme::label())),
                     ]),
                     Row::new(vec![
-                        Cell::from(Span::raw(selected.id.to_string())),
-                        Cell::from(Span::raw(selected.get_name())),
+                        Cell::from(Span::styled(selected.id.to_string(), theme::value())),
+                        Cell::from(Span::styled(selected.get_name(), theme::value())),
                     ]),
                     spacer.clone(),
                 ];
@@ -375,11 +360,8 @@ impl App {
                 }
                 for &(heading, value) in &detail_rows {
                     table.push(Row::new(vec![
-                        Cell::from(Span::styled(
-                            heading,
-                            Style::default().add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(Span::raw(value.clone())),
+                        Cell::from(Span::styled(heading, theme::label())),
+                        Cell::from(Span::styled(value.clone(), theme::value())),
                     ]));
                 }
                 if let Some(status) = selected.get_status() {
@@ -390,26 +372,22 @@ impl App {
                         ("Size", &convert(status.size)),
                     ] {
                         table.push(Row::new(vec![
-                            Cell::from(Span::styled(
-                                heading,
-                                Style::default().add_modifier(Modifier::BOLD),
-                            )),
-                            Cell::from(Span::raw(value.clone())),
+                            Cell::from(Span::styled(heading, theme::label())),
+                            Cell::from(Span::styled(value.clone(), theme::value())),
                         ]));
                     }
                 }
                 Table::new(table)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("Detail")
-                            .border_type(BorderType::Plain),
-                    )
+                    .style(theme::base())
+                    .block(theme::panel("Detail".to_string()))
                     .widths(&[Constraint::Percentage(15), Constraint::Percentage(85)])
             }
-            None => Table::new(vec![Row::new(vec![Cell::from(Span::raw(
+            None => Table::new(vec![Row::new(vec![Cell::from(Span::styled(
                 "No game selected...".to_string(),
-            ))])]),
+                theme::value(),
+            ))])])
+            .style(theme::base())
+            .block(theme::panel("Detail".to_string())),
         };
         (list, details)
     }

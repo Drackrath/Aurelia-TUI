@@ -9,6 +9,8 @@ use std::sync::RwLock;
 
 use tui::style::Color;
 
+use crate::theme;
+
 /// Process-wide cache of the parsed config. `Config::new`/`save` keep it in sync.
 /// Avoids a `config.json` disk read + JSON parse on every `get_name`/`is_valid`
 /// call (which the list filter runs for every game, several times per keypress).
@@ -30,7 +32,7 @@ impl Default for Config {
             hidden_games: vec![],
             favorite_games: vec![],
             allowed_games: vec![GameType::Game, GameType::DLC],
-            highlight: Color::Green,
+            highlight: theme::ACCENT,
         }
     }
 }

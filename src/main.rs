@@ -5,13 +5,13 @@ use std::io;
 use crossterm::event::KeyCode;
 
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use tui::style::{Color, Style};
+use tui::style::Style;
+use tui::widgets::Block;
 use tui::{backend::CrosstermBackend, layout::Rect, Terminal};
-
-use terminal_light::background_color;
 
 use tui_image_rgba_updated::{ColorMode, Image};
 
+use aurelia_tui::theme;
 use aurelia_tui::util::event::{Event, Events};
 use aurelia_tui::util::image as artwork;
 use aurelia_tui::util::image::ImageSlot;
@@ -37,11 +37,6 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
     #[allow(unused)]
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
-    let terminal_bg = background_color()
-        .map(|c| c.rgb())
-        .map(|c| Color::Rgb(c.r, c.g, c.b))
-        .unwrap_or(Color::Gray);
 
     terminal.clear()?;
     terminal.draw(|frame| {
@@ -82,6 +77,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         terminal.draw(|frame| {
+            frame.render_widget(Block::default().style(theme::canvas()), frame.size());
             let layout = App::build_layout();
             let placement = layout.split(frame.size());
             let help = match app.mode {
@@ -188,7 +184,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         frame.render_widget(
                             Image::with_img(image)
                                 .color_mode(ColorMode::Rgba)
-                                .style(Style::default().bg(terminal_bg)),
+                                .style(Style::default().bg(theme::BG)),
                             image_placement[0],
                         )
                     }
