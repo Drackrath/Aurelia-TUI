@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      # The `aurelia` backend is invoked at runtime as a subprocess, so the unit
+      # tests need no external binary. The end-to-end tests in
+      # tests/aurelia_integration.rs are #[ignore]d (they require a real
+      # `aurelia` CLI and an authenticated session) and are skipped here.
+      run: cargo test --verbose

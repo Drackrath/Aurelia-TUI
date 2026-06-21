@@ -1,0 +1,38 @@
+[package]
+name = "aurelia-tui"
+version = "0.1.0"
+description = "TUI client for the Aurelia Steam CLI."
+readme = "README.md"
+license = "GPL-3.0"
+repository = "https://github.com/Drackrath/Aurelia-TUI"
+keywords = ["tui", "steam", "aurelia", "gaming"]
+categories = ["command-line-utilities"]
+edition = "2024"
+
+[dependencies]
+pretty-bytes = "0.2.2"
+shellexpand = "2.1.0"
+
+serde_json = "1.0"
+serde = {version = "1.0", features = ["derive"] }
+
+crossterm = { version = "0.25"}
+tui = { version = "0.18", default-features = false, features = ['crossterm', 'serde'] }
+terminal-light = "1.0.0"
+
+fuzzy-matcher = "0.3.7"
+
+# Render the Steam login QR challenge as terminal blocks on the login page.
+qrcode = { version = "0.14", default-features = false }
+
+# Use rustls rather than the OS-native TLS backend: schannel 0.1.20 (pulled in
+# by native-tls on Windows) triggers an undefined-behaviour abort under newer
+# rustc's runtime checks during the TLS handshake.
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+atty = "0.2"
+
+image = "0.24"
+
+[dependencies.tui-image-rgba-updated]
+version = "0.2.2"
