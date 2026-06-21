@@ -69,6 +69,25 @@ pub struct HealthJson {
     pub daemon: bool,
 }
 
+/// The logged-in Steam account, from `aurelia account --json`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccountJson {
+    #[serde(default)]
+    pub steam_id: u64,
+    #[serde(default)]
+    pub account_name: String,
+    #[serde(default)]
+    pub country: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub email_validated: bool,
+    #[serde(default)]
+    pub authed_machines: u32,
+    #[serde(default)]
+    pub vac_bans: u32,
+}
+
 /// Artwork URLs injected by `aurelia list --json`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AssetsJson {
@@ -138,6 +157,78 @@ pub struct InfoJson {
     pub description: String,
     #[serde(default)]
     pub reviews: Option<String>,
+}
+
+/// One achievement entry from `aurelia achievements <id> --json` (an item of
+/// the response's `achievements` array). Only the fields the TUI surfaces are
+/// captured; key names match the CLI's `--json` output. Everything is
+/// `#[serde(default)]` so a missing field never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AchievementJson {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// Whether the logged-in user has unlocked this achievement.
+    #[serde(default)]
+    pub unlocked: bool,
+    /// Whether the achievement is visible (false = hidden until unlocked).
+    #[serde(default = "default_true")]
+    pub visible: bool,
+    /// Global unlock rate across all players, as a percentage (rarity).
+    #[serde(default)]
+    pub rarity: f32,
+}
+
+fn default_true() -> bool {
+    true
+/// One DLC entry for a base game, from `aurelia dlc <id> --json` (the `dlc`
+/// array). All status fields are nullable in the CLI output (they come from a
+/// best-effort `DlcState` lookup), so each defaults when absent.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DlcJson {
+    #[serde(default)]
+    pub app_id: u32,
+    #[serde(default)]
+    pub name: Option<String>,
+    // The CLI emits these as `bool` or `null` (a best-effort `DlcState` lookup),
+    // so deserialize as `Option<bool>` and expose a defaulted view via helpers.
+    #[serde(default)]
+    pub owned: Option<bool>,
+    #[serde(default)]
+    pub installed: Option<bool>,
+    #[serde(default)]
+    pub disabled: Option<bool>,
+}
+
+impl DlcJson {
+    /// Display name, falling back to the app id when the store name is missing.
+    pub fn display_name(&self) -> String {
+        self.name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| format!("App {}", self.app_id))
+    }
+
+    pub fn is_owned(&self) -> bool {
+        self.owned.unwrap_or(false)
+    }
+
+    pub fn is_installed(&self) -> bool {
+        self.installed.unwrap_or(false)
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        self.disabled.unwrap_or(false)
+    }
+}
+
+/// The top-level object from `aurelia dlc <id> --json`: the base app id plus its
+/// DLC list. Only the `dlc` array is surfaced.
+#[derive(Debug, Clone, Deserialize)]
+struct DlcResponse {
+    #[serde(default)]
+    dlc: Vec<DlcJson>,
 }
 
 /// A `qr_challenge` event line from `aurelia login --qr --json` (emitted on
@@ -225,6 +316,12 @@ pub fn health() -> Result<HealthJson, STError> {
     Ok(serde_json::from_value(value)?)
 }
 
+/// Fetch the logged-in Steam account (`aurelia account --json`).
+pub fn account() -> Result<AccountJson, STError> {
+    let value = run_json(&["account"])?;
+    Ok(serde_json::from_value(value)?)
+}
+
 /// Fetch the full library (`aurelia list --json`).
 pub fn fetch_library() -> Result<Vec<LibraryGameJson>, STError> {
     let value = run_json(&["list"])?;
@@ -254,6 +351,31 @@ pub fn cloud_list(app_id: i32) -> Result<Vec<CloudFileJson>, STError> {
 /// blocking call and can be slow; errors surface via `run_json`.
 pub fn cloud_sync(app_id: i32) -> Result<(), STError> {
     run_json(&["cloud", "sync", &app_id.to_string()])?;
+/// Fetch the selected game's achievements with the logged-in user's unlock
+/// state (`aurelia achievements <id> --json`). The CLI wraps the list in an
+/// object (`{ achievements: [...] }`); we unwrap and parse just the array.
+pub fn achievements(app_id: i32) -> Result<Vec<AchievementJson>, STError> {
+    let value = run_json(&["achievements", &app_id.to_string()])?;
+    let list = value
+        .get("achievements")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
+/// Fetch the DLC list for a base game (`aurelia dlc <id> --json`).
+pub fn dlc(app_id: i32) -> Result<Vec<DlcJson>, STError> {
+    let value = run_json(&["dlc", &app_id.to_string()])?;
+    let parsed: DlcResponse = serde_json::from_value(value)?;
+    Ok(parsed.dlc)
+}
+
+/// Enable or disable a single DLC (`aurelia enable|disable <id> --json`). The
+/// returned value is ignored; only errors are propagated.
+pub fn set_dlc(app_id: i32, enable: bool) -> Result<(), STError> {
+    let verb = if enable { "enable" } else { "disable" };
+    run_json(&[verb, &app_id.to_string()])?;
     Ok(())
 }
 
@@ -504,6 +626,80 @@ pub fn install(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
         }
         // No parseable result line: fall back on the exit status we already waited on.
         Err(_) => set_status(&status, "Installed!"),
+    }
+}
+
+/// Uninstall a game (`aurelia uninstall <id> --json`). The game's Wine prefix /
+/// compat data is left in place (no `--delete-prefix`). Blocks until the CLI
+/// reports the result; the parsed value is ignored beyond error detection.
+pub fn uninstall(app_id: i32) -> Result<(), STError> {
+    run_json(&["uninstall", &app_id.to_string()])?;
+    Ok(())
+/// Verify the integrity of a game's files (`aurelia verify <id> --json`),
+/// streaming progress into the shared status cell. Blocks until verification
+/// finishes; intended to be run on a dedicated thread.
+pub fn verify(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
+    set_status(&status, "processing...");
+
+    let spawned = process::Command::new(bin())
+        .args(["verify", &id.to_string(), "--json"])
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn();
+
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(err) => {
+            set_status(&status, &format!("Failed: {}", err));
+            log!("Failed to spawn aurelia verify", id, err);
+            return;
+        }
+    };
+
+    // Drain stdout (the small terminal result object) on a helper thread so the
+    // child never blocks writing it while we consume the larger stderr stream.
+    let stdout = child.stdout.take();
+    let result_handle = thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(mut out) = stdout {
+            let _ = out.read_to_string(&mut buf);
+        }
+        buf
+    });
+
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<ProgressJson>(line) {
+                if event.event.as_deref() == Some("progress") {
+                    set_status(
+                        &status,
+                        &format!("verifying {:.1}%", event.percent.unwrap_or(0.0)),
+                    );
+                }
+            }
+        }
+    }
+
+    let result = result_handle.join().unwrap_or_default();
+    let _ = child.wait();
+
+    match serde_json::from_str::<serde_json::Value>(result.trim()) {
+        Ok(value) => {
+            if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+                set_status(&status, &format!("Failed: {}", err));
+            } else if value.get("status").and_then(|s| s.as_str()) == Some("verified") {
+                set_status(&status, "verified");
+            } else {
+                set_status(&status, "done");
+            }
+        }
+        // No parseable result line: fall back on the exit status we already waited on.
+        Err(_) => set_status(&status, "verified"),
     }
 }
 

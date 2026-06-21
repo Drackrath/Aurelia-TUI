@@ -22,7 +22,8 @@ use aurelia_tui::util::image::ImageSlot;
 use aurelia_tui::app::{App, Mode};
 use aurelia_tui::client::{Client, State};
 use aurelia_tui::config::Config;
-use aurelia_tui::interface::aurelia::LoginPhase;
+use aurelia_tui::interface::aurelia::{self, LoginPhase};
+use aurelia_tui::util::stateful::Named;
 
 /// Approximate how many rows `text` occupies once word-wrapped to `width`
 /// (matches `Paragraph`'s word wrapping closely enough to size its panel).
@@ -196,6 +197,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     chunks[2],
                 );
 
+                // Achievements overlay floats above everything.
+                if browser.show_achievements {
+                    let area = ui::centered_rect(72, 82, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::achievements::achievements(&browser), area);
+                }
+
                 // Help overlay floats above everything.
                 if browser.show_help {
                     let area = ui::centered_rect(64, 84, frame.size());
@@ -208,6 +216,26 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     let area = ui::centered_rect(70, 80, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::cloud::cloud(&browser), area);
+                // Account overlay floats above everything.
+                if browser.show_account {
+                    let area = ui::centered_rect(50, 55, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::account::account(&browser), area);
+                // Uninstall confirmation prompt floats above the library.
+                if browser.confirm_uninstall {
+                    if let Some(game) = browser.selected() {
+                        let area = ui::centered_rect(40, 20, frame.size());
+                        frame.render_widget(Clear, area);
+                        frame.render_widget(
+                            ui::confirm::confirm_uninstall(&game.get_name()),
+                            area,
+                        );
+                    }
+                // DLC overlay floats above everything.
+                if browser.show_dlc {
+                    let area = ui::centered_rect(70, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::dlc::dlc(&browser), area);
                 }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
@@ -297,6 +325,44 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('s') => {
                                 if let Some(game) = browser.selected() {
                                     browser.sync_cloud(game.id);
+                    if browser.show_achievements {
+                        // Achievements overlay: Esc/q close, j/k scroll.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_achievements(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.ach_scroll_down(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.ach_scroll_up(),
+                    if browser.confirm_uninstall {
+                        // Uninstall confirmation prompt: y confirms, anything
+                        // else cancels.
+                        match input {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                if let Some(game) = browser.selected() {
+                                    aurelia::uninstall(game.id)?;
+                                    // Reload the library so the listing reflects
+                                    // the now-uninstalled game (mirrors 'r').
+                                    cached = false;
+                                    app.mode = Mode::Loading;
+                                    client.restart()?;
+                                }
+                                browser.confirm_uninstall = false;
+                            }
+                            _ => browser.confirm_uninstall = false,
+                    if browser.show_dlc {
+                        // DLC overlay: navigate and toggle the highlighted DLC.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_dlc(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.dlc_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.dlc_previous(),
+                            KeyCode::Char('e') => {
+                                if let Some(entry) = browser.selected_dlc() {
+                                    let _ = aurelia::set_dlc(entry.app_id as i32, true);
+                                    let _ = browser.refresh_dlc();
+                                }
+                            }
+                            KeyCode::Char('x') => {
+                                if let Some(entry) = browser.selected_dlc() {
+                                    let _ = aurelia::set_dlc(entry.app_id as i32, false);
+                                    let _ = browser.refresh_dlc();
                                 }
                             }
                             _ => {}
@@ -304,6 +370,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     } else if browser.show_help {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
+                    } else if browser.show_account {
+                        // Any key dismisses the account overlay.
+                        browser.show_account = false;
                     } else if browser.filtering {
                         // Live text filter focused: typing edits the query.
                         match input {
@@ -322,6 +391,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         match input {
                             KeyCode::Char('q') => break,
                             KeyCode::Char('?') => browser.show_help = true,
+                            KeyCode::Char('A') => {
+                                // Fetch the account (blocking) and open the overlay;
+                                // ignore failures so a missing session is non-fatal.
+                                let _ = browser.open_account();
+                            }
                             KeyCode::Char('/') => browser.filtering = true,
                             KeyCode::Char('l') => {
                                 app.mode = Mode::Login;
@@ -339,6 +413,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('3') => browser.set_filter(Filter::Updates),
                             KeyCode::Char('4') => browser.set_filter(Filter::Favourites),
                             KeyCode::Char('s') => browser.cycle_sort(),
+                            KeyCode::Char('a') => browser.open_achievements(),
                             KeyCode::Char('i') => browser.toggle_description(),
                             KeyCode::Down | KeyCode::Char('j') => browser.next(),
                             KeyCode::Up | KeyCode::Char('k') => browser.previous(),
@@ -354,6 +429,21 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('d') => {
                                 if let Some(game) = browser.selected() {
                                     client.install(&game)?;
+                                }
+                            }
+                            KeyCode::Char('x') => {
+                                // Only offer uninstall for installed games.
+                                if let Some(game) = browser.selected() {
+                                    if game.installed {
+                                        browser.confirm_uninstall = true;
+                                    }
+                            KeyCode::Char('v') => {
+                                if let Some(game) = browser.selected() {
+                                    client.verify(&game)?;
+                            KeyCode::Char('D') => {
+                                if let Some(game) = browser.selected() {
+                                    // Blocking fetch; failure leaves the overlay closed.
+                                    let _ = browser.open_dlc(game.id);
                                 }
                             }
                             KeyCode::Char('f') => {
@@ -572,7 +662,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_cloud {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

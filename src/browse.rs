@@ -9,9 +9,11 @@ use tui::style::Style;
 use tui::widgets::ListState;
 
 use crate::config::Config;
+use crate::interface::aurelia::{self, AccountJson};
 use crate::interface::aurelia;
 use crate::interface::game::Game;
 use crate::theme;
+use crate::util::error::STError;
 
 /// The quick-filter tabs along the top of the library.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -146,8 +148,28 @@ pub struct Browser {
     pub cloud_files: Vec<aurelia::CloudFileJson>,
     /// A short status line for the cloud overlay (errors, sync progress).
     pub cloud_status: String,
+    /// Whether the account overlay is open.
+    pub show_account: bool,
+    /// The fetched account details, shown by the account overlay.
+    pub account_info: Option<AccountJson>,
     /// Whether the description panel is expanded beyond its collapsed cap.
     pub expand_description: bool,
+    /// Whether the achievements overlay is open.
+    pub show_achievements: bool,
+    /// The selected game's achievements (loaded when the overlay opens).
+    pub achievements: Vec<aurelia::AchievementJson>,
+    /// Scroll offset (top row) within the achievements overlay.
+    pub ach_scroll: usize,
+    /// Whether the uninstall confirmation prompt is open for the selection.
+    pub confirm_uninstall: bool,
+    /// Whether the DLC overlay is open.
+    pub show_dlc: bool,
+    /// DLC for the game the overlay was opened for.
+    pub dlc: Vec<aurelia::DlcJson>,
+    /// The highlighted row within the DLC overlay.
+    pub dlc_index: usize,
+    /// The base app id the DLC overlay is showing (for re-fetching after a toggle).
+    dlc_app_id: i32,
 }
 
 impl Browser {
@@ -163,10 +185,76 @@ impl Browser {
             show_cloud: false,
             cloud_files: Vec::new(),
             cloud_status: String::new(),
+            show_account: false,
+            account_info: None,
             expand_description: false,
+            show_achievements: false,
+            achievements: Vec::new(),
+            ach_scroll: 0,
+            confirm_uninstall: false,
+            show_dlc: false,
+            dlc: Vec::new(),
+            dlc_index: 0,
+            dlc_app_id: 0,
         };
         browser.reset_selection();
         browser
+    }
+
+    // --- DLC overlay ---
+
+    /// Fetch the DLC for `app_id` and open the overlay. Blocks on the `aurelia
+    /// dlc` subprocess; the selection resets to the first row.
+    pub fn open_dlc(&mut self, app_id: i32) -> Result<(), STError> {
+        self.dlc = aurelia::dlc(app_id)?;
+        self.dlc_app_id = app_id;
+        self.dlc_index = 0;
+        self.show_dlc = true;
+        Ok(())
+    }
+
+    /// Close the DLC overlay and drop its contents.
+    pub fn close_dlc(&mut self) {
+        self.show_dlc = false;
+        self.dlc.clear();
+        self.dlc_index = 0;
+    }
+
+    /// The highlighted DLC entry, if any.
+    pub fn selected_dlc(&self) -> Option<&aurelia::DlcJson> {
+        self.dlc.get(self.dlc_index)
+    }
+
+    pub fn dlc_next(&mut self) {
+        if self.dlc.is_empty() {
+            self.dlc_index = 0;
+            return;
+        }
+        self.dlc_index = (self.dlc_index + 1) % self.dlc.len();
+    }
+
+    pub fn dlc_previous(&mut self) {
+        if self.dlc.is_empty() {
+            self.dlc_index = 0;
+            return;
+        }
+        self.dlc_index = if self.dlc_index == 0 {
+            self.dlc.len() - 1
+        } else {
+            self.dlc_index - 1
+        };
+    }
+
+    /// Re-fetch the open overlay's DLC after a toggle, keeping the selection in
+    /// range.
+    pub fn refresh_dlc(&mut self) -> Result<(), STError> {
+        self.dlc = aurelia::dlc(self.dlc_app_id)?;
+        if self.dlc.is_empty() {
+            self.dlc_index = 0;
+        } else if self.dlc_index >= self.dlc.len() {
+            self.dlc_index = self.dlc.len() - 1;
+        }
+        Ok(())
     }
 
     /// Toggle the expanded/collapsed state of the description panel.
@@ -213,6 +301,41 @@ impl Browser {
         self.show_cloud = false;
         self.cloud_files.clear();
         self.cloud_status.clear();
+    /// Fetch the selected game's achievements (blocking) and open the overlay.
+    /// A fetch error simply opens an empty overlay ("No achievements.").
+    pub fn open_achievements(&mut self) {
+        let Some(game) = self.selected() else {
+            return;
+        };
+        self.achievements = aurelia::achievements(game.id).unwrap_or_default();
+        self.ach_scroll = 0;
+        self.show_achievements = true;
+    }
+
+    /// Close the achievements overlay and drop its data.
+    pub fn close_achievements(&mut self) {
+        self.show_achievements = false;
+        self.achievements = Vec::new();
+        self.ach_scroll = 0;
+    }
+
+    /// Scroll the achievements overlay down by one row (clamped).
+    pub fn ach_scroll_down(&mut self) {
+        let max = self.achievements.len().saturating_sub(1);
+        if self.ach_scroll < max {
+            self.ach_scroll += 1;
+        }
+    }
+
+    /// Scroll the achievements overlay up by one row (clamped).
+    pub fn ach_scroll_up(&mut self) {
+        self.ach_scroll = self.ach_scroll.saturating_sub(1);
+    /// Fetch the logged-in account (`aurelia account`) and open the overlay.
+    /// Blocking; returns the backend error if the call fails.
+    pub fn open_account(&mut self) -> Result<(), STError> {
+        self.account_info = Some(aurelia::account()?);
+        self.show_account = true;
+        Ok(())
     }
 
     /// Replace the library contents, keeping the current filter/query/sort and a
