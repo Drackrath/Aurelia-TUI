@@ -148,6 +148,12 @@ pub struct Browser {
     pub account_info: Option<AccountJson>,
     /// Whether the description panel is expanded beyond its collapsed cap.
     pub expand_description: bool,
+    /// Whether the achievements overlay is open.
+    pub show_achievements: bool,
+    /// The selected game's achievements (loaded when the overlay opens).
+    pub achievements: Vec<aurelia::AchievementJson>,
+    /// Scroll offset (top row) within the achievements overlay.
+    pub ach_scroll: usize,
     /// Whether the uninstall confirmation prompt is open for the selection.
     pub confirm_uninstall: bool,
     /// Whether the DLC overlay is open.
@@ -173,6 +179,9 @@ impl Browser {
             show_account: false,
             account_info: None,
             expand_description: false,
+            show_achievements: false,
+            achievements: Vec::new(),
+            ach_scroll: 0,
             confirm_uninstall: false,
             show_dlc: false,
             dlc: Vec::new(),
@@ -244,6 +253,35 @@ impl Browser {
         self.expand_description = !self.expand_description;
     }
 
+    /// Fetch the selected game's achievements (blocking) and open the overlay.
+    /// A fetch error simply opens an empty overlay ("No achievements.").
+    pub fn open_achievements(&mut self) {
+        let Some(game) = self.selected() else {
+            return;
+        };
+        self.achievements = aurelia::achievements(game.id).unwrap_or_default();
+        self.ach_scroll = 0;
+        self.show_achievements = true;
+    }
+
+    /// Close the achievements overlay and drop its data.
+    pub fn close_achievements(&mut self) {
+        self.show_achievements = false;
+        self.achievements = Vec::new();
+        self.ach_scroll = 0;
+    }
+
+    /// Scroll the achievements overlay down by one row (clamped).
+    pub fn ach_scroll_down(&mut self) {
+        let max = self.achievements.len().saturating_sub(1);
+        if self.ach_scroll < max {
+            self.ach_scroll += 1;
+        }
+    }
+
+    /// Scroll the achievements overlay up by one row (clamped).
+    pub fn ach_scroll_up(&mut self) {
+        self.ach_scroll = self.ach_scroll.saturating_sub(1);
     /// Fetch the logged-in account (`aurelia account`) and open the overlay.
     /// Blocking; returns the backend error if the call fails.
     pub fn open_account(&mut self) -> Result<(), STError> {

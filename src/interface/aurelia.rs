@@ -147,6 +147,29 @@ pub struct InfoJson {
     pub reviews: Option<String>,
 }
 
+/// One achievement entry from `aurelia achievements <id> --json` (an item of
+/// the response's `achievements` array). Only the fields the TUI surfaces are
+/// captured; key names match the CLI's `--json` output. Everything is
+/// `#[serde(default)]` so a missing field never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AchievementJson {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// Whether the logged-in user has unlocked this achievement.
+    #[serde(default)]
+    pub unlocked: bool,
+    /// Whether the achievement is visible (false = hidden until unlocked).
+    #[serde(default = "default_true")]
+    pub visible: bool,
+    /// Global unlock rate across all players, as a percentage (rarity).
+    #[serde(default)]
+    pub rarity: f32,
+}
+
+fn default_true() -> bool {
+    true
 /// One DLC entry for a base game, from `aurelia dlc <id> --json` (the `dlc`
 /// array). All status fields are nullable in the CLI output (they come from a
 /// best-effort `DlcState` lookup), so each defaults when absent.
@@ -299,6 +322,19 @@ pub fn fetch_info(id: i32) -> Result<InfoJson, STError> {
     Ok(serde_json::from_value(value)?)
 }
 
+/// Fetch the selected game's achievements with the logged-in user's unlock
+/// state (`aurelia achievements <id> --json`). The CLI wraps the list in an
+/// object (`{ achievements: [...] }`); we unwrap and parse just the array.
+pub fn achievements(app_id: i32) -> Result<Vec<AchievementJson>, STError> {
+    let value = run_json(&["achievements", &app_id.to_string()])?;
+    let list = value
+        .get("achievements")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
 /// Fetch the DLC list for a base game (`aurelia dlc <id> --json`).
 pub fn dlc(app_id: i32) -> Result<Vec<DlcJson>, STError> {
     let value = run_json(&["dlc", &app_id.to_string()])?;
