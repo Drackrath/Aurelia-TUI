@@ -127,6 +127,18 @@ pub struct LibraryGameJson {
     pub store_url: Option<String>,
 }
 
+/// One Steam Cloud file, from `aurelia cloud list <id> --json`. The CLI emits
+/// `{ "app_id": .., "files": [{ "filename", "size", "timestamp", "sha_hash" }] }`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CloudFileJson {
+    #[serde(default)]
+    pub filename: String,
+    #[serde(default)]
+    pub size: u64,
+    #[serde(default)]
+    pub timestamp: i64,
+}
+
 /// Store metadata, from `aurelia info <id> --json`. Only the fields the TUI
 /// surfaces are captured; the key names match the CLI's `--json` output.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -322,6 +334,23 @@ pub fn fetch_info(id: i32) -> Result<InfoJson, STError> {
     Ok(serde_json::from_value(value)?)
 }
 
+/// List a game's Steam Cloud files (`aurelia cloud list <id> --json`). The CLI
+/// wraps the per-file array under a `files` key; the top-level object also
+/// carries `app_id`, which we ignore.
+pub fn cloud_list(app_id: i32) -> Result<Vec<CloudFileJson>, STError> {
+    let value = run_json(&["cloud", "list", &app_id.to_string()])?;
+    // Accept either the wrapping object (`{ "files": [..] }`) or a bare array.
+    let files = match value.get("files") {
+        Some(files) => files.clone(),
+        None => value,
+    };
+    Ok(serde_json::from_value(files)?)
+}
+
+/// Sync a game's Steam Cloud saves (`aurelia cloud sync <id> --json`). This is a
+/// blocking call and can be slow; errors surface via `run_json`.
+pub fn cloud_sync(app_id: i32) -> Result<(), STError> {
+    run_json(&["cloud", "sync", &app_id.to_string()])?;
 /// Fetch the selected game's achievements with the logged-in user's unlock
 /// state (`aurelia achievements <id> --json`). The CLI wraps the list in an
 /// object (`{ achievements: [...] }`); we unwrap and parse just the array.
