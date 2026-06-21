@@ -73,32 +73,33 @@ Either path loads your library automatically once you authenticate. You can also
 log in out-of-band with `aurelia login` in a terminal, then press `r` on the
 sign-in screen to re-check the session.
 
-### Keys
+### Browsing
 
-#### Library
+The library is a single live browser: **filter tabs** across the top
+(`All · Installed · Updates · Favourites`), the game list with **status badges**
+(`●` installed, `▲` update, `⬇` downloading, `○` not installed, `♡` favourite),
+a detail pane with cover art, and a **status bar** showing live counts, the
+active filter/sort, and your account. Press `?` any time for the full key list.
+
+#### Keys
 
 | Key | Action |
 | --- | --- |
-| `↓` / `j` / `s` | Move down |
-| `↑` / `k` / `w` | Move up |
-| `/` | Fuzzy-search the library |
+| `j` / `↓`, `k` / `↑` | Move down / up (mouse wheel works too) |
+| `g` / `G` | Jump to top / bottom |
+| `PageUp` / `PageDown` | Page through the list |
+| `Tab` / `Shift-Tab` | Cycle filter tabs |
+| `1`–`4` | Jump straight to a tab |
+| `/` | Focus the live fuzzy filter (type to narrow, `Esc` clears) |
+| `s` | Cycle sort (name / installed-first) |
 | `Enter` | Launch the selected game (`aurelia play`) |
 | `d` | Install / download the selected game |
 | `f` | Toggle the game as a favourite |
-| `F` | Show only favourites |
 | `H` | Hide the selected game |
 | `r` | Refresh the library from Steam |
 | `l` | Sign in again |
+| `?` | Toggle the help overlay |
 | `q` | Quit |
-
-#### Search
-
-| Key | Action |
-| --- | --- |
-| _type_ | Filter the list as you type |
-| `↑` / `↓` | Move through matches |
-| `Enter` | Keep the filter and return to the list |
-| `Esc` | Cancel the search |
 
 Selecting a game fetches its details lazily — developer/publisher metadata
 (`aurelia info`), the ProtonDB compatibility tier, and cover art all load in the

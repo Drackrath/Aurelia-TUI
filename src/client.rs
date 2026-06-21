@@ -57,22 +57,24 @@ pub enum Command {
 fn handle_login(
     state: &Arc<Mutex<State>>,
     last_error: &Arc<Mutex<Option<String>>>,
+    account: &Arc<Mutex<Option<String>>>,
 ) -> Result<(), STError> {
-    let (next, err) = match aurelia::health() {
+    let (next, err, who) = match aurelia::health() {
         Ok(health) if health.logged_in => {
             log!("aurelia session authenticated", health.account);
-            (State::Loaded(0, -2), None)
+            (State::Loaded(0, -2), None, health.account)
         }
         Ok(_) => {
             log!("aurelia session not authenticated");
-            (State::Failed, None)
+            (State::Failed, None, None)
         }
         Err(err) => {
             log!("aurelia health check failed", err);
-            (State::Failed, Some(format!("{}", err)))
+            (State::Failed, Some(format!("{}", err)), None)
         }
     };
     *last_error.lock()? = err;
+    *account.lock()? = who;
     *state.lock()? = next;
     Ok(())
 }
@@ -99,6 +101,7 @@ fn execute(
     qr: Arc<Mutex<Option<String>>>,
     login_phase: Arc<Mutex<LoginPhase>>,
     last_error: Arc<Mutex<Option<String>>>,
+    account: Arc<Mutex<Option<String>>>,
     receiver: Receiver<Command>,
 ) -> Result<(), STError> {
     let mut user = String::new();
@@ -108,10 +111,10 @@ fn execute(
                 if !u.is_empty() {
                     user = u;
                 }
-                handle_login(&state, &last_error)?;
+                handle_login(&state, &last_error, &account)?;
             }
             Command::CheckSession => {
-                handle_login(&state, &last_error)?;
+                handle_login(&state, &last_error, &account)?;
             }
             Command::LoginQr => {
                 // Run the (blocking) QR login on its own thread so the worker
@@ -166,7 +169,7 @@ fn execute(
                 let _ = invalidate_cache();
                 *state.lock()? = State::LoggedOut;
                 log!("Restarting for user", user);
-                handle_login(&state, &last_error)?;
+                handle_login(&state, &last_error, &account)?;
             }
             Command::Install(id, status) => {
                 thread::spawn(move || aurelia::install(id, status));
@@ -194,6 +197,8 @@ pub struct Client {
     guard_tx: Mutex<Option<Sender<String>>>,
     /// Last health/login failure message, shown on the sign-in page.
     last_error: Arc<Mutex<Option<String>>>,
+    /// The authenticated account name, from the last health check.
+    account: Arc<Mutex<Option<String>>>,
 }
 
 impl Client {
@@ -207,15 +212,22 @@ impl Client {
             login_phase: Arc::new(Mutex::new(LoginPhase::Idle)),
             guard_tx: Mutex::new(None),
             last_error: Arc::new(Mutex::new(None)),
+            account: Arc::new(Mutex::new(None)),
         };
         Client::start_process(
             client.state.clone(),
             client.qr.clone(),
             client.login_phase.clone(),
             client.last_error.clone(),
+            client.account.clone(),
             rx,
         );
         client
+    }
+
+    /// The authenticated account name, if known (from the last health check).
+    pub fn get_account(&self) -> Option<String> {
+        self.account.lock().ok().and_then(|a| a.clone())
     }
 
     /// Ensures `State` is `State::LoggedIn`.
@@ -359,11 +371,12 @@ impl Client {
         qr: Arc<Mutex<Option<String>>>,
         login_phase: Arc<Mutex<LoginPhase>>,
         last_error: Arc<Mutex<Option<String>>>,
+        account: Arc<Mutex<Option<String>>>,
         receiver: Receiver<Command>,
     ) {
         thread::spawn(move || {
             let local = state.clone();
-            if let Err(e) = execute(state, qr, login_phase, last_error, receiver) {
+            if let Err(e) = execute(state, qr, login_phase, last_error, account, receiver) {
                 let mut state = local
                     .lock()
                     .expect("We need to inform the other thread that this broke.");

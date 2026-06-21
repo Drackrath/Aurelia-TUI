@@ -162,6 +162,16 @@ impl Game {
         String::new()
     }
 
+    /// Whether this game is marked as a favourite in the config.
+    pub fn is_favourite(&self) -> bool {
+        Config::cached().favorite_games.contains(&self.id)
+    }
+
+    /// The raw display name (no favourite marker), for sorting.
+    pub fn raw_name(&self) -> &str {
+        &self.name
+    }
+
     /// Current install/run status. Prefers a live status set by an in-flight
     /// install/launch; otherwise derives one from the cached install fields so
     /// the listing reflects installed-vs-uninstalled after a cache reload.

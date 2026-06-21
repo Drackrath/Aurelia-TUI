@@ -2,26 +2,27 @@ extern crate aurelia_tui;
 
 use std::io;
 
-use crossterm::event::KeyCode;
-
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, KeyCode};
+use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use tui::layout::{Constraint, Direction, Layout, Rect};
 use tui::style::Style;
-use tui::widgets::Block;
-use tui::{backend::CrosstermBackend, layout::Rect, Terminal};
+use tui::widgets::{Block, Clear};
+use tui::{backend::CrosstermBackend, Terminal};
 
 use tui_image_rgba_updated::{ColorMode, Image};
 
+use aurelia_tui::browse::{Browser, Filter};
 use aurelia_tui::theme;
+use aurelia_tui::ui;
 use aurelia_tui::util::event::{Event, Events};
 use aurelia_tui::util::image as artwork;
 use aurelia_tui::util::image::ImageSlot;
-use aurelia_tui::util::stateful::StatefulList;
 
 use aurelia_tui::app::{App, Mode};
 use aurelia_tui::client::{Client, State};
-use aurelia_tui::interface::aurelia::LoginPhase;
 use aurelia_tui::config::Config;
-use aurelia_tui::interface::game::Game;
+use aurelia_tui::interface::aurelia::LoginPhase;
 
 // why isn't this in stdlib for floats?
 fn min(a: f32, b: f32) -> f32 {
@@ -33,7 +34,8 @@ fn min(a: f32, b: f32) -> f32 {
 
 fn entry() -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
-    let stdout = io::stdout();
+    let mut stdout = io::stdout();
+    execute!(stdout, EnableMouseCapture)?;
     #[allow(unused)]
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -64,133 +66,154 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
     client.check_session()?;
     app.mode = Mode::Loading;
 
-    // Attempt to load from cache. If not, continue as usual.
-    let mut game_list: StatefulList<Game> = StatefulList::new();
-    let mut cached: bool = false;
-    match client.games() {
+    // Seed the browser from the cached library, if present.
+    let mut cached = false;
+    let mut browser = match client.games() {
         Ok(games) => {
-            game_list = StatefulList::with_items(games);
             cached = true;
+            Browser::new(games)
         }
-        _ => game_list.restart(),
-    }
+        _ => Browser::new(Vec::new()),
+    };
 
     loop {
         terminal.draw(|frame| {
             frame.render_widget(Block::default().style(theme::canvas()), frame.size());
-            let layout = App::build_layout();
-            let placement = layout.split(frame.size());
-            let help = match app.mode {
-                Mode::Normal => App::build_help(),
-                Mode::Terminated(_) => App::build_terminated_help(),
-                Mode::Login | Mode::Failed => App::build_login_help(),
-                Mode::LoginQr => App::build_qr_help(),
-                Mode::LoginUser => App::build_login_user(app.user.clone()),
-                Mode::LoginPass => App::build_login_pass(app.password.len()),
-                Mode::LoginClassic => App::build_login_classic_help(),
-                Mode::LoginGuard => App::build_login_guard(
-                    match client.get_login_phase() {
-                        LoginPhase::GuardCode(kind) => kind,
-                        _ => String::new(),
-                    },
-                    app.guard_code.clone(),
-                ),
-                Mode::Loading => match client.get_state() {
-                    Ok(State::Loaded(count, of)) => App::build_loaded(count, of),
-                    _ => App::build_loading(),
-                },
-                Mode::Searching => App::build_query_searching(game_list.query.clone()),
-                Mode::Searched => App::build_query(game_list.query.clone()),
-            };
-            match &app.mode {
-                Mode::Failed => frame.render_widget(App::build_splash_err(), placement[0]),
-                Mode::Login => {
-                    frame.render_widget(App::build_login_landing(client.get_last_error()), placement[0])
-                }
-                Mode::LoginQr => {
-                    frame.render_widget(App::build_qr(client.get_qr()), placement[0])
-                }
-                Mode::LoginUser => {
-                    frame.render_widget(App::build_login_user(app.user.clone()), placement[0])
-                }
-                Mode::LoginPass => {
-                    frame.render_widget(App::build_login_pass(app.password.len()), placement[0])
-                }
-                Mode::LoginClassic => {
-                    let status = match client.get_login_phase() {
-                        LoginPhase::AwaitingConfirmation => {
-                            "Signing in — if prompted, approve this login in your Steam Mobile app..."
-                                .to_string()
-                        }
-                        LoginPhase::DeviceConfirmation => {
-                            "Approve this login in your Steam Mobile app, then wait...".to_string()
-                        }
-                        LoginPhase::Failed(msg) => format!("Login failed: {}", msg),
-                        _ => "Signing in...".to_string(),
-                    };
-                    frame.render_widget(App::build_login_classic(status), placement[0])
-                }
-                Mode::LoginGuard => {
-                    let kind = match client.get_login_phase() {
-                        LoginPhase::GuardCode(kind) => kind,
-                        _ => String::new(),
-                    };
-                    frame.render_widget(
-                        App::build_login_guard(kind, app.guard_code.clone()),
-                        placement[0],
-                    )
-                }
-                Mode::Terminated(err) => {
-                    frame.render_widget(App::build_splash_terminated(err.clone()), placement[0])
-                }
-                Mode::Loading => {
-                    frame.render_widget(App::build_splash(), placement[0]);
-                }
-                _ => {
-                    let game_layout = App::build_game_layout();
-                    let image_layout = App::build_image_layout();
 
-                    let (left, right) = App::render_games(app.highlight, &game_list);
-                    let game_placement = game_layout.split(placement[0]);
-                    // Incorrect image placement leads to hard crash. Explicitly calculate bounds
-                    // here.
-                    let image_placement = {
-                        let offset_x = game_placement[1].width + game_placement[1].x;
-                        let offset_y = game_placement[1].height + game_placement[1].y;
-                        let (width, height) = {
-                            // 62% is also hardcoded in the window width, and 160 is totally
-                            // arbitrary, but the really large images look super goofy.
-                            // TODO: Allow for user adjustable widths
-                            let width = min((offset_x as f32) * 0.62, 160.0);
-                            // Height is counted by row, and there are 10 lines of info.
-                            let height = min((offset_y as f32) - 10.0, 80.0);
-                            // Take minium, but respect aspect ratio.
-                            (
-                                min(width, height * 2.0) as u16,
-                                min(height, width / 2.0) as u16,
-                            )
-                        };
-                        image_layout.split(Rect {
-                            x: offset_x - width,
-                            y: offset_y - height,
-                            width,
-                            height,
-                        })
-                    };
+            if app.mode == Mode::Browse {
+                // Library browser: tabs / [list | detail+art] / status bar.
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(3),
+                        Constraint::Min(2),
+                        Constraint::Length(2),
+                    ])
+                    .split(frame.size());
 
-                    frame.render_stateful_widget(left, game_placement[0], &mut game_list.state);
-                    frame.render_widget(right, game_placement[1]);
-                    if let Some(image) = img.clone() {
-                        frame.render_widget(
-                            Image::with_img(image)
-                                .color_mode(ColorMode::Rgba)
-                                .style(Style::default().bg(theme::BG)),
-                            image_placement[0],
-                        )
+                frame.render_widget(ui::tabs::tabs(&browser), chunks[0]);
+
+                let body = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+                    .split(chunks[1]);
+
+                let list_widget = ui::list::list(&browser);
+                frame.render_stateful_widget(list_widget, body[0], &mut browser.state);
+
+                let selected = browser.selected();
+                frame.render_widget(ui::detail::detail(selected.as_ref()), body[1]);
+
+                // Cover art overlaid on the top-right of the detail pane.
+                if let Some(image) = img.clone() {
+                    let right = body[1];
+                    if right.width >= 16 && right.height >= 12 {
+                        let offset_x = right.width + right.x;
+                        let offset_y = right.height + right.y;
+                        let fw = min((offset_x as f32) * 0.6, 160.0);
+                        let fh = min((offset_y as f32) - 10.0, 80.0);
+                        let width = min(fw, fh * 2.0) as u16;
+                        let height = min(fh, fw / 2.0) as u16;
+                        if width > 0 && height > 0 && width <= right.width && height <= right.height
+                        {
+                            let area = Rect {
+                                x: offset_x - width,
+                                y: offset_y - height,
+                                width,
+                                height,
+                            };
+                            frame.render_widget(
+                                Image::with_img(image)
+                                    .color_mode(ColorMode::Rgba)
+                                    .style(Style::default().bg(theme::BG)),
+                                area,
+                            );
+                        }
                     }
                 }
+
+                frame.render_widget(
+                    ui::status::status_bar(&browser, client.get_account().as_deref()),
+                    chunks[2],
+                );
+
+                // Help overlay floats above everything.
+                if browser.show_help {
+                    let area = ui::centered_rect(64, 84, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::help::help(), area);
+                }
+            } else {
+                // Login / loading / terminated screens use the simple two-pane layout.
+                let layout = App::build_layout();
+                let placement = layout.split(frame.size());
+                let help = match app.mode {
+                    Mode::Terminated(_) => App::build_terminated_help(),
+                    Mode::Login | Mode::Failed => App::build_login_help(),
+                    Mode::LoginQr => App::build_qr_help(),
+                    Mode::LoginUser => App::build_login_user(app.user.clone()),
+                    Mode::LoginPass => App::build_login_pass(app.password.len()),
+                    Mode::LoginClassic => App::build_login_classic_help(),
+                    Mode::LoginGuard => App::build_login_guard(
+                        match client.get_login_phase() {
+                            LoginPhase::GuardCode(kind) => kind,
+                            _ => String::new(),
+                        },
+                        app.guard_code.clone(),
+                    ),
+                    Mode::Loading => match client.get_state() {
+                        Ok(State::Loaded(count, of)) => App::build_loaded(count, of),
+                        _ => App::build_loading(),
+                    },
+                    Mode::Browse => App::build_loading(),
+                };
+                match &app.mode {
+                    Mode::Failed => frame.render_widget(App::build_splash_err(), placement[0]),
+                    Mode::Login => frame.render_widget(
+                        App::build_login_landing(client.get_last_error()),
+                        placement[0],
+                    ),
+                    Mode::LoginQr => {
+                        frame.render_widget(App::build_qr(client.get_qr()), placement[0])
+                    }
+                    Mode::LoginUser => {
+                        frame.render_widget(App::build_login_user(app.user.clone()), placement[0])
+                    }
+                    Mode::LoginPass => {
+                        frame.render_widget(App::build_login_pass(app.password.len()), placement[0])
+                    }
+                    Mode::LoginClassic => {
+                        let status = match client.get_login_phase() {
+                            LoginPhase::AwaitingConfirmation => {
+                                "Signing in — if prompted, approve this login in your Steam Mobile app..."
+                                    .to_string()
+                            }
+                            LoginPhase::DeviceConfirmation => {
+                                "Approve this login in your Steam Mobile app, then wait...".to_string()
+                            }
+                            LoginPhase::Failed(msg) => format!("Login failed: {}", msg),
+                            _ => "Signing in...".to_string(),
+                        };
+                        frame.render_widget(App::build_login_classic(status), placement[0])
+                    }
+                    Mode::LoginGuard => {
+                        let kind = match client.get_login_phase() {
+                            LoginPhase::GuardCode(kind) => kind,
+                            _ => String::new(),
+                        };
+                        frame.render_widget(
+                            App::build_login_guard(kind, app.guard_code.clone()),
+                            placement[0],
+                        )
+                    }
+                    Mode::Terminated(err) => {
+                        frame.render_widget(App::build_splash_terminated(err.clone()), placement[0])
+                    }
+                    Mode::Loading => frame.render_widget(App::build_splash(), placement[0]),
+                    Mode::Browse => {}
+                }
+                frame.render_widget(help, placement[1]);
             }
-            frame.render_widget(help, placement[1]);
         })?;
 
         if let Event::Input(input) = events.next()? {
@@ -200,75 +223,83 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         break;
                     }
                 }
-                Mode::Normal | Mode::Searched => match input {
-                    KeyCode::Char('l') => {
-                        app.mode = Mode::Login;
-                        terminal.hide_cursor()?;
-                        game_list.restart();
-                    }
-                    KeyCode::Char('q') => {
-                        break;
-                    }
-                    KeyCode::Char('r') => {
-                        // Marked cache as false for the potential race condition
-                        // (you flush cache prior to login)
-                        cached = false;
-                        app.mode = Mode::Loading;
-                        client.restart()?;
-                    }
-                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('s') => {
-                        game_list.next();
-                    }
-                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('w') => {
-                        game_list.previous();
-                    }
-                    KeyCode::Char('/') => {
-                        app.mode = Mode::Searching;
-                        terminal.show_cursor()?;
-                        game_list.unselect();
-                    }
-                    KeyCode::Char('\n') | KeyCode::Enter => {
-                        if let Some(game) = game_list.selected() {
-                            client.run(game)?;
-                        }
-                    }
-                    KeyCode::Char('f') => {
-                        if let Some(game) = game_list.selected() {
-                            if config.favorite_games.contains(&game.id) {
-                                config.favorite_games.retain(|&x| x != game.id);
-                            } else {
-                                config.favorite_games.push(game.id);
+                Mode::Browse => {
+                    if browser.show_help {
+                        // Any key dismisses the help overlay.
+                        browser.show_help = false;
+                    } else if browser.filtering {
+                        // Live text filter focused: typing edits the query.
+                        match input {
+                            KeyCode::Esc => {
+                                browser.filtering = false;
+                                browser.clear_query();
                             }
-                            Config::save(&config)?;
+                            KeyCode::Char('\n') | KeyCode::Enter => browser.filtering = false,
+                            KeyCode::Backspace => browser.pop_query(),
+                            KeyCode::Down => browser.next(),
+                            KeyCode::Up => browser.previous(),
+                            KeyCode::Char(c) => browser.push_query(c),
+                            _ => {}
+                        }
+                    } else {
+                        match input {
+                            KeyCode::Char('q') => break,
+                            KeyCode::Char('?') => browser.show_help = true,
+                            KeyCode::Char('/') => browser.filtering = true,
+                            KeyCode::Char('l') => {
+                                app.mode = Mode::Login;
+                                terminal.hide_cursor()?;
+                            }
+                            KeyCode::Char('r') => {
+                                cached = false;
+                                app.mode = Mode::Loading;
+                                client.restart()?;
+                            }
+                            KeyCode::Tab => browser.cycle_filter(true),
+                            KeyCode::BackTab => browser.cycle_filter(false),
+                            KeyCode::Char('1') => browser.set_filter(Filter::All),
+                            KeyCode::Char('2') => browser.set_filter(Filter::Installed),
+                            KeyCode::Char('3') => browser.set_filter(Filter::Updates),
+                            KeyCode::Char('4') => browser.set_filter(Filter::Favourites),
+                            KeyCode::Char('s') => browser.cycle_sort(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.previous(),
+                            KeyCode::Char('g') => browser.home(),
+                            KeyCode::Char('G') => browser.end(),
+                            KeyCode::PageDown => browser.page_down(10),
+                            KeyCode::PageUp => browser.page_up(10),
+                            KeyCode::Char('\n') | KeyCode::Enter => {
+                                if let Some(game) = browser.selected() {
+                                    client.run(&game)?;
+                                }
+                            }
+                            KeyCode::Char('d') => {
+                                if let Some(game) = browser.selected() {
+                                    client.install(&game)?;
+                                }
+                            }
+                            KeyCode::Char('f') => {
+                                if let Some(game) = browser.selected() {
+                                    if config.favorite_games.contains(&game.id) {
+                                        config.favorite_games.retain(|&x| x != game.id);
+                                    } else {
+                                        config.favorite_games.push(game.id);
+                                    }
+                                    Config::save(&config)?;
+                                    browser.refresh();
+                                }
+                            }
+                            KeyCode::Char('H') => {
+                                if let Some(game) = browser.selected() {
+                                    config.hidden_games.push(game.id);
+                                    Config::save(&config)?;
+                                    browser.refresh();
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                    KeyCode::Char('F') => {
-                        // Hard refresh to restart games, since bad index can mess things up.
-                        game_list = StatefulList::with_items(client.games()?);
-                        game_list.query = "♡ ".to_string();
-                        app.mode = Mode::Searched;
-                    }
-                    KeyCode::Char('H') => {
-                        if let Some(game) = game_list.selected() {
-                            config.hidden_games.push(game.id);
-                            Config::save(&config)?;
-                            game_list.previous();
-                        }
-                    }
-                    KeyCode::Char(' ') => {
-                        client.start_client()?;
-                    }
-                    KeyCode::Char('d') => {
-                        if let Some(game) = game_list.selected() {
-                            client.install(game)?;
-                        }
-                    }
-                    KeyCode::Esc => {
-                        app.mode = Mode::Normal;
-                        game_list.query = "".to_string();
-                    }
-                    _ => {}
-                },
+                }
                 Mode::Login | Mode::Failed => match input {
                     KeyCode::Char('q') => {
                         break;
@@ -379,32 +410,6 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     _ => {}
                 },
-                Mode::Searching => match input {
-                    KeyCode::Esc => {
-                        app.mode = Mode::Normal;
-                        terminal.hide_cursor()?;
-                        game_list.query = "".to_string();
-                    }
-                    KeyCode::Char('\n') | KeyCode::Enter => {
-                        terminal.hide_cursor()?;
-                        app.mode = Mode::Searched;
-                    }
-                    KeyCode::Backspace => {
-                        game_list.query.pop();
-                        game_list.restart();
-                    }
-                    KeyCode::Char(c) => {
-                        game_list.query.push(c);
-                        game_list.restart();
-                    }
-                    KeyCode::Down => {
-                        game_list.next();
-                    }
-                    KeyCode::Up => {
-                        game_list.previous();
-                    }
-                    _ => {}
-                },
                 _ => {}
             }
             // Need a hook to cancel if in loading mode.
@@ -415,28 +420,25 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
             }
             events.release();
         }
+
         if app.mode == Mode::Loading {
             match client.get_state()? {
                 State::Loaded(_, -2) => {
-                    // If loaded from cache then just used the cache
                     if cached {
-                        // Importantly, mark cached as false to allow reloads
+                        // Used the cached library; allow future reloads.
                         cached = false;
-                        app.mode = Mode::Normal;
+                        terminal.hide_cursor()?;
+                        app.mode = Mode::Browse;
                     } else {
                         client.load_games()?;
                     }
                 }
                 State::LoggedIn => {
                     config.save()?;
-                    let query = game_list.query.clone();
-                    if query.is_empty() {
-                        app.mode = Mode::Normal;
-                    } else {
-                        app.mode = Mode::Searched;
-                    }
-                    game_list = StatefulList::with_items(client.games()?);
+                    browser.set_items(client.games()?);
+                    terminal.hide_cursor()?;
                     terminal.clear()?;
+                    app.mode = Mode::Browse;
                 }
                 State::Failed => {
                     // No session — fall through to the sign-in landing page.
@@ -486,11 +488,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
-        // download), and `poll` adopts a completed download. Both are cheap, so
-        // running them once per loop keeps navigation responsive.
-        if matches!(app.mode, Mode::Normal | Mode::Searched | Mode::Searching) {
+        // download), and `poll` adopts a completed download.
+        if app.mode == Mode::Browse && !browser.show_help {
+            let selected = browser.selected();
             artwork::select(
-                game_list.selected(),
+                selected.as_ref(),
                 &mut requested_img_id,
                 &mut img,
                 &image_slot,
@@ -498,7 +500,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
             artwork::poll(requested_img_id, &mut img, &image_slot);
         }
     }
+
     disable_raw_mode()?;
+    execute!(io::stdout(), DisableMouseCapture)?;
     terminal.clear()?;
     Ok(())
 }

@@ -89,6 +89,34 @@ pub fn item_failed() -> Style {
     Style::default().fg(WARN).add_modifier(Modifier::BOLD)
 }
 
+/// Muted secondary text (counts, hints, inactive items).
+pub fn dim() -> Style {
+    Style::default().fg(TEXT_DIM)
+}
+
+/// Accent text (active values, highlights) without a background.
+pub fn accent() -> Style {
+    Style::default().fg(ACCENT)
+}
+
+/// Bright key-cap / emphasis text.
+pub fn key() -> Style {
+    Style::default().fg(ACCENT_BRIGHT).add_modifier(Modifier::BOLD)
+}
+
+/// Active filter tab (dark text on a bright accent chip).
+pub fn tab_active() -> Style {
+    Style::default()
+        .fg(BG_DARK)
+        .bg(ACCENT)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Inactive filter tab.
+pub fn tab_inactive() -> Style {
+    Style::default().fg(TEXT_DIM).bg(BG)
+}
+
 /// A standard Steam-styled panel: rounded soft-blue border, accent title, navy
 /// fill. Title is owned so the returned block is `'static`.
 pub fn panel(title: String) -> Block<'static> {

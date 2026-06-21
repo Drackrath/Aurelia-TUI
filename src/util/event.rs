@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use crate::util::log::log;
 
-use crossterm::event::{read, Event as CrossEvent, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    read, Event as CrossEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+};
 
 pub enum Event<I> {
     Input(I),
@@ -53,30 +55,43 @@ impl Events {
             thread::spawn(move || {
                 //matching the key
                 loop {
-                    if let CrossEvent::Key(KeyEvent {
-                        code: kc,
-                        modifiers,
-                        ..
-                    }) = read().unwrap()
-                    {
-                        if debounce.load(Ordering::Relaxed) {
+                    // Map the raw terminal event to a key code we act on. Mouse
+                    // wheel scrolling is folded into Down/Up so the list handlers
+                    // work for both keyboard and mouse.
+                    let code = match read().unwrap() {
+                        CrossEvent::Key(KeyEvent {
+                            code: kc,
+                            modifiers,
+                            ..
+                        }) => {
                             // Let CTRL-c just be q
-                            let kc = if kc == KeyCode::Char('c')
+                            if kc == KeyCode::Char('c')
                                 && modifiers.contains(KeyModifiers::CONTROL)
                             {
-                                KeyCode::Char('q')
+                                Some(KeyCode::Char('q'))
                             } else {
-                                kc
-                            };
+                                Some(kc)
+                            }
+                        }
+                        CrossEvent::Mouse(MouseEvent { kind, .. }) => match kind {
+                            MouseEventKind::ScrollDown => Some(KeyCode::Down),
+                            MouseEventKind::ScrollUp => Some(KeyCode::Up),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+
+                    if let Some(kc) = code {
+                        if debounce.load(Ordering::Relaxed) {
                             if let Err(err) = tx.send(Event::Input(kc)) {
                                 log!(err);
                                 return;
                             }
                             debounce.store(false, Ordering::Relaxed);
                         }
-                        if stop.load(Ordering::Relaxed) {
-                            return;
-                        }
+                    }
+                    if stop.load(Ordering::Relaxed) {
+                        return;
                     }
                 }
             })

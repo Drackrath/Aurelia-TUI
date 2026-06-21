@@ -1,18 +1,10 @@
-extern crate pretty_bytes;
-
-use crate::util::stateful::{Named, StatefulList};
-
 use crate::config::Config;
-use crate::interface::game::Game;
 use crate::theme;
-
-use pretty_bytes::converter::convert;
 
 use tui::{
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style},
-    text::{Span, Spans},
-    widgets::{Cell, List, ListItem, Paragraph, Row, Table},
+    widgets::Paragraph,
 };
 
 const SPLASH: &str = include_str!("../assets/splash.txt");
@@ -40,9 +32,8 @@ pub enum Mode {
     /// Typing a Steam Guard code prompted during classic login.
     LoginGuard,
     Loading,
-    Normal,
-    Searching,
-    Searched,
+    /// The main library browser (filter tabs, list, detail, status bar).
+    Browse,
     Failed,
     Terminated(String),
 }
@@ -68,16 +59,6 @@ impl App {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(2), Constraint::Length(3)].as_ref())
-    }
-    pub fn build_image_layout() -> Layout {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Ratio(1, 1)].as_ref())
-    }
-    pub fn build_game_layout() -> Layout {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(38), Constraint::Percentage(62)].as_ref())
     }
     pub fn build_splash_terminated(err: String) -> Paragraph<'static> {
         App::build_infobox(
@@ -122,20 +103,6 @@ impl App {
             .style(theme::base())
             .alignment(alignment)
             .block(theme::panel(title))
-    }
-    pub fn build_query(query: String) -> Paragraph<'static> {
-        App::build_infobox(
-            "Searching... (press esc to stop)".to_string(),
-            query,
-            Alignment::Left,
-        )
-    }
-    pub fn build_query_searching(query: String) -> Paragraph<'static> {
-        App::build_infobox(
-            "Searching... (press Esc to stop, Enter to commit)".to_string(),
-            query,
-            Alignment::Left,
-        )
     }
     pub fn build_loaded(count: i32, of: i32) -> Paragraph<'static> {
         let p = {
@@ -275,120 +242,11 @@ impl App {
         )
     }
 
-    pub fn build_help() -> Paragraph<'static> {
-        App::build_infobox(
-            "Help".to_string(),
-            "[/] Search | [d]ownload  | [l]ogin | [Enter]xecute | Up (k, w) | Down (j, s) | [q]uit | [Space]team"
-                .to_string(),
-            Alignment::Left,
-        )
-    }
     pub fn build_terminated_help() -> Paragraph<'static> {
         App::build_infobox(
             "Woops.".to_string(),
             "Press q to quit.".to_string(),
             Alignment::Left,
         )
-    }
-
-    pub fn render_games<'a>(
-        highlight: Color,
-        game_list: &StatefulList<Game>,
-    ) -> (List<'a>, Table<'a>) {
-        let games = theme::panel("Games".to_string());
-
-        let items: Vec<_> = game_list
-            .activated()
-            .iter()
-            .map(|game| {
-                let style = {
-                    if let Some(status) = game.get_status() {
-                        if status.state.contains("Failed") {
-                            theme::item_failed()
-                        } else if status.state == "uninstalled" {
-                            theme::item_muted()
-                        } else if status.state.contains("update") {
-                            theme::item_update()
-                        } else {
-                            theme::item_installed()
-                        }
-                    } else {
-                        theme::item_muted()
-                    }
-                };
-                ListItem::new(Spans::from(vec![Span::styled(game.get_name(), style)]))
-            })
-            .collect();
-
-        let list = List::new(items)
-            .block(games)
-            .highlight_style(theme::selection(highlight));
-
-        let details = match game_list.selected() {
-            Some(selected) => {
-                selected.query_proton();
-                selected.query_info();
-
-                let spacer = Row::new(vec![Cell::from(Span::raw(" "))]);
-                // Construct table head (id, name)
-                let mut table = vec![
-                    Row::new(vec![
-                        Cell::from(Span::styled("ID", theme::label())),
-                        Cell::from(Span::styled("Name", theme::label())),
-                    ]),
-                    Row::new(vec![
-                        Cell::from(Span::styled(selected.id.to_string(), theme::value())),
-                        Cell::from(Span::styled(selected.get_name(), theme::value())),
-                    ]),
-                    spacer.clone(),
-                ];
-                // Construct table details. Developer/publisher/description are
-                // filled in lazily from `aurelia info` (see Game::query_info).
-                let homepage = selected.homepage.clone();
-                let developer = selected.get_developer();
-                let publisher = selected.get_publisher();
-                let proton = selected.get_proton();
-                let description = selected.get_description();
-                let mut detail_rows: Vec<(&str, &String)> = vec![
-                    ("Homepage", &homepage),
-                    ("Developer", &developer),
-                    ("Publisher", &publisher),
-                    ("Proton Tier", &proton),
-                ];
-                if !description.is_empty() {
-                    detail_rows.push(("Description", &description));
-                }
-                for &(heading, value) in &detail_rows {
-                    table.push(Row::new(vec![
-                        Cell::from(Span::styled(heading, theme::label())),
-                        Cell::from(Span::styled(value.clone(), theme::value())),
-                    ]));
-                }
-                if let Some(status) = selected.get_status() {
-                    table.push(spacer.clone());
-                    for &(heading, value) in &[
-                        ("State", &status.state),
-                        ("Installation", &status.installdir),
-                        ("Size", &convert(status.size)),
-                    ] {
-                        table.push(Row::new(vec![
-                            Cell::from(Span::styled(heading, theme::label())),
-                            Cell::from(Span::styled(value.clone(), theme::value())),
-                        ]));
-                    }
-                }
-                Table::new(table)
-                    .style(theme::base())
-                    .block(theme::panel("Detail".to_string()))
-                    .widths(&[Constraint::Percentage(15), Constraint::Percentage(85)])
-            }
-            None => Table::new(vec![Row::new(vec![Cell::from(Span::styled(
-                "No game selected...".to_string(),
-                theme::value(),
-            ))])])
-            .style(theme::base())
-            .block(theme::panel("Detail".to_string())),
-        };
-        (list, details)
     }
 }
