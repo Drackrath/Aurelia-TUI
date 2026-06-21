@@ -9,8 +9,10 @@ use tui::style::Style;
 use tui::widgets::ListState;
 
 use crate::config::Config;
+use crate::interface::aurelia::{self, AccountJson};
 use crate::interface::game::Game;
 use crate::theme;
+use crate::util::error::STError;
 
 /// The quick-filter tabs along the top of the library.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -139,6 +141,10 @@ pub struct Browser {
     pub filtering: bool,
     /// Whether the help overlay is open.
     pub show_help: bool,
+    /// Whether the account overlay is open.
+    pub show_account: bool,
+    /// The fetched account details, shown by the account overlay.
+    pub account_info: Option<AccountJson>,
     /// Whether the description panel is expanded beyond its collapsed cap.
     pub expand_description: bool,
 }
@@ -153,6 +159,8 @@ impl Browser {
             state: ListState::default(),
             filtering: false,
             show_help: false,
+            show_account: false,
+            account_info: None,
             expand_description: false,
         };
         browser.reset_selection();
@@ -162,6 +170,14 @@ impl Browser {
     /// Toggle the expanded/collapsed state of the description panel.
     pub fn toggle_description(&mut self) {
         self.expand_description = !self.expand_description;
+    }
+
+    /// Fetch the logged-in account (`aurelia account`) and open the overlay.
+    /// Blocking; returns the backend error if the call fails.
+    pub fn open_account(&mut self) -> Result<(), STError> {
+        self.account_info = Some(aurelia::account()?);
+        self.show_account = true;
+        Ok(())
     }
 
     /// Replace the library contents, keeping the current filter/query/sort and a
