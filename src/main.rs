@@ -243,6 +243,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::dlc::dlc(&browser), area);
                 }
+
+                // Running-games overlay floats above everything.
+                if browser.show_running {
+                    let area = ui::centered_rect(60, 60, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::running::running(&browser), area);
+                }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
                 let layout = App::build_layout();
@@ -379,6 +386,20 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => {}
                         }
+                    } else if browser.show_running {
+                        // Running overlay: navigate and stop the highlighted game.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_running(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.running_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.running_previous(),
+                            KeyCode::Char('s') | KeyCode::Char('x') => {
+                                if let Some(r) = browser.selected_running() {
+                                    let _ = aurelia::stop(r.app_id as i32);
+                                    let _ = browser.refresh_running();
+                                }
+                            }
+                            _ => {}
+                        }
                     } else if browser.show_help {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
@@ -462,6 +483,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     let _ = browser.open_dlc(game.id);
                                 }
                             }
+                            KeyCode::Char('R') => browser.open_running(),
                             KeyCode::Char('f') => {
                                 if let Some(game) = browser.selected() {
                                     if config.favorite_games.contains(&game.id) {
@@ -678,7 +700,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud && !browser.show_running {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

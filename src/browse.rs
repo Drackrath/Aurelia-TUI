@@ -169,6 +169,12 @@ pub struct Browser {
     pub dlc_index: usize,
     /// The base app id the DLC overlay is showing (for re-fetching after a toggle).
     dlc_app_id: i32,
+    /// Whether the running-games overlay is open.
+    pub show_running: bool,
+    /// The games Aurelia currently has running (loaded when the overlay opens).
+    pub running: Vec<aurelia::RunningJson>,
+    /// The highlighted row within the running overlay.
+    pub running_index: usize,
 }
 
 impl Browser {
@@ -195,6 +201,9 @@ impl Browser {
             dlc: Vec::new(),
             dlc_index: 0,
             dlc_app_id: 0,
+            show_running: false,
+            running: Vec::new(),
+            running_index: 0,
         };
         browser.reset_selection();
         browser
@@ -254,6 +263,59 @@ impl Browser {
             self.dlc_index = self.dlc.len() - 1;
         }
         Ok(())
+    }
+
+    // --- Running overlay ---
+
+    /// Fetch the games Aurelia currently has running (blocking) and open the
+    /// overlay. A fetch error simply opens an empty overlay ("No games
+    /// running."); the selection resets to the first row.
+    pub fn open_running(&mut self) {
+        self.running = aurelia::running().unwrap_or_default();
+        self.running_index = 0;
+        self.show_running = true;
+    }
+
+    /// Close the running overlay and drop its contents.
+    pub fn close_running(&mut self) {
+        self.show_running = false;
+        self.running.clear();
+        self.running_index = 0;
+    }
+
+    /// The highlighted running game, if any.
+    pub fn selected_running(&self) -> Option<&aurelia::RunningJson> {
+        self.running.get(self.running_index)
+    }
+
+    pub fn running_next(&mut self) {
+        if self.running.is_empty() {
+            self.running_index = 0;
+            return;
+        }
+        self.running_index = (self.running_index + 1) % self.running.len();
+    }
+
+    pub fn running_previous(&mut self) {
+        if self.running.is_empty() {
+            self.running_index = 0;
+            return;
+        }
+        self.running_index = if self.running_index == 0 {
+            self.running.len() - 1
+        } else {
+            self.running_index - 1
+        };
+    }
+
+    /// Re-fetch the running games after a stop, keeping the selection in range.
+    pub fn refresh_running(&mut self) {
+        self.running = aurelia::running().unwrap_or_default();
+        if self.running.is_empty() {
+            self.running_index = 0;
+        } else if self.running_index >= self.running.len() {
+            self.running_index = self.running.len() - 1;
+        }
     }
 
     /// Toggle the expanded/collapsed state of the description panel.

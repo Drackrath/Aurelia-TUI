@@ -233,6 +233,28 @@ struct DlcResponse {
     dlc: Vec<DlcJson>,
 }
 
+/// One running game, from `aurelia running --json` (an item of the response's
+/// `running` array). Each game was launched via `aurelia play`; the fields match
+/// the CLI's `--json` output and everything defaults so a missing field never
+/// breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RunningJson {
+    #[serde(default)]
+    pub app_id: u32,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub pid: u32,
+}
+
+/// The top-level object from `aurelia running --json`: the list of currently
+/// running games. Only the `running` array is surfaced.
+#[derive(Debug, Clone, Deserialize)]
+struct RunningResponse {
+    #[serde(default)]
+    running: Vec<RunningJson>,
+}
+
 /// A `qr_challenge` event line from `aurelia login --qr --json` (emitted on
 /// stderr, re-emitted whenever Steam rotates the code).
 #[derive(Debug, Deserialize)]
@@ -383,6 +405,22 @@ pub fn dlc(app_id: i32) -> Result<Vec<DlcJson>, STError> {
 pub fn set_dlc(app_id: i32, enable: bool) -> Result<(), STError> {
     let verb = if enable { "enable" } else { "disable" };
     run_json(&[verb, &app_id.to_string()])?;
+    Ok(())
+}
+
+/// List the games Aurelia is currently running (`aurelia running --json`). The
+/// CLI wraps the list in an object (`{ running: [...] }`); we unwrap and parse
+/// just the array.
+pub fn running() -> Result<Vec<RunningJson>, STError> {
+    let value = run_json(&["running"])?;
+    let parsed: RunningResponse = serde_json::from_value(value)?;
+    Ok(parsed.running)
+}
+
+/// Stop a running game (`aurelia stop <id> --json`). The returned value is
+/// ignored; only errors are propagated.
+pub fn stop(app_id: i32) -> Result<(), STError> {
+    run_json(&["stop", &app_id.to_string()])?;
     Ok(())
 }
 
