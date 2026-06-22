@@ -163,6 +163,12 @@ pub struct Browser {
     pub achievements: Vec<aurelia::AchievementJson>,
     /// Scroll offset (top row) within the achievements overlay.
     pub ach_scroll: usize,
+    /// Whether the friends overlay is open.
+    pub show_friends: bool,
+    /// The logged-in user's friends (loaded when the overlay opens).
+    pub friends: Vec<aurelia::FriendJson>,
+    /// Scroll offset (top row) within the friends overlay.
+    pub friends_scroll: usize,
     /// Whether the uninstall confirmation prompt is open for the selection.
     pub confirm_uninstall: bool,
     /// Whether the DLC overlay is open.
@@ -210,6 +216,9 @@ impl Browser {
             show_achievements: false,
             achievements: Vec::new(),
             ach_scroll: 0,
+            show_friends: false,
+            friends: Vec::new(),
+            friends_scroll: 0,
             confirm_uninstall: false,
             show_dlc: false,
             dlc: Vec::new(),
@@ -437,6 +446,34 @@ impl Browser {
     /// Scroll the achievements overlay up by one row (clamped).
     pub fn ach_scroll_up(&mut self) {
         self.ach_scroll = self.ach_scroll.saturating_sub(1);
+    }
+
+    /// Fetch the logged-in user's friends (blocking) and open the overlay. A
+    /// fetch error simply opens an empty overlay ("No friends.").
+    pub fn open_friends(&mut self) {
+        self.friends = aurelia::friends().unwrap_or_default();
+        self.friends_scroll = 0;
+        self.show_friends = true;
+    }
+
+    /// Close the friends overlay and drop its data.
+    pub fn close_friends(&mut self) {
+        self.show_friends = false;
+        self.friends = Vec::new();
+        self.friends_scroll = 0;
+    }
+
+    /// Scroll the friends overlay down by one row (clamped).
+    pub fn friends_scroll_down(&mut self) {
+        let max = self.friends.len().saturating_sub(1);
+        if self.friends_scroll < max {
+            self.friends_scroll += 1;
+        }
+    }
+
+    /// Scroll the friends overlay up by one row (clamped).
+    pub fn friends_scroll_up(&mut self) {
+        self.friends_scroll = self.friends_scroll.saturating_sub(1);
     }
 
     /// Fetch the logged-in account (`aurelia account`) and open the overlay.

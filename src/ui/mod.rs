@@ -11,6 +11,7 @@ pub mod confirm;
 pub mod depots;
 pub mod detail;
 pub mod dlc;
+pub mod friends;
 pub mod help;
 pub mod list;
 pub mod status;

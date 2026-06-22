@@ -227,6 +227,67 @@ fn default_true() -> bool {
     true
 }
 
+/// One friend entry from `aurelia friends --json` (an item of the serialized
+/// roster). Key names match the CLI's `Friend` struct. Everything is
+/// `#[serde(default)]` so a missing field never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FriendJson {
+    /// SteamID64 of the friend. The CLI emits it as a number, but accept a
+    /// string form too for robustness.
+    #[serde(default, deserialize_with = "de_steam_id")]
+    pub steam_id: u64,
+    /// Display (persona) name, if known.
+    #[serde(default)]
+    pub persona_name: Option<String>,
+    /// Online status: 0 offline, 1 online, 2 busy, 3 away, 4 snooze,
+    /// 5 looking-to-trade, 6 looking-to-play.
+    #[serde(default)]
+    pub persona_state: Option<u32>,
+    /// App id of the game the friend is currently playing, if any.
+    #[serde(default)]
+    pub game_app_id: Option<u32>,
+    /// Name of the game the friend is currently playing, if known.
+    #[serde(default)]
+    pub game_name: Option<String>,
+}
+
+impl FriendJson {
+    /// Display name, falling back to the SteamID when no persona is known.
+    pub fn display_name(&self) -> String {
+        self.persona_name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| self.steam_id.to_string())
+    }
+
+    /// Whether the friend is currently online (any non-offline persona state).
+    pub fn is_online(&self) -> bool {
+        !matches!(self.persona_state, None | Some(0))
+    }
+
+    /// The game the friend is currently playing, if any (name, else `app <id>`).
+    pub fn current_game(&self) -> Option<String> {
+        match (&self.game_name, self.game_app_id) {
+            (Some(g), _) if !g.is_empty() => Some(g.clone()),
+            (_, Some(id)) => Some(format!("app {}", id)),
+            _ => None,
+        }
+    }
+}
+
+/// Deserialize a SteamID64 that may arrive as a JSON number or string.
+fn de_steam_id<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize as _;
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Number(n) => Ok(n.as_u64().unwrap_or(0)),
+        serde_json::Value::String(s) => Ok(s.parse().unwrap_or(0)),
+        _ => Ok(0),
+    }
+}
+
 /// One DLC entry for a base game, from `aurelia dlc <id> --json` (the `dlc`
 /// array). All status fields are nullable in the CLI output (they come from a
 /// best-effort `DlcState` lookup), so each defaults when absent.
@@ -500,6 +561,20 @@ pub fn achievements(app_id: i32) -> Result<Vec<AchievementJson>, STError> {
         .get("achievements")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
+}
+
+/// Fetch the logged-in user's friends (`aurelia friends --json`). The CLI emits
+/// a bare array, but accept an object-wrapped form (`{ "friends": [...] }`) too.
+pub fn friends() -> Result<Vec<FriendJson>, STError> {
+    let value = run_json(&["friends"])?;
+    let list = match value.get("friends") {
+        Some(friends) => friends.clone(),
+        None => value,
+    };
     if list.is_null() {
         return Ok(Vec::new());
     }
