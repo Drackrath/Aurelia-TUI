@@ -250,6 +250,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::config::config(&browser), area);
                 }
 
+                // Wallet overlay floats above everything.
+                if browser.show_wallet {
+                    let area = ui::centered_rect(40, 30, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::wallet::wallet(&browser), area);
+                }
+
                 // Uninstall confirmation prompt floats above the library.
                 if browser.confirm_uninstall {
                     if let Some(game) = browser.selected() {
@@ -571,6 +578,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => {}
                         }
+                    } else if browser.show_wallet {
+                        // Any key dismisses the wallet overlay.
+                        browser.show_wallet = false;
                     } else if browser.filtering {
                         // Live text filter focused: typing edits the query.
                         match input {
@@ -598,6 +608,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 // Fetch the launcher configuration (blocking) and
                                 // open the settings overlay; ignore failures.
                                 let _ = browser.open_config();
+                            }
+                            KeyCode::Char('w') => {
+                                // Fetch the wallet (blocking) and open the overlay;
+                                // ignore failures so a missing session is non-fatal.
+                                let _ = browser.open_wallet();
                             }
                             KeyCode::Char('/') => browser.filtering = true,
                             KeyCode::Char('l') => {
@@ -910,7 +925,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_friends && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_proton && !browser.show_running {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_friends && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_proton && !browser.show_running && !browser.show_wallet {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

@@ -22,6 +22,7 @@ pub mod proton;
 pub mod running;
 pub mod status;
 pub mod tabs;
+pub mod wallet;
 
 use tui::layout::{Constraint, Direction, Layout, Rect};
 

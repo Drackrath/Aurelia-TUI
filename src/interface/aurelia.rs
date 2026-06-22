@@ -131,6 +131,23 @@ impl ConfigJson {
     }
 }
 
+/// The Steam Wallet balance, from `aurelia wallet --json`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WalletJson {
+    /// Balance in the currency's minor units (cents).
+    #[serde(default)]
+    pub balance_cents: i64,
+    /// Steam currency id.
+    #[serde(default)]
+    pub currency: u32,
+    /// Wallet country code.
+    #[serde(default)]
+    pub country: String,
+    /// Human-readable balance (e.g. "12.34 EUR").
+    #[serde(default)]
+    pub formatted: String,
+}
+
 /// Artwork URLs injected by `aurelia list --json`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AssetsJson {
@@ -745,6 +762,12 @@ pub fn set_presence(online: bool) -> Result<(), STError> {
 pub fn logout() -> Result<(), STError> {
     run_json(&["logout"])?;
     Ok(())
+}
+
+/// Fetch the Steam Wallet balance (`aurelia wallet --json`).
+pub fn wallet() -> Result<WalletJson, STError> {
+    let value = run_json(&["wallet"])?;
+    Ok(serde_json::from_value(value)?)
 }
 
 /// Fetch the full library (`aurelia list --json`).
