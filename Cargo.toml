@@ -24,10 +24,11 @@ fuzzy-matcher = "0.3.7"
 # Render the Steam login QR challenge as terminal blocks on the login page.
 qrcode = { version = "0.14", default-features = false }
 
-# Use rustls rather than the OS-native TLS backend: schannel 0.1.20 (pulled in
-# by native-tls on Windows) triggers an undefined-behaviour abort under newer
-# rustc's runtime checks during the TLS handshake.
-reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+# Native TLS (schannel on Windows). This deliberately avoids `rustls`, whose
+# `ring 0.16.x` dependency fails to C-compile on aarch64-pc-windows-msvc
+# (`BN_ULLONG undeclared`). The `schannel` pin below (>= 0.1.27) fixes the
+# `slice::from_raw_parts` UB that older schannel hit under rustc's runtime checks.
+reqwest = { version = "0.11", features = ["blocking", "json"] }
 
 atty = "0.2"
 
@@ -35,3 +36,9 @@ image = "0.24"
 
 [dependencies.tui-image-rgba-updated]
 version = "0.2.2"
+
+# Force a fixed schannel (native-tls's Windows TLS backend) on Windows only;
+# 0.1.20 aborted in debug builds during the TLS handshake. schannel is a
+# Windows-only crate, so it must not be an unconditional dependency.
+[target.'cfg(windows)'.dependencies]
+schannel = "0.1.27"
