@@ -243,6 +243,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::dlc::dlc(&browser), area);
                 }
+
+                // Branches overlay floats above everything.
+                if browser.show_branches {
+                    let area = ui::centered_rect(60, 60, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::branches::branches(&browser), area);
+                }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
                 let layout = App::build_layout();
@@ -379,6 +386,21 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => {}
                         }
+                    } else if browser.show_branches {
+                        // Branches overlay: navigate and switch to the highlighted branch.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_branches(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.branch_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.branch_previous(),
+                            KeyCode::Char('\n') | KeyCode::Enter | KeyCode::Char('s') => {
+                                if let Some(branch) = browser.selected_branch() {
+                                    let _ =
+                                        aurelia::set_branch(browser.branch_app_id(), &branch.name);
+                                    browser.close_branches();
+                                }
+                            }
+                            _ => {}
+                        }
                     } else if browser.show_help {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
@@ -460,6 +482,12 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 if let Some(game) = browser.selected() {
                                     // Blocking fetch; failure leaves the overlay closed.
                                     let _ = browser.open_dlc(game.id);
+                                }
+                            }
+                            KeyCode::Char('b') => {
+                                if let Some(game) = browser.selected() {
+                                    // Blocking fetch; failure leaves the overlay closed.
+                                    let _ = browser.open_branches(game.id);
                                 }
                             }
                             KeyCode::Char('f') => {
@@ -678,7 +706,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud && !browser.show_branches {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

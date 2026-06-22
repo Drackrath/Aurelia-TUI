@@ -233,6 +233,66 @@ struct DlcResponse {
     dlc: Vec<DlcJson>,
 }
 
+/// One beta branch for a game, from `aurelia branches <id> --json` (an item of
+/// the response's `branches` array).
+///
+/// The current CLI emits each branch as a bare name string (the password-gated
+/// branches are filtered out server-side), so the common case is a plain
+/// `String`. The custom `Deserialize` below also accepts an object form
+/// (`{ name, description, active/current, build_id, pwdrequired }`) so a richer
+/// future CLI keeps working; every object field is optional/defaulted.
+#[derive(Debug, Clone, Default)]
+pub struct BranchJson {
+    pub name: String,
+    pub description: String,
+    /// Whether this is the branch the install is currently tracking. The current
+    /// CLI doesn't report it, so it stays `false`; [`Browser::open_branches`]
+    /// marks the active branch by name when one is known.
+    pub active: bool,
+}
+
+impl<'de> Deserialize<'de> for BranchJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // The branch array mixes shapes across CLI versions: a bare name string,
+        // or an object with optional metadata. Deserialize either via an
+        // untagged shim, then normalise into `BranchJson`.
+        #[derive(Deserialize)]
+        struct BranchObj {
+            #[serde(default)]
+            name: String,
+            #[serde(default)]
+            description: String,
+            #[serde(default)]
+            active: bool,
+            #[serde(default)]
+            current: bool,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum BranchRaw {
+            Name(String),
+            Obj(BranchObj),
+        }
+
+        Ok(match BranchRaw::deserialize(deserializer)? {
+            BranchRaw::Name(name) => BranchJson {
+                name,
+                description: String::new(),
+                active: false,
+            },
+            BranchRaw::Obj(obj) => BranchJson {
+                name: obj.name,
+                description: obj.description,
+                active: obj.active || obj.current,
+            },
+        })
+    }
+}
+
 /// A `qr_challenge` event line from `aurelia login --qr --json` (emitted on
 /// stderr, re-emitted whenever Steam rotates the code).
 #[derive(Debug, Deserialize)]
@@ -383,6 +443,27 @@ pub fn dlc(app_id: i32) -> Result<Vec<DlcJson>, STError> {
 pub fn set_dlc(app_id: i32, enable: bool) -> Result<(), STError> {
     let verb = if enable { "enable" } else { "disable" };
     run_json(&[verb, &app_id.to_string()])?;
+    Ok(())
+}
+
+/// Fetch the beta branches for a game (`aurelia branches <id> --json`). The CLI
+/// wraps the list under a `branches` key (`{ app_id, branches: [..] }`); accept
+/// either that or a bare array.
+pub fn branches(app_id: i32) -> Result<Vec<BranchJson>, STError> {
+    let value = run_json(&["branches", &app_id.to_string()])?;
+    // Accept either the wrapping object (`{ "branches": [..] }`) or a bare array.
+    let list = match value.get("branches") {
+        Some(branches) => branches.clone(),
+        None => value,
+    };
+    Ok(serde_json::from_value(list)?)
+}
+
+/// Switch a game to a beta branch (`aurelia set-branch <id> <branch> --json`).
+/// The returned value is ignored; only errors are propagated. The switch is
+/// staged — an `update` is needed afterwards for it to take effect.
+pub fn set_branch(app_id: i32, branch: &str) -> Result<(), STError> {
+    run_json(&["set-branch", &app_id.to_string(), branch])?;
     Ok(())
 }
 
