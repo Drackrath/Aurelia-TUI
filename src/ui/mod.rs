@@ -14,6 +14,7 @@ pub mod dlc;
 pub mod friends;
 pub mod help;
 pub mod inventory;
+pub mod launch;
 pub mod list;
 pub mod status;
 pub mod tabs;
