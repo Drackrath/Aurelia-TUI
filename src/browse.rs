@@ -169,6 +169,14 @@ pub struct Browser {
     pub dlc_index: usize,
     /// The base app id the DLC overlay is showing (for re-fetching after a toggle).
     dlc_app_id: i32,
+    /// Whether the branches overlay is open.
+    pub show_branches: bool,
+    /// Beta branches for the game the overlay was opened for.
+    pub branches: Vec<aurelia::BranchJson>,
+    /// The highlighted row within the branches overlay.
+    pub branch_index: usize,
+    /// The app id the branches overlay is showing (used when switching branch).
+    branch_app_id: i32,
 }
 
 impl Browser {
@@ -195,6 +203,10 @@ impl Browser {
             dlc: Vec::new(),
             dlc_index: 0,
             dlc_app_id: 0,
+            show_branches: false,
+            branches: Vec::new(),
+            branch_index: 0,
+            branch_app_id: 0,
         };
         browser.reset_selection();
         browser
@@ -254,6 +266,55 @@ impl Browser {
             self.dlc_index = self.dlc.len() - 1;
         }
         Ok(())
+    }
+
+    // --- Branches overlay ---
+
+    /// Fetch the beta branches for `app_id` and open the overlay. Blocks on the
+    /// `aurelia branches` subprocess; the selection resets to the first row.
+    pub fn open_branches(&mut self, app_id: i32) -> Result<(), STError> {
+        self.branches = aurelia::branches(app_id)?;
+        self.branch_app_id = app_id;
+        self.branch_index = 0;
+        self.show_branches = true;
+        Ok(())
+    }
+
+    /// Close the branches overlay and drop its contents.
+    pub fn close_branches(&mut self) {
+        self.show_branches = false;
+        self.branches.clear();
+        self.branch_index = 0;
+    }
+
+    /// The app id the branches overlay was opened for.
+    pub fn branch_app_id(&self) -> i32 {
+        self.branch_app_id
+    }
+
+    /// The highlighted branch entry, if any.
+    pub fn selected_branch(&self) -> Option<&aurelia::BranchJson> {
+        self.branches.get(self.branch_index)
+    }
+
+    pub fn branch_next(&mut self) {
+        if self.branches.is_empty() {
+            self.branch_index = 0;
+            return;
+        }
+        self.branch_index = (self.branch_index + 1) % self.branches.len();
+    }
+
+    pub fn branch_previous(&mut self) {
+        if self.branches.is_empty() {
+            self.branch_index = 0;
+            return;
+        }
+        self.branch_index = if self.branch_index == 0 {
+            self.branches.len() - 1
+        } else {
+            self.branch_index - 1
+        };
     }
 
     /// Toggle the expanded/collapsed state of the description panel.
