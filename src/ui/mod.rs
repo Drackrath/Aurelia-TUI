@@ -6,6 +6,7 @@ pub mod cloud;
 pub mod achievements;
 pub mod account;
 pub mod branches;
+pub mod config;
 pub mod confirm;
 pub mod detail;
 pub mod dlc;

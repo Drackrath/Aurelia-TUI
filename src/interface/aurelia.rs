@@ -88,6 +88,49 @@ pub struct AccountJson {
     pub vac_bans: u32,
 }
 
+/// The launcher configuration, from `aurelia config show --json` (the
+/// serialized `LauncherConfig`). Only the human-relevant top-level scalars are
+/// captured; nested maps (per-game configs, launch options) are skipped. Every
+/// field is `#[serde(default)]` so a missing/renamed key never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ConfigJson {
+    /// The Steam library path games install into.
+    #[serde(default)]
+    pub steam_library_path: Option<String>,
+    /// The default Proton/Wine runtime.
+    #[serde(default)]
+    pub proton_version: Option<String>,
+    /// Friends/chat presence the daemon announces (`"online"` / `"offline"`).
+    #[serde(default)]
+    pub chat_presence: Option<String>,
+    /// How per-game Wine prefixes / compat data are laid out (e.g. `"Shared"`).
+    #[serde(default)]
+    pub steam_prefix_mode: Option<String>,
+    /// Default Steam API language for achievements (`None` = English).
+    #[serde(default)]
+    pub language: Option<String>,
+    /// Whether Steam Cloud save sync is enabled.
+    #[serde(default)]
+    pub enable_cloud_sync: bool,
+    /// Whether games share a single compat-data prefix.
+    #[serde(default)]
+    pub use_shared_compat_data: bool,
+    /// Whether installed Windows Steam games are auto-discovered.
+    #[serde(default)]
+    pub windows_steam_discovery_enabled: bool,
+    /// Whether the optional luxtorpeda native-engine plugin is enabled.
+    #[serde(default)]
+    pub luxtorpeda_enabled: bool,
+}
+
+impl ConfigJson {
+    /// Whether the configured presence is online. Defaults to `false`
+    /// (offline) when the field is missing or unrecognised.
+    pub fn is_online(&self) -> bool {
+        self.chat_presence.as_deref() == Some("online")
+    }
+}
+
 /// Artwork URLs injected by `aurelia list --json`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AssetsJson {
@@ -382,6 +425,19 @@ pub fn health() -> Result<HealthJson, STError> {
 pub fn account() -> Result<AccountJson, STError> {
     let value = run_json(&["account"])?;
     Ok(serde_json::from_value(value)?)
+}
+
+/// Fetch the launcher configuration (`aurelia config show --json`).
+pub fn config_show() -> Result<ConfigJson, STError> {
+    let value = run_json(&["config", "show"])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Set the friends/chat presence the daemon announces
+/// (`aurelia config presence online|offline --json`).
+pub fn set_presence(online: bool) -> Result<(), STError> {
+    run_json(&["config", "presence", if online { "online" } else { "offline" }])?;
+    Ok(())
 }
 
 /// Fetch the full library (`aurelia list --json`).
