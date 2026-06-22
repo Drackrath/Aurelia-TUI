@@ -462,8 +462,15 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
                     } else if browser.show_account {
-                        // Any key dismisses the account overlay.
-                        browser.show_account = false;
+                        // `o` logs out of Steam; any other key dismisses the overlay.
+                        match input {
+                            KeyCode::Char('o') => {
+                                let _ = aurelia::logout();
+                                browser.show_account = false;
+                                app.mode = Mode::Login;
+                            }
+                            _ => browser.show_account = false,
+                        }
                     } else if browser.show_config {
                         // Settings overlay: dismiss, or toggle presence in place.
                         match input {

@@ -44,7 +44,9 @@ pub fn account(browser: &Browser) -> Table<'static> {
     };
 
     Table::new(rows)
-        .block(theme::panel("Account — press any key to close".to_string()))
+        .block(theme::panel(
+            "Account ([o] log out — any other key closes)".to_string(),
+        ))
         .style(theme::base())
         .widths(&[Constraint::Percentage(28), Constraint::Percentage(72)])
         .column_spacing(1)

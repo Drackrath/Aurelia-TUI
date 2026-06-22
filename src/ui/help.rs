@@ -65,6 +65,7 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("A", "account"));
     lines.push(binding("p", "settings"));
     lines.push(binding("F", "friends"));
+    lines.push(binding("A then o", "log out"));
     lines.push(binding("l", "sign in again"));
     lines.push(Spans::from(""));
 
