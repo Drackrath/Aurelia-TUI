@@ -243,6 +243,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::dlc::dlc(&browser), area);
                 }
+
+                // Proton runtimes overlay floats above everything.
+                if browser.show_proton {
+                    let area = ui::centered_rect(60, 70, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::proton::proton(&browser), area);
+                }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
                 let layout = App::build_layout();
@@ -379,6 +386,27 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => {}
                         }
+                    } else if browser.show_proton {
+                        // Proton overlay: navigate and set the highlighted runtime
+                        // as the global default.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_proton(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.proton_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.proton_previous(),
+                            KeyCode::Char('d') => {
+                                if let Some(p) = browser.selected_proton() {
+                                    let _ = aurelia::proton_default(&p.name);
+                                    // Re-fetch so the [default] marker updates,
+                                    // keeping the current row highlighted.
+                                    let keep = browser.proton_index;
+                                    if browser.open_proton().is_ok() {
+                                        browser.proton_index =
+                                            keep.min(browser.protons.len().saturating_sub(1));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
                     } else if browser.show_help {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
@@ -461,6 +489,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     // Blocking fetch; failure leaves the overlay closed.
                                     let _ = browser.open_dlc(game.id);
                                 }
+                            }
+                            KeyCode::Char('P') => {
+                                // Blocking fetch; failure leaves the overlay closed.
+                                let _ = browser.open_proton();
                             }
                             KeyCode::Char('f') => {
                                 if let Some(game) = browser.selected() {
@@ -678,7 +710,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud && !browser.show_proton {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),
