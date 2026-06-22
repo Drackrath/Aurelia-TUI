@@ -243,6 +243,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::dlc::dlc(&browser), area);
                 }
+
+                // Depots overlay floats above everything.
+                if browser.show_depots {
+                    let area = ui::centered_rect(70, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::depots::depots(&browser), area);
+                }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
                 let layout = App::build_layout();
@@ -379,6 +386,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => {}
                         }
+                    } else if browser.show_depots {
+                        // Depots overlay: Esc/q close, j/k scroll.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_depots(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.depots_scroll_down(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.depots_scroll_up(),
+                            _ => {}
+                        }
                     } else if browser.show_help {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
@@ -483,6 +498,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('C') => {
                                 if let Some(game) = browser.selected() {
                                     browser.open_cloud(game.id);
+                                }
+                            }
+                            KeyCode::Char('o') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.open_depots(game.id);
                                 }
                             }
                             _ => {}
@@ -678,7 +698,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud && !browser.show_depots {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

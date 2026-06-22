@@ -169,6 +169,12 @@ pub struct Browser {
     pub dlc_index: usize,
     /// The base app id the DLC overlay is showing (for re-fetching after a toggle).
     dlc_app_id: i32,
+    /// Whether the depots overlay is open.
+    pub show_depots: bool,
+    /// Depots for the game the overlay was opened for.
+    pub depots: Vec<aurelia::DepotJson>,
+    /// Scroll offset (top row) within the depots overlay.
+    pub depots_scroll: usize,
 }
 
 impl Browser {
@@ -195,6 +201,9 @@ impl Browser {
             dlc: Vec::new(),
             dlc_index: 0,
             dlc_app_id: 0,
+            show_depots: false,
+            depots: Vec::new(),
+            depots_scroll: 0,
         };
         browser.reset_selection();
         browser
@@ -254,6 +263,36 @@ impl Browser {
             self.dlc_index = self.dlc.len() - 1;
         }
         Ok(())
+    }
+
+    // --- Depots overlay ---
+
+    /// Fetch the depots for `app_id` (blocking) and open the overlay. A fetch
+    /// error simply opens an empty overlay ("No depots.").
+    pub fn open_depots(&mut self, app_id: i32) {
+        self.depots = aurelia::depots(app_id).unwrap_or_default();
+        self.depots_scroll = 0;
+        self.show_depots = true;
+    }
+
+    /// Close the depots overlay and drop its contents.
+    pub fn close_depots(&mut self) {
+        self.show_depots = false;
+        self.depots.clear();
+        self.depots_scroll = 0;
+    }
+
+    /// Scroll the depots overlay down by one row (clamped).
+    pub fn depots_scroll_down(&mut self) {
+        let max = self.depots.len().saturating_sub(1);
+        if self.depots_scroll < max {
+            self.depots_scroll += 1;
+        }
+    }
+
+    /// Scroll the depots overlay up by one row (clamped).
+    pub fn depots_scroll_up(&mut self) {
+        self.depots_scroll = self.depots_scroll.saturating_sub(1);
     }
 
     /// Toggle the expanded/collapsed state of the description panel.

@@ -6,6 +6,7 @@ pub mod cloud;
 pub mod achievements;
 pub mod account;
 pub mod confirm;
+pub mod depots;
 pub mod detail;
 pub mod dlc;
 pub mod help;
