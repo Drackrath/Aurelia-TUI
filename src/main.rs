@@ -243,6 +243,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::dlc::dlc(&browser), area);
                 }
+
+                // Move (relocate install) prompt floats above everything.
+                if browser.show_move {
+                    let area = ui::centered_rect(60, 25, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::move_game::move_overlay(&browser), area);
+                }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
                 let layout = App::build_layout();
@@ -379,6 +386,18 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => {}
                         }
+                    } else if browser.show_move {
+                        // Move prompt: type the destination library path, Enter
+                        // to relocate (kept open to show status), Esc to cancel.
+                        match input {
+                            KeyCode::Esc => browser.close_move(),
+                            KeyCode::Char('\n') | KeyCode::Enter => {
+                                let _ = browser.do_move();
+                            }
+                            KeyCode::Backspace => browser.move_pop(),
+                            KeyCode::Char(c) => browser.move_push(c),
+                            _ => {}
+                        }
                     } else if browser.show_help {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
@@ -448,6 +467,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 if let Some(game) = browser.selected() {
                                     if game.installed {
                                         browser.confirm_uninstall = true;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('M') => {
+                                // Only offer move for installed games.
+                                if let Some(game) = browser.selected() {
+                                    if game.installed {
+                                        browser.open_move(game.id);
                                     }
                                 }
                             }
@@ -678,7 +705,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud && !browser.show_move {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

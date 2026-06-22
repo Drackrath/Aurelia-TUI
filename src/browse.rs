@@ -169,6 +169,14 @@ pub struct Browser {
     pub dlc_index: usize,
     /// The base app id the DLC overlay is showing (for re-fetching after a toggle).
     dlc_app_id: i32,
+    /// Whether the move (relocate install) prompt is open.
+    pub show_move: bool,
+    /// The destination library path the user is typing.
+    pub move_path: String,
+    /// The app id being moved.
+    pub move_app_id: i32,
+    /// A short status line for the move prompt (progress, errors).
+    pub move_status: String,
 }
 
 impl Browser {
@@ -195,6 +203,10 @@ impl Browser {
             dlc: Vec::new(),
             dlc_index: 0,
             dlc_app_id: 0,
+            show_move: false,
+            move_path: String::new(),
+            move_app_id: 0,
+            move_status: String::new(),
         };
         browser.reset_selection();
         browser
@@ -254,6 +266,51 @@ impl Browser {
             self.dlc_index = self.dlc.len() - 1;
         }
         Ok(())
+    }
+
+    // --- Move (relocate install) prompt ---
+
+    /// Open the move prompt for `app_id`, clearing any previous path/status.
+    pub fn open_move(&mut self, app_id: i32) {
+        self.move_app_id = app_id;
+        self.move_path.clear();
+        self.move_status.clear();
+        self.show_move = true;
+    }
+
+    /// Close the move prompt and drop its state.
+    pub fn close_move(&mut self) {
+        self.show_move = false;
+        self.move_path.clear();
+        self.move_status.clear();
+        self.move_app_id = 0;
+    }
+
+    /// Append a typed character to the destination path.
+    pub fn move_push(&mut self, c: char) {
+        self.move_path.push(c);
+    }
+
+    /// Remove the last character from the destination path.
+    pub fn move_pop(&mut self) {
+        self.move_path.pop();
+    }
+
+    /// Relocate the game to the typed library folder (blocking on `aurelia
+    /// move`). Updates `move_status` to reflect progress/outcome and returns the
+    /// backend result.
+    pub fn do_move(&mut self) -> Result<(), STError> {
+        self.move_status = "moving...".to_string();
+        match aurelia::move_game(self.move_app_id, &self.move_path) {
+            Ok(()) => {
+                self.move_status = "done".to_string();
+                Ok(())
+            }
+            Err(err) => {
+                self.move_status = format!("Failed: {}", err);
+                Err(err)
+            }
+        }
     }
 
     /// Toggle the expanded/collapsed state of the description panel.
