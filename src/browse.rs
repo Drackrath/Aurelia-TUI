@@ -219,6 +219,12 @@ pub struct Browser {
     pub move_app_id: i32,
     /// A short status line for the move prompt (progress, errors).
     pub move_status: String,
+    /// Whether the Proton runtimes overlay is open.
+    pub show_proton: bool,
+    /// The Proton/Wine runtimes (loaded when the overlay opens).
+    pub protons: Vec<aurelia::ProtonJson>,
+    /// The highlighted row within the Proton overlay.
+    pub proton_index: usize,
 }
 
 impl Browser {
@@ -270,6 +276,9 @@ impl Browser {
             move_path: String::new(),
             move_app_id: 0,
             move_status: String::new(),
+            show_proton: false,
+            protons: Vec::new(),
+            proton_index: 0,
         };
         browser.reset_selection();
         browser
@@ -453,6 +462,49 @@ impl Browser {
                 Err(err)
             }
         }
+    }
+
+    // --- Proton overlay ---
+
+    /// Fetch the Proton/Wine runtimes and open the overlay. Blocks on the
+    /// `aurelia proton list` subprocess; the selection resets to the first row.
+    pub fn open_proton(&mut self) -> Result<(), STError> {
+        self.protons = aurelia::proton_list()?;
+        self.proton_index = 0;
+        self.show_proton = true;
+        Ok(())
+    }
+
+    /// Close the Proton overlay and drop its contents.
+    pub fn close_proton(&mut self) {
+        self.show_proton = false;
+        self.protons.clear();
+        self.proton_index = 0;
+    }
+
+    /// The highlighted Proton runtime, if any.
+    pub fn selected_proton(&self) -> Option<&aurelia::ProtonJson> {
+        self.protons.get(self.proton_index)
+    }
+
+    pub fn proton_next(&mut self) {
+        if self.protons.is_empty() {
+            self.proton_index = 0;
+            return;
+        }
+        self.proton_index = (self.proton_index + 1) % self.protons.len();
+    }
+
+    pub fn proton_previous(&mut self) {
+        if self.protons.is_empty() {
+            self.proton_index = 0;
+            return;
+        }
+        self.proton_index = if self.proton_index == 0 {
+            self.protons.len() - 1
+        } else {
+            self.proton_index - 1
+        };
     }
 
     /// Toggle the expanded/collapsed state of the description panel.

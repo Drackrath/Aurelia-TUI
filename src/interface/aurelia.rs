@@ -571,6 +571,49 @@ struct MyMarketStateJson {
     buy_orders: Vec<MyBuyOrderJson>,
 }
 
+/// One Proton/Wine runtime, surfaced from `aurelia proton list --json`. The CLI
+/// emits a wrapping object (`{ available: [..], installed: [..], default }`);
+/// `proton_list` flattens it into one list, computing the `installed`/`is_default`
+/// markers per entry. Every field is `#[serde(default)]` so a partial line parses.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ProtonJson {
+    /// The runtime name, used to install/select it (e.g. `Proton 9.0`, `GE-Proton10-34`).
+    #[serde(default)]
+    pub name: String,
+    /// Human label for the source family (`Valve`, `Proton-GE`, `Wine-GE`).
+    #[serde(default)]
+    pub label: String,
+    /// Download size in bytes (`0` when unknown).
+    #[serde(default)]
+    pub size: u64,
+    /// Whether this runtime is present on disk (computed by `proton_list`).
+    #[serde(default)]
+    pub installed: bool,
+    /// Whether this runtime is the configured global default (computed by `proton_list`).
+    #[serde(default)]
+    pub is_default: bool,
+}
+
+/// An entry of the `installed` array from `aurelia proton list --json`
+/// (`{ name, location, path }`); only the name is surfaced.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct InstalledProtonJson {
+    #[serde(default)]
+    name: String,
+}
+
+/// The top-level object from `aurelia proton list --json`: the installable
+/// runtimes, what's on disk, and the configured default version name.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ProtonListResponse {
+    #[serde(default)]
+    available: Vec<ProtonJson>,
+    #[serde(default)]
+    installed: Vec<InstalledProtonJson>,
+    #[serde(default)]
+    default: String,
+}
+
 /// A `qr_challenge` event line from `aurelia login --qr --json` (emitted on
 /// stderr, re-emitted whenever Steam rotates the code).
 #[derive(Debug, Deserialize)]
@@ -848,6 +891,57 @@ pub fn branches(app_id: i32) -> Result<Vec<BranchJson>, STError> {
 /// staged — an `update` is needed afterwards for it to take effect.
 pub fn set_branch(app_id: i32, branch: &str) -> Result<(), STError> {
     run_json(&["set-branch", &app_id.to_string(), branch])?;
+    Ok(())
+}
+
+/// List the Proton/Wine runtimes (`aurelia proton list --json`). The CLI returns
+/// a wrapping object with separate `available`/`installed` arrays and a `default`
+/// version name; this flattens them into one list, marking each entry's
+/// `installed` and `is_default` state (matched case-insensitively by name).
+pub fn proton_list() -> Result<Vec<ProtonJson>, STError> {
+    let value = run_json(&["proton", "list"])?;
+    let parsed: ProtonListResponse = serde_json::from_value(value)?;
+
+    let is_installed = |name: &str| {
+        parsed
+            .installed
+            .iter()
+            .any(|i| i.name.eq_ignore_ascii_case(name))
+    };
+    let is_default = |name: &str| name.eq_ignore_ascii_case(&parsed.default);
+
+    let mut protons: Vec<ProtonJson> = parsed
+        .available
+        .into_iter()
+        .map(|mut p| {
+            p.installed = is_installed(&p.name);
+            p.is_default = is_default(&p.name);
+            p
+        })
+        .collect();
+
+    // Surface any installed runtime missing from the available list (e.g. an old
+    // GE build no longer published) so everything on disk is still shown.
+    for inst in &parsed.installed {
+        if !protons.iter().any(|p| p.name.eq_ignore_ascii_case(&inst.name)) {
+            protons.push(ProtonJson {
+                name: inst.name.clone(),
+                label: "(local)".to_string(),
+                size: 0,
+                installed: true,
+                is_default: is_default(&inst.name),
+            });
+        }
+    }
+
+    Ok(protons)
+}
+
+/// Make `version` the global default Proton/Wine runtime
+/// (`aurelia proton default <version> --json`). The returned value is ignored;
+/// only errors are propagated.
+pub fn proton_default(version: &str) -> Result<(), STError> {
+    run_json(&["proton", "default", version])?;
     Ok(())
 }
 
