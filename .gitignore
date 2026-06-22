@@ -8,4 +8,6 @@
 
 # Rust
 /target
+/target-test
+
 *.log

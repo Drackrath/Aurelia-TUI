@@ -3,37 +3,84 @@
 use pretty_bytes::converter::convert;
 
 use tui::layout::Constraint;
-use tui::text::Span;
-use tui::widgets::{Cell, Paragraph, Row, Table, Wrap};
+use tui::style::Style;
+use tui::text::{Span, Spans, Text};
+use tui::widgets::{Block, BorderType, Borders, Cell, Row, Table};
 
 use crate::interface::game::Game;
 use crate::theme;
 use crate::util::stateful::Named;
 
-/// Panel height that fits every key-value row the detail table can show
-/// (ID/Name, spacer, Homepage/Developer/Publisher/Proton, spacer,
-/// State/Installation/Size = 11 rows) plus the top/bottom border.
-pub const TABLE_HEIGHT: u16 = 13;
+/// How many wrapped lines of the description to show while collapsed. Pressing
+/// `[i]` expands the row to the full text.
+const DESC_COLLAPSED_LINES: usize = 6;
 
-/// The selected game's description (or empty), shown in its own wrapped panel
-/// below the table. `expanded` only affects the title hint; the caller sizes the
-/// area (collapsed = capped at ~10 lines, expanded = as much as fits).
-pub fn description(game: Option<&Game>, expanded: bool) -> Paragraph<'static> {
-    let text = game.map(|g| g.get_description()).unwrap_or_default();
-    let title = if expanded {
-        "Description ([i] collapse)"
-    } else {
-        "Description ([i] expand)"
-    };
-    Paragraph::new(text)
-        .block(theme::panel(title.to_string()))
-        .style(theme::base())
-        .wrap(Wrap { trim: false })
+/// Word-wrap `text` to `width` columns, preserving explicit newlines. Words
+/// longer than `width` simply overflow their line.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut line = String::new();
+        let mut col = 0usize;
+        for word in paragraph.split_whitespace() {
+            let wlen = word.chars().count();
+            if col == 0 {
+                line.push_str(word);
+                col = wlen;
+            } else if col + 1 + wlen <= width {
+                line.push(' ');
+                line.push_str(word);
+                col += 1 + wlen;
+            } else {
+                lines.push(std::mem::take(&mut line));
+                line.push_str(word);
+                col = wlen;
+            }
+        }
+        lines.push(line);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+/// A transparent Detail panel: the same rounded, accent-titled frame as
+/// [`theme::panel`] but with no inner fill, so the cover art rendered behind it
+/// shows through as the background.
+fn transparent_panel() -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER).bg(theme::BG))
+        .title(Spans::from(Span::styled("Detail", theme::title_style())))
+}
+
+/// An empty, height-1 row used both as a section separator and as top padding.
+/// It paints nothing, so the cover art behind it stays visible.
+fn blank() -> Row<'static> {
+    Row::new(Vec::<Cell>::new())
 }
 
 /// Build the detail table for the selected game (or an empty-state table). The
-/// description is rendered separately by [`description`].
-pub fn detail(game: Option<&Game>) -> Table<'static> {
+/// description is listed as its own row; `expand` controls whether it is capped
+/// at [`DESC_COLLAPSED_LINES`] or shown in full, and `width` is the value
+/// column width used to wrap it. `height` is the panel's inner height: the rows
+/// are bottom-aligned within it (padded from the top) so the details sit in the
+/// faded lower part of the cover art.
+pub fn detail(game: Option<&Game>, expand: bool, width: u16, height: u16) -> Table<'static> {
+    // Build the content rows and track their total height so we can pad the top
+    // and bottom-align them.
+    let mut content: Vec<Row> = Vec::new();
+    let mut content_h: u16 = 0;
+    let mut push = |row: Row<'static>, h: u16| {
+        content.push(row);
+        content_h += h;
+    };
+
     match game {
         Some(g) => {
             // Kick off the lazy background fetches for the Proton tier and the
@@ -41,20 +88,22 @@ pub fn detail(game: Option<&Game>) -> Table<'static> {
             g.query_proton();
             g.query_info();
 
-            let spacer = Row::new(vec![Cell::from(Span::raw(" "))]);
-
             // Table head (id, name).
-            let mut rows = vec![
+            push(
                 Row::new(vec![
                     Cell::from(Span::styled("ID", theme::label())),
                     Cell::from(Span::styled("Name", theme::label())),
                 ]),
+                1,
+            );
+            push(
                 Row::new(vec![
                     Cell::from(Span::styled(g.id.to_string(), theme::value())),
                     Cell::from(Span::styled(g.get_name(), theme::value())),
                 ]),
-                spacer.clone(),
-            ];
+                1,
+            );
+            push(blank(), 1);
 
             // Detail rows. Developer/publisher/description are filled in lazily
             // from `aurelia info` (see Game::query_info).
@@ -70,37 +119,85 @@ pub fn detail(game: Option<&Game>) -> Table<'static> {
                 ("Proton Tier", &proton),
             ];
             for &(heading, value) in &detail_rows {
-                rows.push(Row::new(vec![
-                    Cell::from(Span::styled(heading, theme::label())),
-                    Cell::from(Span::styled(value.clone(), theme::value())),
-                ]));
+                push(
+                    Row::new(vec![
+                        Cell::from(Span::styled(heading, theme::label())),
+                        Cell::from(Span::styled(value.clone(), theme::value())),
+                    ]),
+                    1,
+                );
             }
 
             if let Some(status) = g.get_status() {
-                rows.push(spacer.clone());
+                push(blank(), 1);
                 let size = convert(status.size);
                 for &(heading, value) in &[
                     ("State", &status.state),
                     ("Installation", &status.installdir),
                     ("Size", &size),
                 ] {
-                    rows.push(Row::new(vec![
-                        Cell::from(Span::styled(heading, theme::label())),
-                        Cell::from(Span::styled(value.clone(), theme::value())),
-                    ]));
+                    push(
+                        Row::new(vec![
+                            Cell::from(Span::styled(heading, theme::label())),
+                            Cell::from(Span::styled(value.clone(), theme::value())),
+                        ]),
+                        1,
+                    );
                 }
             }
 
-            Table::new(rows)
-                .block(theme::panel("Detail".to_string()))
-                .style(theme::base())
-                .widths(&[Constraint::Percentage(18), Constraint::Percentage(82)])
+            // Description, listed as its own (wrapping) row.
+            let description = g.get_description();
+            if !description.is_empty() {
+                push(blank(), 1);
+                let mut lines = wrap(&description, width.max(1) as usize);
+                if !expand && lines.len() > DESC_COLLAPSED_LINES {
+                    lines.truncate(DESC_COLLAPSED_LINES);
+                    if let Some(last) = lines.last_mut() {
+                        last.push('…');
+                    }
+                }
+                let label = if expand {
+                    "Description ([i] collapse)"
+                } else {
+                    "Description ([i] expand)"
+                };
+                let lines_h = lines.len() as u16;
+                let text = Text::from(
+                    lines
+                        .into_iter()
+                        .map(|l| Spans::from(Span::styled(l, theme::value())))
+                        .collect::<Vec<_>>(),
+                );
+                push(
+                    Row::new(vec![
+                        Cell::from(Span::styled(label, theme::label())),
+                        Cell::from(text),
+                    ])
+                    .height(lines_h),
+                    lines_h,
+                );
+            }
         }
-        None => Table::new(vec![Row::new(vec![Cell::from(Span::styled(
-            "No game selected",
-            theme::value(),
-        ))])])
-        .block(theme::panel("Detail".to_string()))
-        .style(theme::base()),
+        None => push(
+            Row::new(vec![Cell::from(Span::styled(
+                "No game selected",
+                theme::value(),
+            ))]),
+            1,
+        ),
     }
+
+    // Bottom-align: pad the top with empty rows so the content sits against the
+    // panel's lower edge, in the faded part of the cover art.
+    let pad = height.saturating_sub(content_h);
+    let mut rows: Vec<Row> = Vec::with_capacity(pad as usize + content.len());
+    rows.resize_with(pad as usize, blank);
+    rows.extend(content);
+
+    // No `.style(...)`: the table must not paint a background, so the cover art
+    // rendered behind it remains visible between the rows.
+    Table::new(rows)
+        .block(transparent_panel())
+        .widths(&[Constraint::Percentage(18), Constraint::Percentage(82)])
 }

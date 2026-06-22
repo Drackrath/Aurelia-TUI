@@ -94,7 +94,10 @@ fn browse_widgets_render_without_panicking() {
             let list = ui::list::list(&browser);
             f.render_stateful_widget(list, Rect::new(0, 3, 40, 18), &mut browser.state);
             let selected = browser.selected();
-            f.render_widget(ui::detail::detail(selected.as_ref()), Rect::new(40, 3, 40, 18));
+            f.render_widget(
+                ui::detail::detail(selected.as_ref(), false, 30, 16),
+                Rect::new(40, 3, 40, 18),
+            );
             f.render_widget(
                 ui::status::status_bar(&browser, Some("tester")),
                 Rect::new(0, 22, 80, 2),
@@ -156,7 +159,10 @@ fn full_browse_frame_renders() {
                 .constraints(vec![Constraint::Min(0), Constraint::Length(13)])
                 .split(body[1]);
             f.render_widget(theme::panel("Cover".to_string()), right_chunks[0]);
-            f.render_widget(ui::detail::detail(selected.as_ref()), right_chunks[1]);
+            f.render_widget(
+                ui::detail::detail(selected.as_ref(), false, 38, 11),
+                right_chunks[1],
+            );
 
             // Status bar at the OUTER bottom chunk — the regression point.
             f.render_widget(
@@ -192,7 +198,10 @@ fn cover_and_detail_do_not_overlap() {
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
                 .split(right);
             f.render_widget(theme::panel("Cover".to_string()), chunks[0]);
-            f.render_widget(ui::detail::detail(browser.selected().as_ref()), chunks[1]);
+            f.render_widget(
+                ui::detail::detail(browser.selected().as_ref(), false, 40, 12),
+                chunks[1],
+            );
         })
         .unwrap();
 

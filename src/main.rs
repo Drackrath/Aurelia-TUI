@@ -25,31 +25,43 @@ use aurelia_tui::config::Config;
 use aurelia_tui::interface::aurelia::{self, LoginPhase};
 use aurelia_tui::util::stateful::Named;
 
-/// Approximate how many rows `text` occupies once word-wrapped to `width`
-/// (matches `Paragraph`'s word wrapping closely enough to size its panel).
-fn wrapped_lines(text: &str, width: u16) -> u16 {
-    if width == 0 {
-        return 1;
+/// Blend `img` toward `bg` so the top-aligned cover art reads as a translucent
+/// background: a uniform base blend keeps the overlaid text legible everywhere,
+/// and the lower part fades further until it dissolves fully into the panel
+/// background at the bottom row. Applied in source-pixel space, so it maps to
+/// the same proportion of the rendered art regardless of later resizing.
+fn fade_bottom(img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>, bg: (u8, u8, u8)) {
+    let h = img.height();
+    if h == 0 {
+        return;
     }
-    let width = width as usize;
-    let mut total: u16 = 0;
-    for paragraph in text.split('\n') {
-        let mut col = 0usize;
-        let mut lines_here: u16 = 1;
-        for word in paragraph.split_whitespace() {
-            let wlen = word.chars().count().max(1);
-            if col == 0 {
-                col = wlen;
-            } else if col + 1 + wlen <= width {
-                col += 1 + wlen;
-            } else {
-                lines_here += 1;
-                col = wlen;
-            }
+    // How far every pixel is pulled toward the background (overall translucency).
+    let base = 0.45f32;
+    // Below this row the art fades the rest of the way to full background.
+    let start = h * 9 / 20;
+    let span = (h - start).max(1) as f32;
+    let (br, bgc, bb) = bg;
+    for y in 0..h {
+        let t = if y < start {
+            base
+        } else {
+            base + (1.0 - base) * ((y - start) as f32 / span)
+        };
+        for x in 0..img.width() {
+            let px = img.get_pixel_mut(x, y);
+            px[0] = (px[0] as f32 * (1.0 - t) + br as f32 * t) as u8;
+            px[1] = (px[1] as f32 * (1.0 - t) + bgc as f32 * t) as u8;
+            px[2] = (px[2] as f32 * (1.0 - t) + bb as f32 * t) as u8;
         }
-        total = total.saturating_add(lines_here);
     }
-    total.max(1)
+}
+
+/// The RGB components of a theme [`Color::Rgb`] (falls back to black).
+fn rgb(color: tui::style::Color) -> (u8, u8, u8) {
+    match color {
+        tui::style::Color::Rgb(r, g, b) => (r, g, b),
+        _ => (0, 0, 0),
+    }
 }
 
 fn entry() -> Result<(), Box<dyn std::error::Error>> {
@@ -124,54 +136,27 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 let selected = browser.selected();
                 let right = body[1];
 
-                // Right pane, top to bottom: the cover art (takes all leftover
-                // height), the fixed-height detail table (sized to exactly its
-                // max rows), and the wrapped description sized to its content
-                // (capped at 10 lines unless expanded). Disjoint chunks, so the
-                // art never overlaps the text.
-                let desc_text = selected
-                    .as_ref()
-                    .map(|g| g.get_description())
-                    .unwrap_or_default();
-                let table_h = ui::detail::TABLE_HEIGHT;
-                let desc_h = if desc_text.is_empty() {
-                    0
-                } else {
-                    let cap = if browser.expand_description {
-                        right.height
-                    } else {
-                        10
-                    };
-                    let lines = wrapped_lines(&desc_text, right.width.saturating_sub(2)).min(cap);
-                    (lines + 2).min(right.height.saturating_sub(table_h.min(right.height)))
+                // Right pane: a single Detail panel filling the pane, with the
+                // cover art painted as its background and the details — now
+                // including the description as its own row — listed on top.
+                let inner = Rect {
+                    x: right.x + 1,
+                    y: right.y + 1,
+                    width: right.width.saturating_sub(2),
+                    height: right.height.saturating_sub(2),
                 };
 
-                let constraints: Vec<Constraint> = if desc_h > 0 {
-                    vec![
-                        Constraint::Min(0),
-                        Constraint::Length(table_h),
-                        Constraint::Length(desc_h),
-                    ]
-                } else {
-                    vec![Constraint::Min(0), Constraint::Length(table_h)]
-                };
-                let right_chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints(constraints)
-                    .split(right);
-
-                // Cover panel with the centered, aspect-correct artwork.
-                let cover_area = right_chunks[0];
-                let cover_block = theme::panel("Cover".to_string());
-                let inner = cover_block.inner(cover_area);
-                frame.render_widget(cover_block, cover_area);
-                if let Some(image) = img.clone() {
+                // Cover art as the Detail background — top-aligned, aspect-
+                // correct, and fading out toward the bottom so the lower detail
+                // rows stay readable.
+                if let Some(mut image) = img.clone() {
                     let h = (inner.width / 2).min(inner.height);
                     let w = (h * 2).min(inner.width);
                     if w >= 2 && h >= 1 {
+                        fade_bottom(&mut image, rgb(theme::BG_DARK));
                         let area = Rect {
                             x: inner.x + (inner.width - w) / 2,
-                            y: inner.y + (inner.height - h) / 2,
+                            y: inner.y,
                             width: w,
                             height: h,
                         };
@@ -184,13 +169,18 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                frame.render_widget(ui::detail::detail(selected.as_ref()), right_chunks[1]);
-                if desc_h > 0 {
-                    frame.render_widget(
-                        ui::detail::description(selected.as_ref(), browser.expand_description),
-                        right_chunks[2],
-                    );
-                }
+                // The (transparent) detail table draws its frame and rows over
+                // the art. Wrap the description to ~82% of the inner width.
+                let desc_width = inner.width.saturating_mul(82) / 100;
+                frame.render_widget(
+                    ui::detail::detail(
+                        selected.as_ref(),
+                        browser.expand_description,
+                        desc_width.saturating_sub(1),
+                        inner.height,
+                    ),
+                    right,
+                );
 
                 frame.render_widget(
                     ui::status::status_bar(&browser, client.get_account().as_deref()),
