@@ -225,6 +225,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::account::account(&browser), area);
                 }
 
+                // Wallet overlay floats above everything.
+                if browser.show_wallet {
+                    let area = ui::centered_rect(40, 30, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::wallet::wallet(&browser), area);
+                }
+
                 // Uninstall confirmation prompt floats above the library.
                 if browser.confirm_uninstall {
                     if let Some(game) = browser.selected() {
@@ -385,6 +392,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     } else if browser.show_account {
                         // Any key dismisses the account overlay.
                         browser.show_account = false;
+                    } else if browser.show_wallet {
+                        // Any key dismisses the wallet overlay.
+                        browser.show_wallet = false;
                     } else if browser.filtering {
                         // Live text filter focused: typing edits the query.
                         match input {
@@ -407,6 +417,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 // Fetch the account (blocking) and open the overlay;
                                 // ignore failures so a missing session is non-fatal.
                                 let _ = browser.open_account();
+                            }
+                            KeyCode::Char('w') => {
+                                // Fetch the wallet (blocking) and open the overlay;
+                                // ignore failures so a missing session is non-fatal.
+                                let _ = browser.open_wallet();
                             }
                             KeyCode::Char('/') => browser.filtering = true,
                             KeyCode::Char('l') => {
@@ -678,7 +693,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud && !browser.show_wallet {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

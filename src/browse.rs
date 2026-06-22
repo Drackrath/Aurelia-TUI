@@ -151,6 +151,10 @@ pub struct Browser {
     pub show_account: bool,
     /// The fetched account details, shown by the account overlay.
     pub account_info: Option<AccountJson>,
+    /// Whether the Steam Wallet overlay is open.
+    pub show_wallet: bool,
+    /// The fetched wallet balance, shown by the wallet overlay.
+    pub wallet_info: Option<aurelia::WalletJson>,
     /// Whether the description panel is expanded beyond its collapsed cap.
     pub expand_description: bool,
     /// Whether the achievements overlay is open.
@@ -186,6 +190,8 @@ impl Browser {
             cloud_status: String::new(),
             show_account: false,
             account_info: None,
+            show_wallet: false,
+            wallet_info: None,
             expand_description: false,
             show_achievements: false,
             achievements: Vec::new(),
@@ -338,6 +344,14 @@ impl Browser {
     pub fn open_account(&mut self) -> Result<(), STError> {
         self.account_info = Some(aurelia::account()?);
         self.show_account = true;
+        Ok(())
+    }
+
+    /// Fetch the Steam Wallet balance (`aurelia wallet`) and open the overlay.
+    /// Blocking; returns the backend error if the call fails.
+    pub fn open_wallet(&mut self) -> Result<(), STError> {
+        self.wallet_info = Some(aurelia::wallet()?);
+        self.show_wallet = true;
         Ok(())
     }
 
