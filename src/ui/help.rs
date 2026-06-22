@@ -59,6 +59,7 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("C", "cloud saves"));
     lines.push(binding("r", "refresh library"));
     lines.push(binding("A", "account"));
+    lines.push(binding("A then o", "log out"));
     lines.push(binding("l", "sign in again"));
     lines.push(Spans::from(""));
 

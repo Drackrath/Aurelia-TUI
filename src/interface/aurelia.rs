@@ -324,6 +324,13 @@ pub fn account() -> Result<AccountJson, STError> {
     Ok(serde_json::from_value(value)?)
 }
 
+/// Log out of the current Steam session (`aurelia logout --json`). The returned
+/// value (`{"logged_out":true}`) is ignored; only errors are propagated.
+pub fn logout() -> Result<(), STError> {
+    run_json(&["logout"])?;
+    Ok(())
+}
+
 /// Fetch the full library (`aurelia list --json`).
 pub fn fetch_library() -> Result<Vec<LibraryGameJson>, STError> {
     let value = run_json(&["list"])?;
