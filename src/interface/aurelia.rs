@@ -515,6 +515,62 @@ impl LaunchOptionJson {
     }
 }
 
+/// One row in the market overlay: a single active sell listing or open buy
+/// order, flattened from `aurelia market listings --json`. The CLI emits an
+/// object with separate `listings` and `buy_orders` arrays; we merge them into
+/// one list and tag each row's `kind` ourselves. `price` is in the currency's
+/// minor units (cents); `quantity` is only meaningful for buy orders.
+#[derive(Debug, Clone, Default)]
+pub struct MarketListingJson {
+    /// The item's market hash name.
+    pub name: String,
+    /// Price in the currency's minor units (cents).
+    pub price: u64,
+    /// Quantity still wanted (buy orders only; 1 for listings).
+    pub quantity: u64,
+    /// A short tag we set ourselves: "listing" or "buy order".
+    pub kind: String,
+}
+
+impl MarketListingJson {
+    /// The price formatted from minor units to a major-unit decimal (e.g. 199 -> "1.99").
+    pub fn price_text(&self) -> String {
+        format!("{}.{:02}", self.price / 100, self.price % 100)
+    }
+}
+
+/// One active sell listing, from the `listings` array of `aurelia market
+/// listings --json`.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct MyListingJson {
+    #[serde(default)]
+    market_hash_name: String,
+    #[serde(default)]
+    price: u64,
+}
+
+/// One open buy order, from the `buy_orders` array of `aurelia market listings
+/// --json`.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct MyBuyOrderJson {
+    #[serde(default)]
+    market_hash_name: String,
+    #[serde(default)]
+    price: u64,
+    #[serde(default)]
+    quantity: u64,
+}
+
+/// The top-level object from `aurelia market listings --json`: the account's
+/// active sell listings and open buy orders.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct MyMarketStateJson {
+    #[serde(default)]
+    listings: Vec<MyListingJson>,
+    #[serde(default)]
+    buy_orders: Vec<MyBuyOrderJson>,
+}
+
 /// A `qr_challenge` event line from `aurelia login --qr --json` (emitted on
 /// stderr, re-emitted whenever Steam rotates the code).
 #[derive(Debug, Deserialize)]
@@ -736,6 +792,34 @@ pub fn launch_options(app_id: i32) -> Result<Vec<LaunchOptionJson>, STError> {
         return Ok(Vec::new());
     }
     Ok(serde_json::from_value(list)?)
+}
+
+/// Fetch the logged-in account's active market listings and open buy orders
+/// (`aurelia market listings --json`). The CLI emits an object with separate
+/// `listings`/`buy_orders` arrays; we flatten them into one `Vec`, tagging each
+/// row's `kind` so the overlay can label it. An account with none yields an
+/// empty `Vec`.
+pub fn market_listings() -> Result<Vec<MarketListingJson>, STError> {
+    let value = run_json(&["market", "listings"])?;
+    let state: MyMarketStateJson = serde_json::from_value(value)?;
+    let mut rows = Vec::with_capacity(state.listings.len() + state.buy_orders.len());
+    for l in state.listings {
+        rows.push(MarketListingJson {
+            name: l.market_hash_name,
+            price: l.price,
+            quantity: 1,
+            kind: "listing".to_string(),
+        });
+    }
+    for b in state.buy_orders {
+        rows.push(MarketListingJson {
+            name: b.market_hash_name,
+            price: b.price,
+            quantity: b.quantity,
+            kind: "buy order".to_string(),
+        });
+    }
+    Ok(rows)
 }
 
 /// Enable or disable a single DLC (`aurelia enable|disable <id> --json`). The

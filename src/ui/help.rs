@@ -50,6 +50,7 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("Enter", "launch game"));
     lines.push(binding("a", "achievements"));
     lines.push(binding("I", "inventory"));
+    lines.push(binding("m", "market listings"));
     lines.push(binding("i", "expand / collapse description"));
     lines.push(binding("d", "install / download"));
     lines.push(binding("x", "uninstall game"));
