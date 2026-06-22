@@ -61,6 +61,7 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("b", "beta branches"));
     lines.push(binding("o", "depots"));
     lines.push(binding("P", "proton runtimes"));
+    lines.push(binding("R", "running games"));
     lines.push(binding("f", "toggle favourite"));
     lines.push(binding("H", "hide game"));
     lines.push(binding("C", "cloud saves"));

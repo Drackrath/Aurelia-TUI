@@ -19,6 +19,7 @@ pub mod list;
 pub mod market;
 pub mod move_game;
 pub mod proton;
+pub mod running;
 pub mod status;
 pub mod tabs;
 
