@@ -218,6 +218,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::cloud::cloud(&browser), area);
                 }
 
+                // Launch-options overlay floats above everything.
+                if browser.show_launch {
+                    let area = ui::centered_rect(70, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::launch::launch(&browser), area);
+                }
+
                 // Account overlay floats above everything.
                 if browser.show_account {
                     let area = ui::centered_rect(50, 55, frame.size());
@@ -341,6 +348,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_achievements(),
                             KeyCode::Down | KeyCode::Char('j') => browser.ach_scroll_down(),
                             KeyCode::Up | KeyCode::Char('k') => browser.ach_scroll_up(),
+                            _ => {}
+                        }
+                    } else if browser.show_launch {
+                        // Launch-options overlay: Esc/q close, j/k scroll.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_launch(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.launch_scroll_down(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.launch_scroll_up(),
                             _ => {}
                         }
                     } else if browser.confirm_uninstall {
@@ -483,6 +498,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('C') => {
                                 if let Some(game) = browser.selected() {
                                     browser.open_cloud(game.id);
+                                }
+                            }
+                            KeyCode::Char('L') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.open_launch(game.id);
                                 }
                             }
                             _ => {}
@@ -678,7 +698,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud && !browser.show_launch {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

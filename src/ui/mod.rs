@@ -9,6 +9,7 @@ pub mod confirm;
 pub mod detail;
 pub mod dlc;
 pub mod help;
+pub mod launch;
 pub mod list;
 pub mod status;
 pub mod tabs;

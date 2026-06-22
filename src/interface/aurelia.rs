@@ -233,6 +233,69 @@ struct DlcResponse {
     dlc: Vec<DlcJson>,
 }
 
+/// One launch option for a game, from `aurelia launch-options <id> --json` (an
+/// item of the response's `launch_options` array). A launch option is one of the
+/// ways Steam can start the game (e.g. a normal launch vs. a level editor). Key
+/// names match the CLI's `--json` output; everything is `#[serde(default)]` so a
+/// missing field never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LaunchOptionJson {
+    /// The launch option's id (a string in the app's manifest).
+    #[serde(default)]
+    pub id: String,
+    /// Human-readable label for this launch option.
+    #[serde(default)]
+    pub description: String,
+    /// The executable Steam would run.
+    #[serde(default)]
+    pub executable: String,
+    /// Arguments passed to the executable.
+    #[serde(default)]
+    pub arguments: String,
+    /// Working directory for the launch, if specified.
+    #[serde(default)]
+    pub working_dir: String,
+    /// Target OS list (e.g. "windows"); empty means any.
+    #[serde(default)]
+    pub oslist: String,
+    /// Target OS architecture (e.g. "64"); empty means any.
+    #[serde(default)]
+    pub osarch: String,
+    /// Launch option type (e.g. "default", "option1").
+    #[serde(default, rename = "type")]
+    pub launch_type: String,
+}
+
+impl LaunchOptionJson {
+    /// Display label, falling back to the executable then the id when the
+    /// store-provided description is missing.
+    pub fn display_name(&self) -> String {
+        if !self.description.is_empty() {
+            self.description.clone()
+        } else if !self.executable.is_empty() {
+            self.executable.clone()
+        } else {
+            format!("Option {}", self.id)
+        }
+    }
+
+    /// The command line (executable + arguments), trimmed; empty when neither is set.
+    pub fn command(&self) -> String {
+        format!("{} {}", self.executable, self.arguments)
+            .trim()
+            .to_string()
+    }
+
+    /// The OS tag for this option ("any" when no OS list is specified).
+    pub fn os_tag(&self) -> String {
+        if self.oslist.is_empty() {
+            "any".to_string()
+        } else {
+            self.oslist.clone()
+        }
+    }
+}
+
 /// A `qr_challenge` event line from `aurelia login --qr --json` (emitted on
 /// stderr, re-emitted whenever Steam rotates the code).
 #[derive(Debug, Deserialize)]
@@ -376,6 +439,22 @@ pub fn dlc(app_id: i32) -> Result<Vec<DlcJson>, STError> {
     let value = run_json(&["dlc", &app_id.to_string()])?;
     let parsed: DlcResponse = serde_json::from_value(value)?;
     Ok(parsed.dlc)
+}
+
+/// List a game's launch options (`aurelia launch-options <id> --json`). The CLI
+/// wraps the array under a `launch_options` key; the top-level object also
+/// carries `app_id`, which we ignore. Accepts a bare array too.
+pub fn launch_options(app_id: i32) -> Result<Vec<LaunchOptionJson>, STError> {
+    let value = run_json(&["launch-options", &app_id.to_string()])?;
+    // Accept either the wrapping object (`{ "launch_options": [..] }`) or a bare array.
+    let list = match value.get("launch_options") {
+        Some(list) => list.clone(),
+        None => value,
+    };
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
 }
 
 /// Enable or disable a single DLC (`aurelia enable|disable <id> --json`). The
