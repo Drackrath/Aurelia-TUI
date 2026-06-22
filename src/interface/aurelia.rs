@@ -1109,6 +1109,15 @@ pub fn uninstall(app_id: i32) -> Result<(), STError> {
     Ok(())
 }
 
+/// Relocate an installed game to another Steam library folder
+/// (`aurelia move <id> <library> --json`). Blocks until the CLI finishes the
+/// file relocation (which can take a while); the parsed value is ignored beyond
+/// error detection. (`move` is a Rust keyword, hence `move_game`.)
+pub fn move_game(app_id: i32, library: &str) -> Result<(), STError> {
+    run_json(&["move", &app_id.to_string(), library])?;
+    Ok(())
+}
+
 /// Verify the integrity of a game's files (`aurelia verify <id> --json`),
 /// streaming progress into the shared status cell. Blocks until verification
 /// finishes; intended to be run on a dedicated thread.
