@@ -336,6 +336,25 @@ impl<'de> Deserialize<'de> for BranchJson {
     }
 }
 
+/// One depot for a game, from `aurelia depots <id> --json` (an item of the
+/// response's `depots` array). Key names match the CLI's `--json` output;
+/// everything is `#[serde(default)]` so a missing field never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DepotJson {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub size: u64,
+    #[serde(default)]
+    pub file_count: u64,
+    #[serde(default)]
+    pub config: String,
+    #[serde(default)]
+    pub is_owned: Option<bool>,
+}
+
 /// A `qr_challenge` event line from `aurelia login --qr --json` (emitted on
 /// stderr, re-emitted whenever Steam rotates the code).
 #[derive(Debug, Deserialize)]
@@ -492,6 +511,18 @@ pub fn dlc(app_id: i32) -> Result<Vec<DlcJson>, STError> {
     let value = run_json(&["dlc", &app_id.to_string()])?;
     let parsed: DlcResponse = serde_json::from_value(value)?;
     Ok(parsed.dlc)
+}
+
+/// List a game's depots (`aurelia depots <id> --json`). The CLI wraps the
+/// per-depot array under a `depots` key (alongside `app_id`); accept either the
+/// wrapping object or a bare array.
+pub fn depots(app_id: i32) -> Result<Vec<DepotJson>, STError> {
+    let value = run_json(&["depots", &app_id.to_string()])?;
+    let depots = match value.get("depots") {
+        Some(depots) => depots.clone(),
+        None => value,
+    };
+    Ok(serde_json::from_value(depots)?)
 }
 
 /// Enable or disable a single DLC (`aurelia enable|disable <id> --json`). The
