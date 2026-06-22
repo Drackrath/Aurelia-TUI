@@ -159,6 +159,12 @@ pub struct Browser {
     pub achievements: Vec<aurelia::AchievementJson>,
     /// Scroll offset (top row) within the achievements overlay.
     pub ach_scroll: usize,
+    /// Whether the Workshop overlay is open.
+    pub show_workshop: bool,
+    /// The selected game's Workshop items (loaded when the overlay opens).
+    pub workshop: Vec<aurelia::WorkshopItemJson>,
+    /// Scroll offset (top row) within the Workshop overlay.
+    pub workshop_scroll: usize,
     /// Whether the uninstall confirmation prompt is open for the selection.
     pub confirm_uninstall: bool,
     /// Whether the DLC overlay is open.
@@ -190,6 +196,9 @@ impl Browser {
             show_achievements: false,
             achievements: Vec::new(),
             ach_scroll: 0,
+            show_workshop: false,
+            workshop: Vec::new(),
+            workshop_scroll: 0,
             confirm_uninstall: false,
             show_dlc: false,
             dlc: Vec::new(),
@@ -331,6 +340,34 @@ impl Browser {
     /// Scroll the achievements overlay up by one row (clamped).
     pub fn ach_scroll_up(&mut self) {
         self.ach_scroll = self.ach_scroll.saturating_sub(1);
+    }
+
+    /// Fetch the given game's subscribed Workshop items (blocking) and open the
+    /// overlay. A fetch error simply opens an empty overlay ("No workshop items.").
+    pub fn open_workshop(&mut self, app_id: i32) {
+        self.workshop = aurelia::workshop_list(app_id).unwrap_or_default();
+        self.workshop_scroll = 0;
+        self.show_workshop = true;
+    }
+
+    /// Close the Workshop overlay and drop its data.
+    pub fn close_workshop(&mut self) {
+        self.show_workshop = false;
+        self.workshop = Vec::new();
+        self.workshop_scroll = 0;
+    }
+
+    /// Scroll the Workshop overlay down by one row (clamped).
+    pub fn workshop_scroll_down(&mut self) {
+        let max = self.workshop.len().saturating_sub(1);
+        if self.workshop_scroll < max {
+            self.workshop_scroll += 1;
+        }
+    }
+
+    /// Scroll the Workshop overlay up by one row (clamped).
+    pub fn workshop_scroll_up(&mut self) {
+        self.workshop_scroll = self.workshop_scroll.saturating_sub(1);
     }
 
     /// Fetch the logged-in account (`aurelia account`) and open the overlay.

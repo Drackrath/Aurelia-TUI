@@ -12,6 +12,7 @@ pub mod help;
 pub mod list;
 pub mod status;
 pub mod tabs;
+pub mod workshop;
 
 use tui::layout::{Constraint, Direction, Layout, Rect};
 
