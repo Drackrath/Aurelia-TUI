@@ -159,6 +159,12 @@ pub struct Browser {
     pub achievements: Vec<aurelia::AchievementJson>,
     /// Scroll offset (top row) within the achievements overlay.
     pub ach_scroll: usize,
+    /// Whether the market listings overlay is open.
+    pub show_market: bool,
+    /// The account's active listings and buy orders (loaded when the overlay opens).
+    pub market: Vec<aurelia::MarketListingJson>,
+    /// Scroll offset (top row) within the market overlay.
+    pub market_scroll: usize,
     /// Whether the uninstall confirmation prompt is open for the selection.
     pub confirm_uninstall: bool,
     /// Whether the DLC overlay is open.
@@ -190,6 +196,9 @@ impl Browser {
             show_achievements: false,
             achievements: Vec::new(),
             ach_scroll: 0,
+            show_market: false,
+            market: Vec::new(),
+            market_scroll: 0,
             confirm_uninstall: false,
             show_dlc: false,
             dlc: Vec::new(),
@@ -331,6 +340,34 @@ impl Browser {
     /// Scroll the achievements overlay up by one row (clamped).
     pub fn ach_scroll_up(&mut self) {
         self.ach_scroll = self.ach_scroll.saturating_sub(1);
+    }
+
+    /// Fetch the account's market listings (blocking) and open the overlay. A
+    /// fetch error simply opens an empty overlay ("No active listings.").
+    pub fn open_market(&mut self) {
+        self.market = aurelia::market_listings().unwrap_or_default();
+        self.market_scroll = 0;
+        self.show_market = true;
+    }
+
+    /// Close the market overlay and drop its data.
+    pub fn close_market(&mut self) {
+        self.show_market = false;
+        self.market = Vec::new();
+        self.market_scroll = 0;
+    }
+
+    /// Scroll the market overlay down by one row (clamped).
+    pub fn market_scroll_down(&mut self) {
+        let max = self.market.len().saturating_sub(1);
+        if self.market_scroll < max {
+            self.market_scroll += 1;
+        }
+    }
+
+    /// Scroll the market overlay up by one row (clamped).
+    pub fn market_scroll_up(&mut self) {
+        self.market_scroll = self.market_scroll.saturating_sub(1);
     }
 
     /// Fetch the logged-in account (`aurelia account`) and open the overlay.

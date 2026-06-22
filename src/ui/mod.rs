@@ -10,6 +10,7 @@ pub mod detail;
 pub mod dlc;
 pub mod help;
 pub mod list;
+pub mod market;
 pub mod status;
 pub mod tabs;
 
