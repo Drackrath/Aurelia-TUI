@@ -47,6 +47,8 @@ pub enum Command {
     Install(i32, Arc<Mutex<Option<GameStatus>>>),
     /// Verify a game's integrity, streaming progress into the shared status cell.
     Verify(i32, Arc<Mutex<Option<GameStatus>>>),
+    /// Update a game to the latest version, streaming progress into the shared status cell.
+    Update(i32, Arc<Mutex<Option<GameStatus>>>),
     /// Launch a game and wait for it to exit.
     Run(i32, Arc<Mutex<Option<GameStatus>>>),
     /// No-op kept for UI compatibility (aurelia manages the Steam client itself).
@@ -178,6 +180,9 @@ fn execute(
             }
             Command::Verify(id, status) => {
                 thread::spawn(move || aurelia::verify(id, status));
+            }
+            Command::Update(id, status) => {
+                thread::spawn(move || aurelia::update(id, status));
             }
             Command::Run(id, status) => {
                 thread::spawn(move || aurelia::play(id, status));
@@ -321,6 +326,13 @@ impl Client {
     pub fn verify(&self, game: &Game) -> Result<(), STError> {
         let sender = self.sender.lock()?;
         sender.send(Command::Verify(game.id, game.status_counter()))?;
+        Ok(())
+    }
+
+    /// Queues an update of the provided game.
+    pub fn update(&self, game: &Game) -> Result<(), STError> {
+        let sender = self.sender.lock()?;
+        sender.send(Command::Update(game.id, game.status_counter()))?;
         Ok(())
     }
 

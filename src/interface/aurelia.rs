@@ -712,6 +712,74 @@ pub fn verify(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
     }
 }
 
+/// Update a game to the latest version (`aurelia update <id> --json`),
+/// streaming progress into the shared status cell. Blocks until the update
+/// finishes; intended to be run on a dedicated thread.
+pub fn update(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
+    set_status(&status, "processing...");
+
+    let spawned = process::Command::new(bin())
+        .args(["update", &id.to_string(), "--json"])
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn();
+
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(err) => {
+            set_status(&status, &format!("Failed: {}", err));
+            log!("Failed to spawn aurelia update", id, err);
+            return;
+        }
+    };
+
+    // Drain stdout (the small terminal result object) on a helper thread so the
+    // child never blocks writing it while we consume the larger stderr stream.
+    let stdout = child.stdout.take();
+    let result_handle = thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(mut out) = stdout {
+            let _ = out.read_to_string(&mut buf);
+        }
+        buf
+    });
+
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<ProgressJson>(line) {
+                if event.event.as_deref() == Some("progress") {
+                    set_status(
+                        &status,
+                        &format!("updating {:.1}%", event.percent.unwrap_or(0.0)),
+                    );
+                }
+            }
+        }
+    }
+
+    let result = result_handle.join().unwrap_or_default();
+    let _ = child.wait();
+
+    match serde_json::from_str::<serde_json::Value>(result.trim()) {
+        Ok(value) => {
+            if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+                set_status(&status, &format!("Failed: {}", err));
+            } else if value.get("status").and_then(|s| s.as_str()) == Some("updated") {
+                set_status(&status, "updated");
+            } else {
+                set_status(&status, "done");
+            }
+        }
+        // No parseable result line: fall back on the exit status we already waited on.
+        Err(_) => set_status(&status, "updated"),
+    }
+}
+
 /// Launch a game and wait for it to exit (`aurelia play <id> --json`).
 /// Intended to be run on a dedicated thread.
 pub fn play(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
