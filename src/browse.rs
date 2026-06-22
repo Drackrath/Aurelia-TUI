@@ -9,7 +9,7 @@ use tui::style::Style;
 use tui::widgets::ListState;
 
 use crate::config::Config;
-use crate::interface::aurelia::{self, AccountJson};
+use crate::interface::aurelia::{self, AccountJson, ConfigJson};
 use crate::interface::game::Game;
 use crate::theme;
 use crate::util::error::STError;
@@ -151,6 +151,10 @@ pub struct Browser {
     pub show_account: bool,
     /// The fetched account details, shown by the account overlay.
     pub account_info: Option<AccountJson>,
+    /// Whether the config (settings) overlay is open.
+    pub show_config: bool,
+    /// The fetched launcher configuration, shown by the config overlay.
+    pub config_info: Option<ConfigJson>,
     /// Whether the description panel is expanded beyond its collapsed cap.
     pub expand_description: bool,
     /// Whether the achievements overlay is open.
@@ -186,6 +190,8 @@ impl Browser {
             cloud_status: String::new(),
             show_account: false,
             account_info: None,
+            show_config: false,
+            config_info: None,
             expand_description: false,
             show_achievements: false,
             achievements: Vec::new(),
@@ -339,6 +345,20 @@ impl Browser {
         self.account_info = Some(aurelia::account()?);
         self.show_account = true;
         Ok(())
+    }
+
+    /// Fetch the launcher configuration (`aurelia config show`) and open the
+    /// config overlay. Blocking; returns the backend error if the call fails.
+    pub fn open_config(&mut self) -> Result<(), STError> {
+        self.config_info = Some(aurelia::config_show()?);
+        self.show_config = true;
+        Ok(())
+    }
+
+    /// Close the config overlay and drop its contents.
+    pub fn close_config(&mut self) {
+        self.show_config = false;
+        self.config_info = None;
     }
 
     /// Replace the library contents, keeping the current filter/query/sort and a

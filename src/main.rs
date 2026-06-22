@@ -225,6 +225,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::account::account(&browser), area);
                 }
 
+                // Settings overlay floats above everything.
+                if browser.show_config {
+                    let area = ui::centered_rect(55, 60, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::config::config(&browser), area);
+                }
+
                 // Uninstall confirmation prompt floats above the library.
                 if browser.confirm_uninstall {
                     if let Some(game) = browser.selected() {
@@ -385,6 +392,23 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     } else if browser.show_account {
                         // Any key dismisses the account overlay.
                         browser.show_account = false;
+                    } else if browser.show_config {
+                        // Settings overlay: dismiss, or toggle presence in place.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_config(),
+                            KeyCode::Char('o') => {
+                                // Flip whatever the config currently shows (default
+                                // offline when unknown), then re-fetch to confirm.
+                                let online = browser
+                                    .config_info
+                                    .as_ref()
+                                    .map(|c| c.is_online())
+                                    .unwrap_or(false);
+                                let _ = aurelia::set_presence(!online);
+                                let _ = browser.open_config();
+                            }
+                            _ => {}
+                        }
                     } else if browser.filtering {
                         // Live text filter focused: typing edits the query.
                         match input {
@@ -407,6 +431,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 // Fetch the account (blocking) and open the overlay;
                                 // ignore failures so a missing session is non-fatal.
                                 let _ = browser.open_account();
+                            }
+                            KeyCode::Char('p') => {
+                                // Fetch the launcher configuration (blocking) and
+                                // open the settings overlay; ignore failures.
+                                let _ = browser.open_config();
                             }
                             KeyCode::Char('/') => browser.filtering = true,
                             KeyCode::Char('l') => {
@@ -678,7 +707,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),
