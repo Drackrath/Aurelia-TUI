@@ -23,6 +23,7 @@ pub mod running;
 pub mod status;
 pub mod tabs;
 pub mod wallet;
+pub mod workshop;
 
 use tui::layout::{Constraint, Direction, Layout, Rect};
 

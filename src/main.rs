@@ -215,6 +215,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::market::market(&browser), area);
                 }
 
+                // Workshop overlay floats above everything.
+                if browser.show_workshop {
+                    let area = ui::centered_rect(72, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::workshop::workshop(&browser), area);
+                }
+
                 // Help overlay floats above everything.
                 if browser.show_help {
                     let area = ui::centered_rect(64, 84, frame.size());
@@ -442,6 +449,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => browser.market_scroll_up(),
                             _ => {}
                         }
+                    } else if browser.show_workshop {
+                        // Workshop overlay: Esc/q close, j/k scroll.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_workshop(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.workshop_scroll_down(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.workshop_scroll_up(),
+                            _ => {}
+                        }
                     } else if browser.confirm_uninstall {
                         // Uninstall confirmation prompt: y confirms, anything else cancels.
                         match input {
@@ -639,6 +654,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             KeyCode::Char('m') => browser.open_market(),
+                            KeyCode::Char('W') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.open_workshop(game.id);
+                                }
+                            }
                             KeyCode::Char('i') => browser.toggle_description(),
                             KeyCode::Down | KeyCode::Char('j') => browser.next(),
                             KeyCode::Up | KeyCode::Char('k') => browser.previous(),
@@ -925,7 +945,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_friends && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_proton && !browser.show_running && !browser.show_wallet {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_friends && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

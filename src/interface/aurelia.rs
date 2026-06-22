@@ -328,6 +328,49 @@ impl InventoryItemJson {
     }
 }
 
+/// One Workshop item the user is subscribed to for a game, from
+/// `aurelia workshop list <id> --json`. The CLI emits a bare array of items
+/// (`WorkshopItem`); the listing shows the title and size. Everything is
+/// `#[serde(default)]` so a missing/extra field never breaks parsing.
+///
+/// `id` is a u64 published-file id, which the backend may serialize either as a
+/// number or a string, so it is captured leniently (and only used to fall back
+/// on a title when none is present).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WorkshopItemJson {
+    /// `publishedfileid`. May arrive as a JSON number or string.
+    #[serde(default, deserialize_with = "de_opt_u64")]
+    pub id: Option<u64>,
+    /// The item title (the CLI key is `title`; `name` is accepted as a fallback).
+    #[serde(default, alias = "name")]
+    pub title: String,
+    /// Whether the item's content is installed on disk. Absent in the current CLI
+    /// output (all listed items are subscribed); defaults to `false`.
+    #[serde(default)]
+    pub installed: bool,
+    /// Whether the user is subscribed to the item. The CLI lists only subscribed
+    /// items, so this defaults to `true` when absent.
+    #[serde(default = "default_true")]
+    pub subscribed: bool,
+    /// On-disk size in bytes (the CLI key is `file_size`; `size` is accepted too).
+    #[serde(default, alias = "size")]
+    pub file_size: u64,
+}
+
+impl WorkshopItemJson {
+    /// Display title, falling back to the published-file id when the title is
+    /// missing/empty.
+    pub fn display_title(&self) -> String {
+        if !self.title.is_empty() {
+            self.title.clone()
+        } else if let Some(id) = self.id {
+            format!("Item {}", id)
+        } else {
+            "(untitled)".to_string()
+        }
+    }
+}
+
 /// Deserialize a SteamID64 that may arrive as a JSON number or string.
 fn de_steam_id<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
@@ -339,6 +382,21 @@ where
         serde_json::Value::String(s) => Ok(s.parse().unwrap_or(0)),
         _ => Ok(0),
     }
+}
+
+/// Deserialize an optional `u64` that may be encoded as a JSON number or string
+/// (Steam published-file ids are sometimes stringified). Any unparseable value
+/// becomes `None` rather than failing the whole parse.
+fn de_opt_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::Number(n)) => n.as_u64(),
+        Some(serde_json::Value::String(s)) => s.parse().ok(),
+        _ => None,
+    })
 }
 
 /// One DLC entry for a base game, from `aurelia dlc <id> --json` (the `dlc`
@@ -876,6 +934,20 @@ pub fn launch_options(app_id: i32) -> Result<Vec<LaunchOptionJson>, STError> {
         Some(list) => list.clone(),
         None => value,
     };
+    Ok(serde_json::from_value(list)?)
+}
+
+/// List the user's subscribed Workshop items for a game
+/// (`aurelia workshop list <id> --json`). The CLI emits a bare array of items,
+/// but tolerate an object that wraps the list under `items`/`workshop`.
+pub fn workshop_list(app_id: i32) -> Result<Vec<WorkshopItemJson>, STError> {
+    let value = run_json(&["workshop", "list", &app_id.to_string()])?;
+    // Accept either a bare array or a wrapping object (`{ "items": [..] }`).
+    let list = value
+        .get("items")
+        .or_else(|| value.get("workshop"))
+        .cloned()
+        .unwrap_or(value);
     if list.is_null() {
         return Ok(Vec::new());
     }
