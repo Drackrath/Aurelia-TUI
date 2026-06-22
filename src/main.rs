@@ -204,6 +204,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::achievements::achievements(&browser), area);
                 }
 
+                // Inventory overlay floats above everything.
+                if browser.show_inventory {
+                    let area = ui::centered_rect(70, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::inventory::inventory(&browser), area);
+                }
+
                 // Help overlay floats above everything.
                 if browser.show_help {
                     let area = ui::centered_rect(64, 84, frame.size());
@@ -343,6 +350,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => browser.ach_scroll_up(),
                             _ => {}
                         }
+                    } else if browser.show_inventory {
+                        // Inventory overlay: Esc/q close, j/k scroll.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_inventory(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.inv_scroll_down(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.inv_scroll_up(),
+                            _ => {}
+                        }
                     } else if browser.confirm_uninstall {
                         // Uninstall confirmation prompt: y confirms, anything else cancels.
                         match input {
@@ -426,6 +441,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('4') => browser.set_filter(Filter::Favourites),
                             KeyCode::Char('s') => browser.cycle_sort(),
                             KeyCode::Char('a') => browser.open_achievements(),
+                            KeyCode::Char('I') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.open_inventory(game.id);
+                                }
+                            }
                             KeyCode::Char('i') => browser.toggle_description(),
                             KeyCode::Down | KeyCode::Char('j') => browser.next(),
                             KeyCode::Up | KeyCode::Char('k') => browser.previous(),
@@ -678,7 +698,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_achievements && !browser.show_cloud && !browser.show_inventory {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

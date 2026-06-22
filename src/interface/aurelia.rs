@@ -184,6 +184,42 @@ fn default_true() -> bool {
     true
 }
 
+/// One inventory item stack, from `aurelia inventory <id> --json` (an item of
+/// the response array). The CLI serializes `InventoryItem` directly, so key
+/// names match its fields: `name`/`market_hash_name`, `item_type`, `amount`,
+/// `tradable`, `marketable`. Everything is `#[serde(default)]` so a missing
+/// field never breaks parsing, and a couple of aliases cover alternate spellings.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct InventoryItemJson {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default, alias = "market_name")]
+    pub market_hash_name: String,
+    /// Item type/category text (e.g. "Trading Card").
+    #[serde(default, alias = "type")]
+    pub item_type: String,
+    /// Stack size for this item.
+    #[serde(default, alias = "count")]
+    pub amount: u64,
+    #[serde(default)]
+    pub tradable: bool,
+    #[serde(default)]
+    pub marketable: bool,
+}
+
+impl InventoryItemJson {
+    /// Best display name: the visible `name`, falling back to the market name.
+    pub fn display_name(&self) -> String {
+        if !self.name.is_empty() {
+            self.name.clone()
+        } else if !self.market_hash_name.is_empty() {
+            self.market_hash_name.clone()
+        } else {
+            "(unnamed item)".to_string()
+        }
+    }
+}
+
 /// One DLC entry for a base game, from `aurelia dlc <id> --json` (the `dlc`
 /// array). All status fields are nullable in the CLI output (they come from a
 /// best-effort `DlcState` lookup), so each defaults when absent.
@@ -365,6 +401,22 @@ pub fn achievements(app_id: i32) -> Result<Vec<AchievementJson>, STError> {
         .get("achievements")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
+}
+
+/// Fetch the logged-in user's inventory for a game (`aurelia inventory <id>
+/// --json`). The CLI emits a bare array of item stacks; accept either that or an
+/// object wrapping it under an `items` key, parsing just the array.
+pub fn inventory(app_id: i32) -> Result<Vec<InventoryItemJson>, STError> {
+    let value = run_json(&["inventory", &app_id.to_string()])?;
+    // Accept either the wrapping object (`{ "items": [..] }`) or a bare array.
+    let list = match value.get("items") {
+        Some(items) => items.clone(),
+        None => value,
+    };
     if list.is_null() {
         return Ok(Vec::new());
     }

@@ -159,6 +159,12 @@ pub struct Browser {
     pub achievements: Vec<aurelia::AchievementJson>,
     /// Scroll offset (top row) within the achievements overlay.
     pub ach_scroll: usize,
+    /// Whether the inventory overlay is open.
+    pub show_inventory: bool,
+    /// The selected game's inventory items (loaded when the overlay opens).
+    pub inventory: Vec<aurelia::InventoryItemJson>,
+    /// Scroll offset (top row) within the inventory overlay.
+    pub inv_scroll: usize,
     /// Whether the uninstall confirmation prompt is open for the selection.
     pub confirm_uninstall: bool,
     /// Whether the DLC overlay is open.
@@ -190,6 +196,9 @@ impl Browser {
             show_achievements: false,
             achievements: Vec::new(),
             ach_scroll: 0,
+            show_inventory: false,
+            inventory: Vec::new(),
+            inv_scroll: 0,
             confirm_uninstall: false,
             show_dlc: false,
             dlc: Vec::new(),
@@ -331,6 +340,34 @@ impl Browser {
     /// Scroll the achievements overlay up by one row (clamped).
     pub fn ach_scroll_up(&mut self) {
         self.ach_scroll = self.ach_scroll.saturating_sub(1);
+    }
+
+    /// Fetch the inventory for `app_id` (blocking) and open the overlay. A fetch
+    /// error simply opens an empty overlay ("No inventory items.").
+    pub fn open_inventory(&mut self, app_id: i32) {
+        self.inventory = aurelia::inventory(app_id).unwrap_or_default();
+        self.inv_scroll = 0;
+        self.show_inventory = true;
+    }
+
+    /// Close the inventory overlay and drop its data.
+    pub fn close_inventory(&mut self) {
+        self.show_inventory = false;
+        self.inventory = Vec::new();
+        self.inv_scroll = 0;
+    }
+
+    /// Scroll the inventory overlay down by one row (clamped).
+    pub fn inv_scroll_down(&mut self) {
+        let max = self.inventory.len().saturating_sub(1);
+        if self.inv_scroll < max {
+            self.inv_scroll += 1;
+        }
+    }
+
+    /// Scroll the inventory overlay up by one row (clamped).
+    pub fn inv_scroll_up(&mut self) {
+        self.inv_scroll = self.inv_scroll.saturating_sub(1);
     }
 
     /// Fetch the logged-in account (`aurelia account`) and open the overlay.
