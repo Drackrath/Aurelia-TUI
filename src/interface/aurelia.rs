@@ -1354,6 +1354,15 @@ pub fn relink(app_id: i32, library: &str) -> Result<(), STError> {
     Ok(())
 }
 
+/// Register an existing on-disk install of a game into a Steam library folder
+/// (`aurelia import <id> <library> --json`). Blocks until the CLI finishes
+/// registering the install; the parsed value is ignored beyond error detection.
+/// (Named `import_game` rather than `import` for clarity.)
+pub fn import_game(app_id: i32, library: &str) -> Result<(), STError> {
+    run_json(&["import", &app_id.to_string(), library])?;
+    Ok(())
+}
+
 /// Verify the integrity of a game's files (`aurelia verify <id> --json`),
 /// streaming progress into the shared status cell. Blocks until verification
 /// finishes; intended to be run on a dedicated thread.

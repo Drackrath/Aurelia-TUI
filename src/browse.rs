@@ -237,6 +237,14 @@ pub struct Browser {
     pub relink_app_id: i32,
     /// A short status line for the relink prompt (progress, errors).
     pub relink_status: String,
+    /// Whether the import (register existing install) prompt is open.
+    pub show_import: bool,
+    /// The library path the user is typing.
+    pub import_path: String,
+    /// The app id being imported.
+    pub import_app_id: i32,
+    /// A short status line for the import prompt (progress, errors).
+    pub import_status: String,
     /// Whether the Proton runtimes overlay is open.
     pub show_proton: bool,
     /// The Proton/Wine runtimes (loaded when the overlay opens).
@@ -309,6 +317,10 @@ impl Browser {
             relink_path: String::new(),
             relink_app_id: 0,
             relink_status: String::new(),
+            show_import: false,
+            import_path: String::new(),
+            import_app_id: 0,
+            import_status: String::new(),
             show_proton: false,
             protons: Vec::new(),
             proton_index: 0,
@@ -540,6 +552,51 @@ impl Browser {
             }
             Err(err) => {
                 self.relink_status = format!("Failed: {}", err);
+                Err(err)
+            }
+        }
+    }
+
+    // --- Import (register existing install) prompt ---
+
+    /// Open the import prompt for `app_id`, clearing any previous path/status.
+    pub fn open_import(&mut self, app_id: i32) {
+        self.import_app_id = app_id;
+        self.import_path.clear();
+        self.import_status.clear();
+        self.show_import = true;
+    }
+
+    /// Close the import prompt and drop its state.
+    pub fn close_import(&mut self) {
+        self.show_import = false;
+        self.import_path.clear();
+        self.import_status.clear();
+        self.import_app_id = 0;
+    }
+
+    /// Append a typed character to the library path.
+    pub fn import_push(&mut self, c: char) {
+        self.import_path.push(c);
+    }
+
+    /// Remove the last character from the library path.
+    pub fn import_pop(&mut self) {
+        self.import_path.pop();
+    }
+
+    /// Register the on-disk install at the typed library folder (blocking on
+    /// `aurelia import`). Updates `import_status` to reflect progress/outcome and
+    /// returns the backend result.
+    pub fn do_import(&mut self) -> Result<(), STError> {
+        self.import_status = "importing...".to_string();
+        match aurelia::import_game(self.import_app_id, &self.import_path) {
+            Ok(()) => {
+                self.import_status = "done".to_string();
+                Ok(())
+            }
+            Err(err) => {
+                self.import_status = format!("Failed: {}", err);
                 Err(err)
             }
         }
