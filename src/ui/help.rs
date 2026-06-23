@@ -72,8 +72,9 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("r", "refresh library"));
     lines.push(binding("A", "account"));
     lines.push(binding("p", "settings"));
-    lines.push(binding("F", "friends"));
-    lines.push(binding("c", "chat (in friends)"));
+    lines.push(binding("F", "focus friends panel"));
+    lines.push(binding("c / Enter", "chat (friends focused)"));
+    lines.push(binding("t", "chat in new window (friends focused)"));
     lines.push(binding("A then o", "log out"));
     lines.push(binding("w", "wallet balance"));
     lines.push(binding("l", "sign in again"));

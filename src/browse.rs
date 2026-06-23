@@ -167,13 +167,14 @@ pub struct Browser {
     pub achievements: Vec<aurelia::AchievementJson>,
     /// Scroll offset (top row) within the achievements overlay.
     pub ach_scroll: usize,
-    /// Whether the friends overlay is open.
-    pub show_friends: bool,
-    /// The logged-in user's friends (loaded when the overlay opens).
+    /// Whether the always-visible Friends panel currently holds keyboard focus
+    /// (so j/k move the highlight and c/Enter/t act on the selected friend).
+    pub friends_focused: bool,
+    /// The logged-in user's friends (loaded lazily the first time the panel is
+    /// focused).
     pub friends: Vec<aurelia::FriendJson>,
-    /// Scroll offset (top row) within the friends overlay.
-    pub friends_scroll: usize,
-    /// The highlighted row within the friends overlay.
+    /// The highlighted row within the Friends panel. The widget derives its own
+    /// scroll window from this so the highlight is always visible.
     pub friends_index: usize,
     /// Whether the chat view is open.
     pub show_chat: bool,
@@ -296,9 +297,8 @@ impl Browser {
             show_achievements: false,
             achievements: Vec::new(),
             ach_scroll: 0,
-            show_friends: false,
+            friends_focused: false,
             friends: Vec::new(),
-            friends_scroll: 0,
             friends_index: 0,
             show_chat: false,
             chat_messages: Vec::new(),
@@ -796,21 +796,25 @@ impl Browser {
         self.ach_scroll = self.ach_scroll.saturating_sub(1);
     }
 
-    /// Fetch the logged-in user's friends (blocking) and open the overlay. A
-    /// fetch error simply opens an empty overlay ("No friends.").
-    pub fn open_friends(&mut self) {
-        self.friends = aurelia::friends().unwrap_or_default();
-        self.friends_scroll = 0;
-        self.friends_index = 0;
-        self.show_friends = true;
+    /// Toggle keyboard focus on the always-visible Friends panel. The first time
+    /// the panel is focused its friends are fetched (blocking); a fetch error
+    /// simply leaves the list empty ("Press [F] to load friends."). Unfocusing
+    /// just drops focus — the list stays so it keeps showing in the panel.
+    pub fn toggle_friends_focus(&mut self) {
+        if self.friends_focused {
+            self.friends_focused = false;
+            return;
+        }
+        if self.friends.is_empty() {
+            self.friends = aurelia::friends().unwrap_or_default();
+            self.friends_index = 0;
+        }
+        self.friends_focused = true;
     }
 
-    /// Close the friends overlay and drop its data.
-    pub fn close_friends(&mut self) {
-        self.show_friends = false;
-        self.friends = Vec::new();
-        self.friends_scroll = 0;
-        self.friends_index = 0;
+    /// Drop focus on the Friends panel (Esc), keeping the loaded list.
+    pub fn unfocus_friends(&mut self) {
+        self.friends_focused = false;
     }
 
     /// The highlighted friend, if any.
@@ -818,8 +822,8 @@ impl Browser {
         self.friends.get(self.friends_index)
     }
 
-    /// Move the friends selection down by one row (clamped), keeping the
-    /// selected row scrolled into view.
+    /// Move the friends highlight down by one row (clamped). The widget scrolls
+    /// the whole list to keep the highlight visible.
     pub fn friends_scroll_down(&mut self) {
         if self.friends.is_empty() {
             self.friends_index = 0;
@@ -828,17 +832,44 @@ impl Browser {
         if self.friends_index + 1 < self.friends.len() {
             self.friends_index += 1;
         }
-        if self.friends_index > self.friends_scroll {
-            self.friends_scroll = self.friends_index;
-        }
     }
 
-    /// Move the friends selection up by one row (clamped), keeping the selected
-    /// row scrolled into view.
+    /// Move the friends highlight up by one row (clamped).
     pub fn friends_scroll_up(&mut self) {
         self.friends_index = self.friends_index.saturating_sub(1);
-        if self.friends_index < self.friends_scroll {
-            self.friends_scroll = self.friends_index;
+    }
+
+    /// Open a dedicated chat **in a new terminal window** with the highlighted
+    /// friend: spawns this same binary with `--chat <steamid> <name>`, which
+    /// launches straight into the full-screen chat loop. A missing selection or
+    /// spawn failure is a no-op (the panel stays as-is).
+    pub fn open_chat_terminal(&self) {
+        let Some(friend) = self.selected_friend() else {
+            return;
+        };
+        let steamid = friend.steam_id;
+        let name = friend.display_name();
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let exe = exe.to_string_lossy().into_owned();
+        let id = steamid.to_string();
+
+        #[cfg(windows)]
+        {
+            // `cmd /c start "<title>" "<program>" <args...>` opens a new console
+            // window. The quoted title positional is required so `start` does not
+            // treat the quoted program path as the window title.
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", "Aurelia Chat", &exe, "--chat", &id, &name])
+                .spawn();
+        }
+        #[cfg(not(windows))]
+        {
+            // Best-effort: launch the chat binary directly, detached.
+            let _ = std::process::Command::new(&exe)
+                .args(["--chat", &id, &name])
+                .spawn();
         }
     }
 

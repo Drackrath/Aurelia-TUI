@@ -136,14 +136,25 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 let selected = browser.selected();
                 let right = body[1];
 
-                // Right pane: a single Detail panel filling the pane, with the
-                // cover art painted as its background and the details — now
-                // including the description as its own row — listed on top.
+                // Split the right pane: game Details on top, the always-visible
+                // Friends & Chat panel pinned to the bottom (~1/3 of the height,
+                // clamped so neither half collapses on small/large terminals).
+                let friends_h = (right.height / 3).clamp(6, 16);
+                let right_split = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(6), Constraint::Length(friends_h)])
+                    .split(right);
+                let detail_area = right_split[0];
+                let friends_area = right_split[1];
+
+                // Detail panel: the cover art is painted as its background and
+                // the details — including the description as its own row — are
+                // listed on top.
                 let inner = Rect {
-                    x: right.x + 1,
-                    y: right.y + 1,
-                    width: right.width.saturating_sub(2),
-                    height: right.height.saturating_sub(2),
+                    x: detail_area.x + 1,
+                    y: detail_area.y + 1,
+                    width: detail_area.width.saturating_sub(2),
+                    height: detail_area.height.saturating_sub(2),
                 };
 
                 // Cover art as the Detail background — top-aligned, aspect-
@@ -179,7 +190,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         desc_width.saturating_sub(1),
                         inner.height,
                     ),
-                    right,
+                    detail_area,
+                );
+
+                // Always-visible Friends & Chat panel on the bottom-right.
+                let friends_rows = friends_area.height.saturating_sub(2) as usize;
+                frame.render_widget(
+                    ui::friends::friends(&browser, friends_rows),
+                    friends_area,
                 );
 
                 frame.render_widget(
@@ -194,18 +212,12 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::achievements::achievements(&browser), area);
                 }
 
-                // Friends overlay floats above everything.
-                if browser.show_friends {
-                    let area = ui::centered_rect(60, 80, frame.size());
-                    frame.render_widget(Clear, area);
-                    frame.render_widget(ui::friends::friends(&browser), area);
-                }
-
-                // Chat view floats above everything (incl. the friends overlay).
+                // Chat view floats above everything (the in-app conversation
+                // overlay; a chat can also be popped into its own terminal).
                 if browser.show_chat {
                     let area = ui::centered_rect(70, 80, frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::chat::chat(&browser), area);
+                    frame.render_widget(ui::chat::chat(&browser, area.width, area.height), area);
                 }
 
                 // Inventory overlay floats above everything.
@@ -447,11 +459,16 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char(c) => browser.chat_push(c),
                             _ => {}
                         }
-                    } else if browser.show_friends {
-                        // Friends overlay: Esc/q close, j/k select, Enter/c open chat.
+                    } else if browser.friends_focused {
+                        // Friends panel focused: j/k move the highlight (the whole
+                        // list scrolls under it), c/Enter open the in-app chat, t
+                        // pops the chat into a new terminal window, Esc/F/q unfocus.
                         match input {
-                            KeyCode::Esc | KeyCode::Char('q') => browser.close_friends(),
+                            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('F') => {
+                                browser.unfocus_friends()
+                            }
                             KeyCode::Enter | KeyCode::Char('c') => browser.open_chat(),
+                            KeyCode::Char('t') => browser.open_chat_terminal(),
                             KeyCode::Down | KeyCode::Char('j') => browser.friends_scroll_down(),
                             KeyCode::Up | KeyCode::Char('k') => browser.friends_scroll_up(),
                             _ => {}
@@ -703,7 +720,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('4') => browser.set_filter(Filter::Favourites),
                             KeyCode::Char('s') => browser.cycle_sort(),
                             KeyCode::Char('a') => browser.open_achievements(),
-                            KeyCode::Char('F') => browser.open_friends(),
+                            KeyCode::Char('F') => browser.toggle_friends_focus(),
                             KeyCode::Char('I') => {
                                 if let Some(game) = browser.selected() {
                                     browser.open_inventory(game.id);
@@ -1016,7 +1033,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_friends && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),
@@ -1034,7 +1051,67 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Launch directly into a full-screen chat with a single friend. Used when the
+/// binary is invoked as `aurelia-tui --chat <steamid> <name>` — the Friends
+/// panel's "open in new terminal" action ([t]) spawns exactly this in a fresh
+/// console window. Reuses the shared chat widget and the `Browser` chat state.
+fn chat_entry(steamid: u64, name: String) -> Result<(), Box<dyn std::error::Error>> {
+    enable_raw_mode()?;
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
+
+    let mut browser = Browser::new(Vec::new());
+    browser.chat_steamid = steamid;
+    browser.chat_partner = name;
+    browser.refresh_chat();
+
+    let events = Events::new();
+    // Re-fetch history every ~3s (6 ticks at the 500ms tick rate) so incoming
+    // messages surface without hammering the CLI on every frame.
+    let mut ticks: u32 = 0;
+    loop {
+        terminal.draw(|frame| {
+            let size = frame.size();
+            frame.render_widget(Block::default().style(theme::canvas()), size);
+            frame.render_widget(ui::chat::chat(&browser, size.width, size.height), size);
+        })?;
+
+        match events.next()? {
+            Event::Input(input) => match input {
+                KeyCode::Esc => break,
+                KeyCode::Char('\n') | KeyCode::Enter => browser.chat_send(),
+                KeyCode::Backspace => browser.chat_pop(),
+                KeyCode::Char(c) => browser.chat_push(c),
+                _ => {}
+            },
+            Event::Tick => {
+                ticks = ticks.wrapping_add(1);
+                if ticks % 6 == 0 {
+                    browser.refresh_chat();
+                }
+            }
+        }
+    }
+
+    disable_raw_mode()?;
+    terminal.clear()?;
+    Ok(())
+}
+
 fn main() {
+    // `aurelia-tui --chat <steamid> <name>` opens a dedicated chat window.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(pos) = args.iter().position(|a| a == "--chat") {
+        if let Some(steamid) = args.get(pos + 1).and_then(|s| s.parse::<u64>().ok()) {
+            let name = args.get(pos + 2).cloned().unwrap_or_default();
+            if let Err(err) = chat_entry(steamid, name) {
+                println!("{:?}", err);
+            }
+            return;
+        }
+    }
+
     match entry() {
         Ok(()) => {}
         Err(err) => println!("{:?}", err),
