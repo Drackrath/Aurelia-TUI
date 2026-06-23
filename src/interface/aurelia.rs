@@ -1345,6 +1345,15 @@ pub fn move_game(app_id: i32, library: &str) -> Result<(), STError> {
     Ok(())
 }
 
+/// Relink an installed game to another Steam library folder
+/// (`aurelia relink <id> <library> --json`). Blocks until the CLI finishes the
+/// relink (which can take a while); the parsed value is ignored beyond error
+/// detection.
+pub fn relink(app_id: i32, library: &str) -> Result<(), STError> {
+    run_json(&["relink", &app_id.to_string(), library])?;
+    Ok(())
+}
+
 /// Verify the integrity of a game's files (`aurelia verify <id> --json`),
 /// streaming progress into the shared status cell. Blocks until verification
 /// finishes; intended to be run on a dedicated thread.
