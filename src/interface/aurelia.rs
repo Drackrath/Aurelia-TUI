@@ -292,6 +292,28 @@ impl FriendJson {
     }
 }
 
+/// One chat message from `aurelia chat history <id> --json` (an item of the
+/// serialized history array). Key names match the CLI's `ChatMessage` struct
+/// (`sender`, `from_self`, `message`, `timestamp`). Everything is
+/// `#[serde(default)]` so a missing/renamed field never breaks parsing, and a
+/// couple of aliases cover alternate spellings the CLI might emit.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ChatMessageJson {
+    /// SteamID64 of the sender. The CLI emits it as a number, but accept a
+    /// string form too for robustness.
+    #[serde(default, alias = "steamid", alias = "from", deserialize_with = "de_steam_id")]
+    pub sender: u64,
+    /// Whether the logged-in user sent this message.
+    #[serde(default, alias = "outgoing", alias = "sent")]
+    pub from_self: bool,
+    /// Message body (the CLI key is `message`; `text` is accepted as a fallback).
+    #[serde(default, alias = "text")]
+    pub message: String,
+    /// Unix timestamp (seconds) the message was sent.
+    #[serde(default)]
+    pub timestamp: i64,
+}
+
 /// One inventory item stack, from `aurelia inventory <id> --json` (an item of
 /// the response array). The CLI serializes `InventoryItem` directly, so key
 /// names match its fields: `name`/`market_hash_name`, `item_type`, `amount`,
@@ -887,6 +909,36 @@ pub fn friends() -> Result<Vec<FriendJson>, STError> {
         return Ok(Vec::new());
     }
     Ok(serde_json::from_value(list)?)
+}
+
+/// Fetch the recent chat history with a friend (`aurelia chat history <id>
+/// --count <n> --json`). The CLI serializes the message array directly, but
+/// accept an object-wrapped form (`{ "messages": [...] }`) too. An empty/null
+/// result yields an empty `Vec`.
+pub fn chat_history(steamid: u64, count: u32) -> Result<Vec<ChatMessageJson>, STError> {
+    let value = run_json(&[
+        "chat",
+        "history",
+        &steamid.to_string(),
+        "--count",
+        &count.to_string(),
+    ])?;
+    let list = match value.get("messages") {
+        Some(messages) => messages.clone(),
+        None => value,
+    };
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
+}
+
+/// Send a direct message to a friend (`aurelia chat send <id> <message>
+/// --json`). The message is passed as a single trailing argument. The returned
+/// value is ignored; only errors are propagated.
+pub fn chat_send(steamid: u64, message: &str) -> Result<(), STError> {
+    run_json(&["chat", "send", &steamid.to_string(), message])?;
+    Ok(())
 }
 
 /// Fetch the logged-in user's inventory for a game (`aurelia inventory <id>
