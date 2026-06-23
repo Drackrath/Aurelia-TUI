@@ -24,16 +24,26 @@ pub fn friends(browser: &Browser) -> Paragraph<'static> {
 
     let lines: Vec<Spans<'static>> = items
         .iter()
+        .enumerate()
         .skip(browser.friends_scroll)
-        .map(|f| {
+        .map(|(i, f)| {
+            let selected = i == browser.friends_index;
             let online = f.is_online();
             let dot_style = if online {
                 Style::default().fg(theme::ONLINE)
             } else {
                 theme::dim()
             };
-            let name_style = if online { theme::value() } else { theme::dim() };
+            let name_style = if selected {
+                theme::selection(theme::ACCENT)
+            } else if online {
+                theme::value()
+            } else {
+                theme::dim()
+            };
+            let marker = if selected { "▶ " } else { "  " };
             let mut spans = vec![
+                Span::styled(marker, theme::accent()),
                 Span::styled("● ", dot_style),
                 Span::styled(f.display_name(), name_style),
             ];

@@ -201,6 +201,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::friends::friends(&browser), area);
                 }
 
+                // Chat view floats above everything (incl. the friends overlay).
+                if browser.show_chat {
+                    let area = ui::centered_rect(70, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::chat::chat(&browser), area);
+                }
+
                 // Inventory overlay floats above everything.
                 if browser.show_inventory {
                     let area = ui::centered_rect(70, 80, frame.size());
@@ -431,10 +438,20 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => browser.ach_scroll_up(),
                             _ => {}
                         }
+                    } else if browser.show_chat {
+                        // Chat view: Esc close, Enter send, typing composes.
+                        match input {
+                            KeyCode::Esc => browser.close_chat(),
+                            KeyCode::Char('\n') | KeyCode::Enter => browser.chat_send(),
+                            KeyCode::Backspace => browser.chat_pop(),
+                            KeyCode::Char(c) => browser.chat_push(c),
+                            _ => {}
+                        }
                     } else if browser.show_friends {
-                        // Friends overlay: Esc/q close, j/k scroll.
+                        // Friends overlay: Esc/q close, j/k select, Enter/c open chat.
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_friends(),
+                            KeyCode::Enter | KeyCode::Char('c') => browser.open_chat(),
                             KeyCode::Down | KeyCode::Char('j') => browser.friends_scroll_down(),
                             KeyCode::Up | KeyCode::Char('k') => browser.friends_scroll_up(),
                             _ => {}
@@ -999,7 +1016,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_friends && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_friends && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),
