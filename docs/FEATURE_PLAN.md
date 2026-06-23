@@ -47,14 +47,13 @@ Feature branches (all merged):
 | `workshop` (list) | `W` | subscribed items |
 | `logout` | `A`→`o` | in account overlay |
 | `move` | `M` | path-entry relocate |
+| `relink` | `K` | path-entry re-point install at another library |
+| `import` | `N` | path-entry register existing on-disk install |
+| `chat` (history/send) | `c` | from friends overlay; history view + send input line |
 
 ### Remaining — to implement (branch per feature)
 
-| Command | Plan |
-|---|---|
-| `chat` (history/send) | Add selection to the friends overlay; open a chat view for the selected friend — `aurelia chat history <steamid>` to show messages, an input line to `aurelia chat send <steamid> <msg>`. |
-| `relink` | Path-entry overlay like `move` → `aurelia relink <id> <library>` (re-point an install at another library). |
-| `import` | Path-entry overlay like `move` → `aurelia import <id> <library>` (register an existing on-disk install with Steam). |
+_None — every in-scope `aurelia` command is now surfaced in the TUI._
 
 ### Out of scope / optional extensions (documented, not planned)
 
