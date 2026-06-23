@@ -13,6 +13,7 @@ pub mod detail;
 pub mod dlc;
 pub mod friends;
 pub mod help;
+pub mod import;
 pub mod inventory;
 pub mod launch;
 pub mod list;

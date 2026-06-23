@@ -304,6 +304,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::move_game::move_overlay(&browser), area);
                 }
 
+                // Import (register existing install) prompt floats above everything.
+                if browser.show_import {
+                    let area = ui::centered_rect(60, 25, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::import::import_overlay(&browser), area);
+                }
+
                 // Proton runtimes overlay floats above everything.
                 if browser.show_proton {
                     let area = ui::centered_rect(60, 70, frame.size());
@@ -563,6 +570,19 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char(c) => browser.move_push(c),
                             _ => {}
                         }
+                    } else if browser.show_import {
+                        // Import prompt: type the library path holding the existing
+                        // files, Enter to register (kept open to show status), Esc
+                        // to cancel.
+                        match input {
+                            KeyCode::Esc => browser.close_import(),
+                            KeyCode::Char('\n') | KeyCode::Enter => {
+                                let _ = browser.do_import();
+                            }
+                            KeyCode::Backspace => browser.import_pop(),
+                            KeyCode::Char(c) => browser.import_push(c),
+                            _ => {}
+                        }
                     } else if browser.show_help {
                         // Any key dismisses the help overlay.
                         browser.show_help = false;
@@ -690,6 +710,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     if game.installed {
                                         browser.open_move(game.id);
                                     }
+                                }
+                            }
+                            KeyCode::Char('N') => {
+                                // Import registers an on-disk install, so it does
+                                // not require the game to already be installed.
+                                if let Some(game) = browser.selected() {
+                                    browser.open_import(game.id);
                                 }
                             }
                             KeyCode::Char('v') => {
@@ -945,7 +972,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_friends && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_friends && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),
