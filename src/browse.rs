@@ -229,6 +229,14 @@ pub struct Browser {
     pub move_app_id: i32,
     /// A short status line for the move prompt (progress, errors).
     pub move_status: String,
+    /// Whether the relink (relink install) prompt is open.
+    pub show_relink: bool,
+    /// The destination library path the user is typing.
+    pub relink_path: String,
+    /// The app id being relinked.
+    pub relink_app_id: i32,
+    /// A short status line for the relink prompt (progress, errors).
+    pub relink_status: String,
     /// Whether the Proton runtimes overlay is open.
     pub show_proton: bool,
     /// The Proton/Wine runtimes (loaded when the overlay opens).
@@ -297,6 +305,10 @@ impl Browser {
             move_path: String::new(),
             move_app_id: 0,
             move_status: String::new(),
+            show_relink: false,
+            relink_path: String::new(),
+            relink_app_id: 0,
+            relink_status: String::new(),
             show_proton: false,
             protons: Vec::new(),
             proton_index: 0,
@@ -483,6 +495,51 @@ impl Browser {
             }
             Err(err) => {
                 self.move_status = format!("Failed: {}", err);
+                Err(err)
+            }
+        }
+    }
+
+    // --- Relink (relink install) prompt ---
+
+    /// Open the relink prompt for `app_id`, clearing any previous path/status.
+    pub fn open_relink(&mut self, app_id: i32) {
+        self.relink_app_id = app_id;
+        self.relink_path.clear();
+        self.relink_status.clear();
+        self.show_relink = true;
+    }
+
+    /// Close the relink prompt and drop its state.
+    pub fn close_relink(&mut self) {
+        self.show_relink = false;
+        self.relink_path.clear();
+        self.relink_status.clear();
+        self.relink_app_id = 0;
+    }
+
+    /// Append a typed character to the destination path.
+    pub fn relink_push(&mut self, c: char) {
+        self.relink_path.push(c);
+    }
+
+    /// Remove the last character from the destination path.
+    pub fn relink_pop(&mut self) {
+        self.relink_path.pop();
+    }
+
+    /// Relink the game to the typed library folder (blocking on `aurelia
+    /// relink`). Updates `relink_status` to reflect progress/outcome and returns
+    /// the backend result.
+    pub fn do_relink(&mut self) -> Result<(), STError> {
+        self.relink_status = "relinking...".to_string();
+        match aurelia::relink(self.relink_app_id, &self.relink_path) {
+            Ok(()) => {
+                self.relink_status = "done".to_string();
+                Ok(())
+            }
+            Err(err) => {
+                self.relink_status = format!("Failed: {}", err);
                 Err(err)
             }
         }

@@ -55,6 +55,7 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("d", "install / download"));
     lines.push(binding("x", "uninstall game"));
     lines.push(binding("M", "move install"));
+    lines.push(binding("K", "relink install"));
     lines.push(binding("v", "verify files"));
     lines.push(binding("U", "update game"));
     lines.push(binding("D", "manage DLC"));
