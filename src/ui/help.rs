@@ -67,6 +67,7 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("P", "proton runtimes (d default · i install · u uninstall)"));
     lines.push(binding("R", "running games"));
     lines.push(binding("W", "workshop items"));
+    lines.push(binding("W then b", "browse workshop (Enter search, Tab sub)"));
     lines.push(binding("f", "toggle favourite"));
     lines.push(binding("H", "hide game"));
     lines.push(binding("C", "cloud saves (then s sync / d down / u up)"));

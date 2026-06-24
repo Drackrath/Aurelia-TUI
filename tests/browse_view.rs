@@ -3,7 +3,7 @@
 //! paint the expected content.
 
 use aurelia_tui::browse::{Browser, Filter};
-use aurelia_tui::interface::aurelia::{LibraryGameJson, ProtonJson};
+use aurelia_tui::interface::aurelia::{LibraryGameJson, ProtonJson, WorkshopItemJson};
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::{theme, ui};
 use tui::backend::TestBackend;
@@ -324,5 +324,121 @@ fn proton_overlay_shows_install_status() {
     assert!(
         render_proton(&browser).contains("downloading 42.0%"),
         "streamed install status appears in the overlay"
+    );
+}
+
+fn workshop_item(id: u64, title: &str, subscribed: bool) -> WorkshopItemJson {
+    WorkshopItemJson {
+        id: Some(id),
+        title: title.to_string(),
+        subscribed,
+        ..Default::default()
+    }
+}
+
+/// Leaving browse mode and closing the overlay reset the browse state. (We set
+/// the flags directly rather than via `open_workshop`/`workshop_enter_browse`,
+/// which would shell out to the CLI.)
+#[test]
+fn workshop_browse_mode_toggles() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.show_workshop = true;
+    browser.workshop_browse = true;
+    browser.workshop_query = "x".to_string();
+
+    browser.workshop_exit_browse();
+    assert!(!browser.workshop_browse, "back to the subscribed list");
+
+    browser.close_workshop();
+    assert!(!browser.show_workshop, "overlay closed");
+    assert!(!browser.workshop_browse, "browse state reset on close");
+    assert!(browser.workshop_query.is_empty(), "query cleared on close");
+}
+
+/// Highlight navigation over the browse results is clamped at both ends.
+#[test]
+fn workshop_result_navigation_clamps() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.show_workshop = true;
+    browser.workshop_browse = true;
+    browser.workshop_results = vec![
+        workshop_item(10, "Mod A", false),
+        workshop_item(20, "Mod B", true),
+    ];
+    browser.workshop_index = 0;
+
+    browser.workshop_previous();
+    assert_eq!(browser.workshop_index, 0, "cannot go above the first row");
+
+    browser.workshop_next();
+    assert_eq!(browser.workshop_index, 1, "moved to the second row");
+    browser.workshop_next();
+    assert_eq!(browser.workshop_index, 1, "cannot go past the last row");
+
+    let sel = browser.selected_workshop_result().expect("a row is selected");
+    assert_eq!(sel.id, Some(20));
+}
+
+/// The browse pane renders the query, a result count, and the rows with their
+/// subscribed tags and the highlight marker.
+#[test]
+fn workshop_browse_pane_renders() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.show_workshop = true;
+    browser.workshop_browse = true;
+    browser.workshop_query = "aim".to_string();
+    browser.workshop_results = vec![
+        workshop_item(10, "AimTrainer", false),
+        workshop_item(20, "BotMap", true),
+    ];
+    browser.workshop_index = 1;
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            f.render_widget(ui::workshop::workshop(&browser), Rect::new(0, 0, 80, 24));
+        })
+        .unwrap();
+
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol.clone())
+        .collect();
+
+    assert!(text.contains("aim"), "query text is shown");
+    assert!(text.contains("AimTrainer"), "first result title shown");
+    assert!(text.contains("BotMap"), "second result title shown");
+    assert!(text.contains("subscribed"), "subscribed tag shown");
+    assert!(text.contains("browse"), "browse-mode title shown");
+}
+
+/// `workshop list` rows omit `subscribed` (the CLI only ever returns subscribed
+/// items), so the struct default must be `true` — the list-path invariant that
+/// `workshop_browse`'s explicit "force false" override depends on. Browse rows
+/// (which never carry the field) are forced to `false` inside the parse fn, so
+/// here we only pin the struct's own default behaviour both ways.
+#[test]
+fn workshop_item_subscribed_default() {
+    // Absent field -> defaults to subscribed (the `workshop list` contract).
+    let listed: WorkshopItemJson =
+        serde_json::from_str(r#"{ "id": 3733868922, "title": "Mod" }"#).unwrap();
+    assert!(
+        listed.subscribed,
+        "an item with no `subscribed` field defaults to subscribed (list path)"
+    );
+
+    // An explicit `false` (or the browse-path override) is honoured verbatim.
+    let unlisted: WorkshopItemJson =
+        serde_json::from_str(r#"{ "id": 42, "title": "X", "subscribed": false }"#).unwrap();
+    assert!(
+        !unlisted.subscribed,
+        "an explicit false is preserved (browse rows are forced false)"
     );
 }

@@ -241,6 +241,37 @@ pub struct Browser {
     pub workshop: Vec<aurelia::WorkshopItemJson>,
     /// Scroll offset (top row) within the Workshop overlay.
     pub workshop_scroll: usize,
+    /// The app id the Workshop overlay is showing (used for browse/subscribe).
+    workshop_app_id: i32,
+    /// Whether the overlay is in browse/search mode (vs. the subscribed list).
+    pub workshop_browse: bool,
+    /// The Workshop browse/search query the user is typing.
+    pub workshop_query: String,
+    /// Browse/search results (the current page from `workshop browse`).
+    pub workshop_results: Vec<aurelia::WorkshopItemJson>,
+    /// The highlighted row within the browse results list.
+    pub workshop_index: usize,
+    /// True while a browse/search request is in flight (drives a spinner line).
+    pub workshop_searching: bool,
+    /// A transient status line for the browse pane (subscribe/unsubscribe/error).
+    pub workshop_status: String,
+    /// Generation tag for browse requests: a worker's result is applied only if
+    /// its tag still matches, so a slow earlier search never clobbers a newer one.
+    workshop_gen: u64,
+    /// Slot a browse worker posts its `(generation, result)` into; polled each
+    /// loop iteration by `poll_workshop`.
+    workshop_slot: Arc<Mutex<Option<(u64, Result<Vec<aurelia::WorkshopItemJson>, String>)>>>,
+    /// True while a subscribe/unsubscribe request is in flight.
+    pub workshop_acting: bool,
+    /// Slot a subscribe/unsubscribe worker posts its outcome into:
+    /// `(item_id, want_subscribed, Result<(), error>)`. Polled by `poll_workshop`.
+    workshop_action_slot: Arc<Mutex<Option<(u64, bool, Result<(), String>)>>>,
+    /// Slot a subscribe/unsubscribe worker posts a re-fetched subscribed list
+    /// into on success: `(generation, items)`. Drained (non-blocking) by
+    /// `poll_workshop` and installed only if the generation still matches, so a
+    /// stale refresh can never clobber newer overlay state. This keeps the
+    /// post-action `workshop list` shell-out entirely off the render thread.
+    workshop_refresh_slot: Arc<Mutex<Option<(u64, Vec<aurelia::WorkshopItemJson>)>>>,
     /// Whether the uninstall confirmation prompt is open for the selection.
     pub confirm_uninstall: bool,
     /// Whether the DLC overlay is open.
@@ -387,6 +418,18 @@ impl Browser {
             show_workshop: false,
             workshop: Vec::new(),
             workshop_scroll: 0,
+            workshop_app_id: 0,
+            workshop_browse: false,
+            workshop_query: String::new(),
+            workshop_results: Vec::new(),
+            workshop_index: 0,
+            workshop_searching: false,
+            workshop_status: String::new(),
+            workshop_gen: 0,
+            workshop_slot: Arc::new(Mutex::new(None)),
+            workshop_acting: false,
+            workshop_action_slot: Arc::new(Mutex::new(None)),
+            workshop_refresh_slot: Arc::new(Mutex::new(None)),
             confirm_uninstall: false,
             show_dlc: false,
             dlc: Vec::new(),
@@ -1549,10 +1592,18 @@ impl Browser {
     }
 
     /// Fetch the given game's subscribed Workshop items (blocking) and open the
-    /// overlay. A fetch error simply opens an empty overlay ("No workshop items.").
+    /// overlay in its subscribed-list mode. A fetch error simply opens an empty
+    /// overlay ("No workshop items.").
     pub fn open_workshop(&mut self, app_id: i32) {
         self.workshop = aurelia::workshop_list(app_id).unwrap_or_default();
         self.workshop_scroll = 0;
+        self.workshop_app_id = app_id;
+        self.workshop_browse = false;
+        self.workshop_query.clear();
+        self.workshop_results = Vec::new();
+        self.workshop_index = 0;
+        self.workshop_searching = false;
+        self.workshop_status.clear();
         self.show_workshop = true;
     }
 
@@ -1561,6 +1612,14 @@ impl Browser {
         self.show_workshop = false;
         self.workshop = Vec::new();
         self.workshop_scroll = 0;
+        self.workshop_browse = false;
+        self.workshop_query.clear();
+        self.workshop_results = Vec::new();
+        self.workshop_index = 0;
+        self.workshop_searching = false;
+        self.workshop_status.clear();
+        // Bump the generation so any in-flight worker's late result is dropped.
+        self.workshop_gen = self.workshop_gen.wrapping_add(1);
     }
 
     /// Scroll the Workshop overlay down by one row (clamped).
@@ -1574,6 +1633,213 @@ impl Browser {
     /// Scroll the Workshop overlay up by one row (clamped).
     pub fn workshop_scroll_up(&mut self) {
         self.workshop_scroll = self.workshop_scroll.saturating_sub(1);
+    }
+
+    /// Switch the Workshop overlay into browse/search mode and kick off an
+    /// initial (default feed) browse for the current game.
+    pub fn workshop_enter_browse(&mut self) {
+        if self.workshop_browse {
+            return;
+        }
+        self.workshop_browse = true;
+        self.workshop_status.clear();
+        self.workshop_index = 0;
+        self.start_workshop_search();
+    }
+
+    /// Leave browse mode and return to the subscribed-items list.
+    pub fn workshop_exit_browse(&mut self) {
+        self.workshop_browse = false;
+        self.workshop_status.clear();
+        // Drop any in-flight search result.
+        self.workshop_gen = self.workshop_gen.wrapping_add(1);
+        self.workshop_searching = false;
+    }
+
+    /// Append a character to the browse query (browse mode only).
+    pub fn workshop_push_query(&mut self, c: char) {
+        self.workshop_query.push(c);
+    }
+
+    /// Delete the last character of the browse query (browse mode only).
+    pub fn workshop_pop_query(&mut self) {
+        self.workshop_query.pop();
+    }
+
+    /// Move the highlight down within the browse results (clamped).
+    pub fn workshop_next(&mut self) {
+        let max = self.workshop_results.len().saturating_sub(1);
+        if self.workshop_index < max {
+            self.workshop_index += 1;
+        }
+    }
+
+    /// Move the highlight up within the browse results (clamped).
+    pub fn workshop_previous(&mut self) {
+        self.workshop_index = self.workshop_index.saturating_sub(1);
+    }
+
+    /// The currently highlighted browse result, if any.
+    pub fn selected_workshop_result(&self) -> Option<&aurelia::WorkshopItemJson> {
+        self.workshop_results.get(self.workshop_index)
+    }
+
+    /// Launch a `workshop browse` request off the UI thread for the current
+    /// query. A monotonic generation tag is captured up front; when the worker
+    /// finishes it posts `(generation, result)` into the shared slot, and
+    /// `poll_workshop` only applies it if the tag still matches — so a slow
+    /// earlier search can never overwrite a newer one.
+    pub fn start_workshop_search(&mut self) {
+        self.workshop_gen = self.workshop_gen.wrapping_add(1);
+        let generation = self.workshop_gen;
+        let app_id = self.workshop_app_id;
+        let query = self.workshop_query.clone();
+        let slot = Arc::clone(&self.workshop_slot);
+        self.workshop_searching = true;
+        self.workshop_status.clear();
+        thread::spawn(move || {
+            let result =
+                aurelia::workshop_browse(app_id, &query).map_err(|e| e.to_string());
+            if let Ok(mut guard) = slot.lock() {
+                *guard = Some((generation, result));
+            }
+        });
+    }
+
+    /// Drain a finished browse worker's result into the overlay state. Called
+    /// once per event-loop iteration; cheap and non-blocking when idle. Stale
+    /// results (generation mismatch) are discarded.
+    pub fn poll_workshop(&mut self) {
+        let posted = match self.workshop_slot.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(_) => None,
+        };
+        if let Some((generation, result)) = posted {
+            if generation != self.workshop_gen {
+                return; // a newer search superseded this one
+            }
+            self.workshop_searching = false;
+            match result {
+                Ok(items) => {
+                    self.workshop_results = items;
+                    self.workshop_index = 0;
+                    if self.workshop_results.is_empty() {
+                        self.workshop_status = "No matches.".to_string();
+                    } else {
+                        self.workshop_status.clear();
+                    }
+                }
+                Err(err) => {
+                    self.workshop_results = Vec::new();
+                    self.workshop_index = 0;
+                    self.workshop_status = format!("Browse failed: {err}");
+                }
+            }
+        }
+
+        // Drain a finished subscribe/unsubscribe worker.
+        let action = match self.workshop_action_slot.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(_) => None,
+        };
+        if let Some((item_id, want_subscribed, result)) = action {
+            self.workshop_acting = false;
+            match result {
+                Ok(()) => {
+                    // Flip the flag on whichever result row carries this id (the
+                    // highlight may have moved while the request was in flight).
+                    for item in self.workshop_results.iter_mut() {
+                        if item.id == Some(item_id) {
+                            item.subscribed = want_subscribed;
+                        }
+                    }
+                    self.workshop_status = if want_subscribed {
+                        "Subscribed.".to_string()
+                    } else {
+                        "Unsubscribed.".to_string()
+                    };
+                    // The refreshed subscribed list (if any) arrives separately
+                    // via `workshop_refresh_slot`, drained below — no blocking
+                    // CLI call here on the render thread.
+                }
+                Err(err) => {
+                    self.workshop_status = if want_subscribed {
+                        format!("Subscribe failed: {err}")
+                    } else {
+                        format!("Unsubscribe failed: {err}")
+                    };
+                }
+            }
+        }
+
+        // Drain a re-fetched subscribed list posted by a successful action
+        // worker. Non-blocking try-lock + take; install only if the generation
+        // still matches so a refresh that arrives after the overlay closed or
+        // moved on is discarded.
+        let refresh = match self.workshop_refresh_slot.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(_) => None,
+        };
+        if let Some((generation, items)) = refresh {
+            if generation == self.workshop_gen {
+                self.workshop = items;
+                let max = self.workshop.len().saturating_sub(1);
+                if self.workshop_scroll > max {
+                    self.workshop_scroll = max;
+                }
+            }
+        }
+    }
+
+    /// Toggle the subscription of the highlighted browse result off the UI
+    /// thread: subscribe if it is not currently subscribed, otherwise
+    /// unsubscribe. The worker posts `(item_id, want_subscribed, result)` into
+    /// `workshop_action_slot`, which `poll_workshop` drains to flip the local
+    /// flag and refresh the subscribed list. A request already in flight is a
+    /// no-op so a held key cannot stack calls.
+    pub fn workshop_toggle_subscribe_selected(&mut self) {
+        if self.workshop_acting {
+            return;
+        }
+        let Some(item) = self.selected_workshop_result() else {
+            return;
+        };
+        let Some(id) = item.id else {
+            return;
+        };
+        let want_subscribed = !item.subscribed;
+        let slot = Arc::clone(&self.workshop_action_slot);
+        let refresh_slot = Arc::clone(&self.workshop_refresh_slot);
+        let app_id = self.workshop_app_id;
+        let generation = self.workshop_gen;
+        self.workshop_acting = true;
+        self.workshop_status = if want_subscribed {
+            "Subscribing…".to_string()
+        } else {
+            "Unsubscribing…".to_string()
+        };
+        thread::spawn(move || {
+            let result = if want_subscribed {
+                aurelia::workshop_subscribe(id)
+            } else {
+                aurelia::workshop_unsubscribe(id)
+            }
+            .map_err(|e| e.to_string());
+            // On success, re-fetch the subscribed list *here on the worker
+            // thread* (another blocking shell-out) and hand it back tagged with
+            // the generation captured up front, so the UI thread never blocks on
+            // `workshop list` and a stale refresh is dropped on arrival.
+            if result.is_ok() {
+                if let Ok(items) = aurelia::workshop_list(app_id) {
+                    if let Ok(mut guard) = refresh_slot.lock() {
+                        *guard = Some((generation, items));
+                    }
+                }
+            }
+            if let Ok(mut guard) = slot.lock() {
+                *guard = Some((id, want_subscribed, result));
+            }
+        });
     }
 
     /// Fetch the logged-in account (`aurelia account`) and open the overlay.

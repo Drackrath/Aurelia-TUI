@@ -1358,6 +1358,60 @@ pub fn workshop_list(app_id: i32) -> Result<Vec<WorkshopItemJson>, STError> {
     Ok(serde_json::from_value(list)?)
 }
 
+/// Browse/search a game's Workshop to discover items to subscribe to
+/// (`aurelia workshop browse <id> [--search <text>] --json`). The CLI emits an
+/// object with an `items` array (alongside `next_cursor`/`total`, which we
+/// ignore here); tolerate a bare array or an object wrapping the list under
+/// `items`/`results`. An empty `search` browses the default (trending) feed.
+///
+/// Intended to be called from a worker thread — it shells out to the CLI, which
+/// makes a network round-trip, so it must never run on the UI/render thread.
+pub fn workshop_browse(app_id: i32, search: &str) -> Result<Vec<WorkshopItemJson>, STError> {
+    let app = app_id.to_string();
+    let mut args: Vec<&str> = vec!["workshop", "browse", &app];
+    let trimmed = search.trim();
+    if !trimmed.is_empty() {
+        args.push("--search");
+        args.push(trimmed);
+    }
+    let value = run_json(&args)?;
+    // Accept either a bare array or a wrapping object (`{ "items": [..] }`).
+    let list = value
+        .get("items")
+        .or_else(|| value.get("results"))
+        .cloned()
+        .unwrap_or(value);
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    let mut items: Vec<WorkshopItemJson> = serde_json::from_value(list)?;
+    // `workshop browse` rows never carry a `subscribed` field, so the struct's
+    // `default = "default_true"` (which is correct for `workshop list`, whose
+    // rows are all subscribed) would wrongly mark every browse row subscribed.
+    // Force it off here: browse rows are "not subscribed unless we learn
+    // otherwise" (the overlay flips the flag locally on a successful subscribe).
+    for item in items.iter_mut() {
+        item.subscribed = false;
+    }
+    Ok(items)
+}
+
+/// Subscribe to a single Workshop item (`aurelia workshop subscribe <id>
+/// --json`). Returns the backend error on failure; the success payload is
+/// ignored. Network-bound — call off the UI thread.
+pub fn workshop_subscribe(item_id: u64) -> Result<(), STError> {
+    run_json(&["workshop", "subscribe", &item_id.to_string()])?;
+    Ok(())
+}
+
+/// Unsubscribe from a single Workshop item (`aurelia workshop unsubscribe <id>
+/// --json`). Returns the backend error on failure; the success payload is
+/// ignored. Network-bound — call off the UI thread.
+pub fn workshop_unsubscribe(item_id: u64) -> Result<(), STError> {
+    run_json(&["workshop", "unsubscribe", &item_id.to_string()])?;
+    Ok(())
+}
+
 /// Fetch the logged-in account's active market listings and open buy orders
 /// (`aurelia market listings --json`). The CLI emits an object with separate
 /// `listings`/`buy_orders` arrays; we flatten them into one `Vec`, tagging each

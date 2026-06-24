@@ -113,6 +113,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // roster refreshes after an add/remove) before drawing this frame.
         browser.poll_friends_ops();
 
+        // Drain any finished off-thread Workshop browse/search/subscribe worker
+        // before rendering, so its result lands on the next frame. Runs on every
+        // event (including ticks) and never blocks the UI thread.
+        browser.poll_workshop();
+
         // A just-finished Proton install flips a runtime to [installed]; pick
         // that up by refreshing the list once, then drop the status line. Done
         // before draw since the render closure only borrows `browser` immutably.
@@ -610,12 +615,41 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             _ => {}
                         }
                     } else if browser.show_workshop {
-                        // Workshop overlay: Esc/q close, j/k scroll.
-                        match input {
-                            KeyCode::Esc | KeyCode::Char('q') => browser.close_workshop(),
-                            KeyCode::Down | KeyCode::Char('j') => browser.workshop_scroll_down(),
-                            KeyCode::Up | KeyCode::Char('k') => browser.workshop_scroll_up(),
-                            _ => {}
+                        if browser.workshop_browse {
+                            // Browse/search pane: the query line takes typed
+                            // text (Enter searches off-thread). Navigation/action
+                            // use non-text keys so they never collide with what
+                            // the user is typing: Up/Down move the highlight,
+                            // Tab subscribes/unsubscribes it off-thread, and Esc
+                            // returns to the subscribed list.
+                            match input {
+                                KeyCode::Esc => browser.workshop_exit_browse(),
+                                KeyCode::Char('\n') | KeyCode::Enter => {
+                                    browser.start_workshop_search()
+                                }
+                                KeyCode::Down => browser.workshop_next(),
+                                KeyCode::Up => browser.workshop_previous(),
+                                KeyCode::Tab => {
+                                    browser.workshop_toggle_subscribe_selected()
+                                }
+                                KeyCode::Backspace => browser.workshop_pop_query(),
+                                KeyCode::Char(c) => browser.workshop_push_query(c),
+                                _ => {}
+                            }
+                        } else {
+                            // Subscribed-items list: Esc/q close, j/k scroll,
+                            // 'b' opens the browse/search pane.
+                            match input {
+                                KeyCode::Esc | KeyCode::Char('q') => browser.close_workshop(),
+                                KeyCode::Char('b') => browser.workshop_enter_browse(),
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    browser.workshop_scroll_down()
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    browser.workshop_scroll_up()
+                                }
+                                _ => {}
+                            }
                         }
                     } else if browser.confirm_uninstall {
                         // Uninstall confirmation prompt: y confirms, anything else cancels.
@@ -1176,7 +1210,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Adopt any completed market search / price result published off-thread.
         browser.poll_market();
 
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),
@@ -1221,13 +1255,20 @@ fn chat_entry(steamid: u64, name: String) -> Result<(), Box<dyn std::error::Erro
         })?;
 
         match events.next()? {
-            Event::Input(input) => match input {
-                KeyCode::Esc => break,
-                KeyCode::Char('\n') | KeyCode::Enter => browser.chat_send(),
-                KeyCode::Backspace => browser.chat_pop(),
-                KeyCode::Char(c) => browser.chat_push(c),
-                _ => {}
-            },
+            Event::Input(input) => {
+                match input {
+                    KeyCode::Esc => break,
+                    KeyCode::Char('\n') | KeyCode::Enter => browser.chat_send(),
+                    KeyCode::Backspace => browser.chat_pop(),
+                    KeyCode::Char(c) => browser.chat_push(c),
+                    _ => {}
+                }
+                // The input thread latch-debounces: it stops delivering keys
+                // after the first one until we release it. The primary loop does
+                // this too (see `entry`); without it this `--chat` window goes
+                // deaf after a single keypress (even Esc stops working).
+                events.release();
+            }
             Event::Tick => {
                 ticks = ticks.wrapping_add(1);
                 if ticks % 6 == 0 {
