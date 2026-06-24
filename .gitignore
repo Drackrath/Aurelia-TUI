@@ -1,5 +1,5 @@
 # Unix
-
+.c*
 
 
 # Git
@@ -9,5 +9,6 @@
 # Rust
 /target
 /target-test
+/docs
 
 *.log
