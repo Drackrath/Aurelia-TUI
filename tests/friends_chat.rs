@@ -9,7 +9,7 @@
 //! `cargo test --test friends_chat -- --nocapture` to eyeball the layout.
 
 use aurelia_tui::browse::Browser;
-use aurelia_tui::interface::aurelia::{ChatMessageJson, FriendJson, LibraryGameJson};
+use aurelia_tui::interface::aurelia::{ChatMessageJson, FriendJson, FriendSearchJson, LibraryGameJson};
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::ui;
 use tui::backend::TestBackend;
@@ -209,6 +209,45 @@ fn right_pane_splits_detail_over_friends() {
     let friends_row = rows.iter().position(|r| r.contains("Friends")).expect("friends panel");
     assert!(detail_row < friends_row, "Detail sits above Friends");
     assert!(rows.join("\n").contains("Alice"), "friend listed in the panel");
+}
+
+#[test]
+fn friend_add_overlay_shows_input_and_resolved_preview() {
+    isolate_config();
+    let mut b = Browser::new(vec![]);
+
+    // Typed query, no search yet: the labelled input is shown with a caret.
+    b.show_friend_add = true;
+    b.friend_add_query = "gabelogannewell".to_string();
+    let rows = render_rows(70, 10, |f| {
+        f.render_widget(ui::friend_add::friend_add_overlay(&b), Rect::new(0, 0, 70, 10));
+    });
+    let joined = rows.join("\n");
+    assert!(joined.contains("Add friend"), "overlay titled");
+    assert!(joined.contains("vanity"), "label names the accepted reference forms");
+    assert!(joined.contains("gabelogannewell"), "shows the typed query");
+    assert!(joined.contains("[Enter] search"), "title hints the search key");
+    assert!(joined.contains("[a] send request"), "title hints the add key");
+    print_shot("Add friend (input)", &rows);
+
+    // After a successful `friends search`, a resolved-account preview appears.
+    b.friend_search_result = Some(FriendSearchJson {
+        steam_id: 76561197960287930,
+        persona_name: Some("Rabscuttle".to_string()),
+        profile_url: None,
+    });
+    if let Ok(mut status) = b.friend_add_status.lock() {
+        *status = "Found Rabscuttle".to_string();
+    }
+    let rows = render_rows(70, 12, |f| {
+        f.render_widget(ui::friend_add::friend_add_overlay(&b), Rect::new(0, 0, 70, 12));
+    });
+    let joined = rows.join("\n");
+    assert!(joined.contains("Resolved:"), "resolved preview present");
+    assert!(joined.contains("Rabscuttle"), "preview names the account");
+    assert!(joined.contains("76561197960287930"), "preview shows the SteamID");
+    assert!(joined.contains("send the friend request"), "preview hints the confirm key");
+    print_shot("Add friend (resolved)", &rows);
 }
 
 #[test]

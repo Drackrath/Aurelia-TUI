@@ -51,6 +51,8 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("a", "achievements"));
     lines.push(binding("I", "inventory"));
     lines.push(binding("m", "market listings"));
+    lines.push(binding("S", "search the community market"));
+    lines.push(binding("  Enter / Tab", "  search run / price highlighted"));
     lines.push(binding("i", "expand / collapse description"));
     lines.push(binding("d", "install / download"));
     lines.push(binding("x", "uninstall game"));
@@ -62,12 +64,12 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("D", "manage DLC"));
     lines.push(binding("b", "beta branches"));
     lines.push(binding("o", "depots"));
-    lines.push(binding("P", "proton runtimes"));
+    lines.push(binding("P", "proton runtimes (d default · i install · u uninstall)"));
     lines.push(binding("R", "running games"));
     lines.push(binding("W", "workshop items"));
     lines.push(binding("f", "toggle favourite"));
     lines.push(binding("H", "hide game"));
-    lines.push(binding("C", "cloud saves"));
+    lines.push(binding("C", "cloud saves (then s sync / d down / u up)"));
     lines.push(binding("L", "launch options"));
     lines.push(binding("r", "refresh library"));
     lines.push(binding("A", "account"));
@@ -75,6 +77,8 @@ pub fn help() -> Paragraph<'static> {
     lines.push(binding("F", "focus friends panel"));
     lines.push(binding("c / Enter", "chat (friends focused)"));
     lines.push(binding("t", "chat in new window (friends focused)"));
+    lines.push(binding("a", "add friend (friends focused)"));
+    lines.push(binding("x", "remove friend (friends focused)"));
     lines.push(binding("A then o", "log out"));
     lines.push(binding("w", "wallet balance"));
     lines.push(binding("l", "sign in again"));

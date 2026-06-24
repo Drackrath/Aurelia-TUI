@@ -109,6 +109,18 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     loop {
+        // Adopt any async friend-management results (resolved search previews and
+        // roster refreshes after an add/remove) before drawing this frame.
+        browser.poll_friends_ops();
+
+        // A just-finished Proton install flips a runtime to [installed]; pick
+        // that up by refreshing the list once, then drop the status line. Done
+        // before draw since the render closure only borrows `browser` immutably.
+        if browser.show_proton && browser.proton_status_line().as_deref() == Some("Installed!") {
+            browser.refresh_proton();
+            browser.clear_proton_status();
+        }
+
         terminal.draw(|frame| {
             frame.render_widget(Block::default().style(theme::canvas()), frame.size());
 
@@ -234,6 +246,16 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::market::market(&browser), area);
                 }
 
+                // Community Market search overlay floats above everything.
+                if browser.show_market_search {
+                    let area = ui::centered_rect(70, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    // Pass the inner content height (minus the block border) so the
+                    // result window never overflows the overlay.
+                    let rows = area.height.saturating_sub(2) as usize;
+                    frame.render_widget(ui::market_search::market_search(&browser, rows), area);
+                }
+
                 // Workshop overlay floats above everything.
                 if browser.show_workshop {
                     let area = ui::centered_rect(72, 80, frame.size());
@@ -342,6 +364,16 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     let area = ui::centered_rect(60, 70, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::proton::proton(&browser), area);
+
+                    // Destructive uninstall confirmation floats above the overlay.
+                    if browser.confirm_proton_uninstall {
+                        if let Some(p) = browser.selected_proton() {
+                            let prompt = ui::confirm::confirm_uninstall(&p.name);
+                            let confirm_area = ui::centered_rect(40, 20, frame.size());
+                            frame.render_widget(Clear, confirm_area);
+                            frame.render_widget(prompt, confirm_area);
+                        }
+                    }
                 }
 
                 // Running-games overlay floats above everything.
@@ -349,6 +381,25 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     let area = ui::centered_rect(60, 60, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::running::running(&browser), area);
+                }
+
+                // Add-friend (search/add) prompt floats above everything.
+                if browser.show_friend_add {
+                    let area = ui::centered_rect(60, 30, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::friend_add::friend_add_overlay(&browser), area);
+                }
+
+                // Remove-friend confirmation prompt floats above the friends panel.
+                if browser.confirm_friend_remove {
+                    if let Some(friend) = browser.selected_friend() {
+                        let area = ui::centered_rect(40, 20, frame.size());
+                        frame.render_widget(Clear, area);
+                        frame.render_widget(
+                            ui::confirm::confirm_remove_friend(&friend.display_name()),
+                            area,
+                        );
+                    }
                 }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
@@ -432,12 +483,23 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Mode::Browse => {
                     if browser.show_cloud {
-                        // Steam Cloud overlay: Esc/q close, s syncs and re-fetches.
+                        // Steam Cloud overlay: Esc/q close, s syncs both ways,
+                        // d downloads only, u uploads only; each re-fetches.
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_cloud(),
                             KeyCode::Char('s') => {
                                 if let Some(game) = browser.selected() {
-                                    browser.sync_cloud(game.id);
+                                    browser.sync_cloud(game.id, aurelia::CloudDirection::Both);
+                                }
+                            }
+                            KeyCode::Char('d') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.sync_cloud(game.id, aurelia::CloudDirection::Down);
+                                }
+                            }
+                            KeyCode::Char('u') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.sync_cloud(game.id, aurelia::CloudDirection::Up);
                                 }
                             }
                             _ => {}
@@ -459,16 +521,45 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char(c) => browser.chat_push(c),
                             _ => {}
                         }
+                    } else if browser.show_friend_add {
+                        // Add-friend prompt: type the reference, Enter to resolve
+                        // it via `friends search`, a to send the request via
+                        // `friends add` (kept open to show status), Esc to cancel.
+                        match input {
+                            KeyCode::Esc => browser.close_friend_add(),
+                            KeyCode::Char('\n') | KeyCode::Enter => browser.friend_search(),
+                            KeyCode::Char('a') => browser.friend_add_confirm(),
+                            KeyCode::Backspace => browser.friend_add_pop(),
+                            KeyCode::Char(c) => browser.friend_add_push(c),
+                            _ => {}
+                        }
+                    } else if browser.confirm_friend_remove {
+                        // Remove-friend confirmation: y confirms, anything else cancels.
+                        match input {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                browser.friend_remove_confirm();
+                                browser.confirm_friend_remove = false;
+                            }
+                            _ => browser.confirm_friend_remove = false,
+                        }
                     } else if browser.friends_focused {
                         // Friends panel focused: j/k move the highlight (the whole
                         // list scrolls under it), c/Enter open the in-app chat, t
-                        // pops the chat into a new terminal window, Esc/F/q unfocus.
+                        // pops the chat into a new terminal window, a opens the
+                        // add-friend prompt, x removes the highlighted friend
+                        // (confirmed), Esc/F/q unfocus.
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('F') => {
                                 browser.unfocus_friends()
                             }
                             KeyCode::Enter | KeyCode::Char('c') => browser.open_chat(),
                             KeyCode::Char('t') => browser.open_chat_terminal(),
+                            KeyCode::Char('a') => browser.open_friend_add(),
+                            KeyCode::Char('x') => {
+                                if browser.selected_friend().is_some() {
+                                    browser.confirm_friend_remove = true;
+                                }
+                            }
                             KeyCode::Down | KeyCode::Char('j') => browser.friends_scroll_down(),
                             KeyCode::Up | KeyCode::Char('k') => browser.friends_scroll_up(),
                             _ => {}
@@ -495,6 +586,27 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_market(),
                             KeyCode::Down | KeyCode::Char('j') => browser.market_scroll_down(),
                             KeyCode::Up | KeyCode::Char('k') => browser.market_scroll_up(),
+                            _ => {}
+                        }
+                    } else if browser.show_market_search {
+                        // Market search overlay: typing edits the query, Enter
+                        // runs the search (off-thread), Up/Down move the result
+                        // highlight, Tab prices the highlighted result (off-thread),
+                        // Esc closes. q/j/k are NOT shortcuts here so they can be
+                        // typed into the query.
+                        match input {
+                            KeyCode::Esc => browser.close_market_search(),
+                            KeyCode::Char('\n') | KeyCode::Enter => {
+                                browser.submit_market_search()
+                            }
+                            KeyCode::Down => browser.market_result_next(),
+                            KeyCode::Up => browser.market_result_previous(),
+                            KeyCode::Backspace => browser.market_query_pop(),
+                            // Tab prices the highlighted result. A non-character
+                            // key is used so every letter stays typeable into the
+                            // query (the help overlay documents this).
+                            KeyCode::Tab => browser.lookup_market_price(),
+                            KeyCode::Char(c) => browser.market_query_push(c),
                             _ => {}
                         }
                     } else if browser.show_workshop {
@@ -570,9 +682,19 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => {}
                         }
+                    } else if browser.show_proton && browser.confirm_proton_uninstall {
+                        // Proton uninstall confirmation: y confirms (remove the
+                        // custom runtime + refresh), anything else cancels.
+                        match input {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                let _ = browser.do_proton_uninstall();
+                                browser.confirm_proton_uninstall = false;
+                            }
+                            _ => browser.confirm_proton_uninstall = false,
+                        }
                     } else if browser.show_proton {
-                        // Proton overlay: navigate and set the highlighted runtime
-                        // as the global default.
+                        // Proton overlay: navigate, set the highlighted runtime as
+                        // the global default, install it, or uninstall a custom one.
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_proton(),
                             KeyCode::Down | KeyCode::Char('j') => browser.proton_next(),
@@ -587,6 +709,23 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                         browser.proton_index =
                                             keep.min(browser.protons.len().saturating_sub(1));
                                     }
+                                }
+                            }
+                            KeyCode::Char('i') => {
+                                // Queue a (long-running) download off the UI thread;
+                                // progress streams into the proton status cell.
+                                if let Some(p) = browser.selected_proton() {
+                                    if !p.installed {
+                                        browser.clear_proton_status();
+                                        let _ = client
+                                            .proton_install(&p.name, browser.proton_status.clone());
+                                    }
+                                }
+                            }
+                            KeyCode::Char('u') => {
+                                // Only custom (installed GE) runtimes are removable.
+                                if browser.selected_proton_uninstallable() {
+                                    browser.confirm_proton_uninstall = true;
                                 }
                             }
                             _ => {}
@@ -727,6 +866,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             KeyCode::Char('m') => browser.open_market(),
+                            KeyCode::Char('S') => browser.open_market_search(),
                             KeyCode::Char('W') => {
                                 if let Some(game) = browser.selected() {
                                     browser.open_workshop(game.id);
@@ -1033,7 +1173,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop {
+        // Adopt any completed market search / price result published off-thread.
+        browser.poll_market();
+
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),

@@ -3,7 +3,7 @@
 //! paint the expected content.
 
 use aurelia_tui::browse::{Browser, Filter};
-use aurelia_tui::interface::aurelia::LibraryGameJson;
+use aurelia_tui::interface::aurelia::{LibraryGameJson, ProtonJson};
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::{theme, ui};
 use tui::backend::TestBackend;
@@ -180,6 +180,30 @@ fn full_browse_frame_renders() {
     assert!(bottom.contains("tester"), "status bar renders at the bottom");
 }
 
+/// The Steam Cloud overlay advertises the sync directions in its title so the
+/// directional keys (`d` down-only, `u` up-only) are discoverable next to the
+/// plain `s` sync.
+#[test]
+fn cloud_overlay_shows_directional_hints() {
+    isolate_config();
+    let browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    let backend = TestBackend::new(80, 12);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            f.render_widget(ui::cloud::cloud(&browser), Rect::new(0, 0, 80, 12));
+        })
+        .unwrap();
+
+    let title: String = (0..80)
+        .map(|x| terminal.backend().buffer().get(x, 0).symbol.clone())
+        .collect();
+    assert!(title.contains("[s] sync"), "title keeps the both-ways sync hint");
+    assert!(title.contains("[d] down"), "title advertises download-only");
+    assert!(title.contains("[u] up"), "title advertises upload-only");
+}
+
 /// The cover panel and the detail panel must occupy separate, ordered rows so
 /// the artwork never overlaps the details (regression for the overlap fix).
 #[test]
@@ -223,5 +247,82 @@ fn cover_and_detail_do_not_overlap() {
     assert!(
         detail_row as i32 - cover_row as i32 >= 8,
         "Cover and Detail occupy clearly separate bands"
+    );
+}
+
+fn proton(name: &str, label: &str, installed: bool) -> ProtonJson {
+    ProtonJson {
+        name: name.to_string(),
+        label: label.to_string(),
+        size: 0,
+        installed,
+        is_default: false,
+    }
+}
+
+/// Render the whole proton overlay into a wide buffer and return every cell as
+/// one string, so we can assert on the title hints regardless of row.
+fn render_proton(browser: &Browser) -> String {
+    let backend = TestBackend::new(90, 16);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| f.render_widget(ui::proton::proton(browser), f.size()))
+        .unwrap();
+    let buf = terminal.backend().buffer();
+    (0..16)
+        .map(|y| (0..90).map(|x| buf.get(x, y).symbol.clone()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Only an installed custom (GE) runtime is uninstallable; the overlay surfaces
+/// the [u] uninstall hint exactly then, and always offers [i] install.
+#[test]
+fn proton_overlay_offers_install_and_guards_uninstall() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.protons = vec![
+        proton("Proton 9.0", "Valve", true),         // installed but not removable
+        proton("GE-Proton11-1", "Proton-GE", false), // available, not installed
+        proton("GE-Proton10-34", "Proton-GE", true), // installed custom -> removable
+    ];
+
+    // Highlight the Valve runtime: install is always offered, uninstall is not.
+    browser.proton_index = 0;
+    assert!(!browser.selected_proton_uninstallable());
+    let valve = render_proton(&browser);
+    assert!(valve.contains("[i] install"), "install hint always present");
+    assert!(
+        !valve.contains("[u] uninstall"),
+        "Valve runtime must not offer uninstall"
+    );
+
+    // Highlight the installed GE runtime: uninstall is offered.
+    browser.proton_index = 2;
+    assert!(browser.selected_proton_uninstallable());
+    assert!(
+        render_proton(&browser).contains("[u] uninstall"),
+        "installed custom runtime offers uninstall"
+    );
+
+    // A not-installed runtime is never uninstallable.
+    browser.proton_index = 1;
+    assert!(!browser.selected_proton_uninstallable());
+}
+
+/// An in-flight install streams a status line into the overlay title.
+#[test]
+fn proton_overlay_shows_install_status() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.protons = vec![proton("GE-Proton11-1", "Proton-GE", false)];
+    *browser.proton_status.lock().unwrap() =
+        Some(aurelia_tui::interface::game_status::GameStatus::msg(
+            &None,
+            "downloading 42.0%",
+        ));
+    assert!(
+        render_proton(&browser).contains("downloading 42.0%"),
+        "streamed install status appears in the overlay"
     );
 }

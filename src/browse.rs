@@ -3,6 +3,9 @@
 //! fuzzy text query, and a sort order, and owns the selection. Every browse
 //! widget renders from this; the event loop only mutates it.
 
+use std::sync::{Arc, Mutex};
+use std::thread;
+
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use tui::style::Style;
@@ -11,6 +14,7 @@ use tui::widgets::ListState;
 use crate::config::Config;
 use crate::interface::aurelia::{self, AccountJson, ConfigJson};
 use crate::interface::game::Game;
+use crate::interface::game_status::GameStatus;
 use crate::theme;
 use crate::util::error::STError;
 
@@ -176,6 +180,37 @@ pub struct Browser {
     /// The highlighted row within the Friends panel. The widget derives its own
     /// scroll window from this so the highlight is always visible.
     pub friends_index: usize,
+    /// Whether the add-friend (search/add) overlay is open.
+    pub show_friend_add: bool,
+    /// The reference the user is typing into the add-friend overlay (SteamID64 /
+    /// profile URL / vanity name).
+    pub friend_add_query: String,
+    /// A short status line for the add-friend overlay (search/add progress, the
+    /// resolved account, or an error). Shared with the worker thread that runs
+    /// the (off-UI-thread) `friends search`/`friends add` calls.
+    pub friend_add_status: Arc<Mutex<String>>,
+    /// The account resolved by the last `friends search`, shown as a preview and
+    /// used as the confirmation target for `friends add`. Shared with the worker
+    /// thread that fills it in.
+    pub friend_search_result: Option<aurelia::FriendSearchJson>,
+    /// Resolved account published by an in-flight `friends search`, adopted into
+    /// `friend_search_result` on the next poll (off-UI-thread handoff). Tagged
+    /// with the search generation it was launched for so a stale (already-edited)
+    /// worker's result can be dropped instead of adopted.
+    friend_search_pending: Arc<Mutex<Option<(u64, aurelia::FriendSearchJson)>>>,
+    /// Monotonic generation for the add-friend query. Bumped on every query edit
+    /// and on overlay open/close; a search worker captures it at spawn and the
+    /// poll only adopts a result whose tag still matches (closing the TOCTOU
+    /// where a late worker could revive a preview for the edited query).
+    friend_search_gen: u64,
+    /// Whether the remove-friend confirmation prompt is open for the selection.
+    pub confirm_friend_remove: bool,
+    /// Set true by a friend add/remove worker on success so the next poll
+    /// re-fetches the friends roster off the UI thread.
+    friends_refresh_pending: Arc<Mutex<bool>>,
+    /// A freshly fetched roster published by the refresh worker, adopted into
+    /// `friends` on the next poll (off-UI-thread handoff).
+    friends_roster_pending: Arc<Mutex<Option<Vec<aurelia::FriendJson>>>>,
     /// Whether the chat view is open.
     pub show_chat: bool,
     /// The messages in the open conversation (loaded when chat opens).
@@ -266,12 +301,40 @@ pub struct Browser {
     pub protons: Vec<aurelia::ProtonJson>,
     /// The highlighted row within the Proton overlay.
     pub proton_index: usize,
+    /// Shared status cell for an in-flight Proton install/uninstall, streamed
+    /// from the backend worker thread (mirrors a game's install status).
+    pub proton_status: Arc<Mutex<Option<GameStatus>>>,
+    /// Whether the Proton uninstall confirmation prompt is showing.
+    pub confirm_proton_uninstall: bool,
     /// Whether the running-games overlay is open.
     pub show_running: bool,
     /// The games Aurelia currently has running (loaded when the overlay opens).
     pub running: Vec<aurelia::RunningJson>,
     /// The highlighted row within the running overlay.
     pub running_index: usize,
+    /// Whether the Community Market search overlay is open.
+    pub show_market_search: bool,
+    /// The query the user is typing into the market search overlay.
+    pub market_query: String,
+    /// The resolved search results (adopted from the worker cell on each poll).
+    pub market_results: Vec<aurelia::MarketSearchResultJson>,
+    /// The highlighted row within the search results.
+    pub market_results_index: usize,
+    /// Scroll offset (top row) within the search-results list.
+    pub market_results_scroll: usize,
+    /// A short status line for the search overlay (progress, errors, price).
+    pub market_search_status: String,
+    /// Generation tag for market searches. Bumped whenever the query changes or
+    /// the search overlay opens/closes; captured at worker spawn and re-checked
+    /// in [`Browser::poll_market`] so a slow OLDER search can't clobber a NEWER
+    /// one's results when Enter is hit in rapid succession (mirrors
+    /// `friend_search_gen`).
+    market_search_gen: u64,
+    /// Shared cell the background search worker publishes its (gen-tagged) result
+    /// into.
+    market_search_cell: Arc<Mutex<(u64, aurelia::MarketSearchState)>>,
+    /// Shared cell the background price worker publishes its result into.
+    market_price_cell: Arc<Mutex<aurelia::MarketPriceState>>,
 }
 
 impl Browser {
@@ -300,6 +363,15 @@ impl Browser {
             friends_focused: false,
             friends: Vec::new(),
             friends_index: 0,
+            show_friend_add: false,
+            friend_add_query: String::new(),
+            friend_add_status: Arc::new(Mutex::new(String::new())),
+            friend_search_result: None,
+            friend_search_pending: Arc::new(Mutex::new(None)),
+            friend_search_gen: 0,
+            confirm_friend_remove: false,
+            friends_refresh_pending: Arc::new(Mutex::new(false)),
+            friends_roster_pending: Arc::new(Mutex::new(None)),
             show_chat: false,
             chat_messages: Vec::new(),
             chat_steamid: 0,
@@ -345,9 +417,20 @@ impl Browser {
             show_proton: false,
             protons: Vec::new(),
             proton_index: 0,
+            proton_status: Arc::new(Mutex::new(None)),
+            confirm_proton_uninstall: false,
             show_running: false,
             running: Vec::new(),
             running_index: 0,
+            show_market_search: false,
+            market_query: String::new(),
+            market_results: Vec::new(),
+            market_results_index: 0,
+            market_results_scroll: 0,
+            market_search_status: String::new(),
+            market_search_gen: 0,
+            market_search_cell: Arc::new(Mutex::new((0, aurelia::MarketSearchState::Idle))),
+            market_price_cell: Arc::new(Mutex::new(aurelia::MarketPriceState::Idle)),
         };
         browser.reset_selection();
         browser
@@ -637,8 +720,56 @@ impl Browser {
     /// Close the Proton overlay and drop its contents.
     pub fn close_proton(&mut self) {
         self.show_proton = false;
+        self.confirm_proton_uninstall = false;
         self.protons.clear();
         self.proton_index = 0;
+    }
+
+    /// Re-fetch the Proton runtimes (e.g. after an install/uninstall) while
+    /// keeping the current row highlighted. A fetch error leaves the list as-is.
+    pub fn refresh_proton(&mut self) {
+        if let Ok(protons) = aurelia::proton_list() {
+            self.protons = protons;
+            self.proton_index = self
+                .proton_index
+                .min(self.protons.len().saturating_sub(1));
+        }
+    }
+
+    /// The current Proton install/uninstall status line, if any work is in
+    /// flight or just finished (cloned out of the shared status cell).
+    pub fn proton_status_line(&self) -> Option<String> {
+        self.proton_status
+            .lock()
+            .ok()
+            .and_then(|s| s.as_ref().map(|st| st.state.clone()))
+    }
+
+    /// Drop any leftover Proton status line.
+    pub fn clear_proton_status(&self) {
+        if let Ok(mut guard) = self.proton_status.lock() {
+            *guard = None;
+        }
+    }
+
+    /// Whether the highlighted runtime can be uninstalled (an installed custom
+    /// GE runtime). Drives whether the uninstall key/confirm is offered.
+    pub fn selected_proton_uninstallable(&self) -> bool {
+        self.selected_proton()
+            .map(|p| p.uninstallable())
+            .unwrap_or(false)
+    }
+
+    /// Uninstall the highlighted custom (GE) runtime and refresh the list. A
+    /// no-op unless the highlighted runtime is uninstallable.
+    pub fn do_proton_uninstall(&mut self) -> Result<(), STError> {
+        let name = match self.selected_proton() {
+            Some(p) if p.uninstallable() => p.name.clone(),
+            _ => return Ok(()),
+        };
+        aurelia::proton_uninstall(&name)?;
+        self.refresh_proton();
+        Ok(())
     }
 
     /// The highlighted Proton runtime, if any.
@@ -745,16 +876,22 @@ impl Browser {
         }
     }
 
-    /// Sync the game's Steam Cloud saves (blocking), then re-fetch the list.
-    pub fn sync_cloud(&mut self, app_id: i32) {
+    /// Sync the game's Steam Cloud saves in `direction` (blocking), then re-fetch
+    /// the list. `Both` syncs down then up; `Down`/`Up` restrict the transfer.
+    pub fn sync_cloud(&mut self, app_id: i32, direction: aurelia::CloudDirection) {
         self.cloud_status = "syncing...".to_string();
-        if let Err(err) = aurelia::cloud_sync(app_id) {
+        if let Err(err) = aurelia::cloud_sync(app_id, direction) {
             self.cloud_status = format!("Failed: {}", err);
             return;
         }
         self.refresh_cloud(app_id);
         if self.cloud_status.is_empty() {
-            self.cloud_status = "synced".to_string();
+            self.cloud_status = match direction {
+                aurelia::CloudDirection::Both => "synced",
+                aurelia::CloudDirection::Down => "downloaded",
+                aurelia::CloudDirection::Up => "uploaded",
+            }
+            .to_string();
         }
     }
 
@@ -837,6 +974,200 @@ impl Browser {
     /// Move the friends highlight up by one row (clamped).
     pub fn friends_scroll_up(&mut self) {
         self.friends_index = self.friends_index.saturating_sub(1);
+    }
+
+    // --- Friend management (search / add / remove) ---
+
+    /// Open the add-friend (search/add) overlay, clearing any previous query,
+    /// resolved preview, and status.
+    pub fn open_friend_add(&mut self) {
+        self.show_friend_add = true;
+        self.friend_add_query.clear();
+        self.friend_search_result = None;
+        self.friend_search_gen = self.friend_search_gen.wrapping_add(1);
+        if let Ok(mut status) = self.friend_add_status.lock() {
+            status.clear();
+        }
+        if let Ok(mut pending) = self.friend_search_pending.lock() {
+            *pending = None;
+        }
+    }
+
+    /// Close the add-friend overlay and drop its contents.
+    pub fn close_friend_add(&mut self) {
+        self.show_friend_add = false;
+        self.friend_add_query.clear();
+        self.friend_search_result = None;
+        self.friend_search_gen = self.friend_search_gen.wrapping_add(1);
+        if let Ok(mut status) = self.friend_add_status.lock() {
+            status.clear();
+        }
+        if let Ok(mut pending) = self.friend_search_pending.lock() {
+            *pending = None;
+        }
+    }
+
+    /// Append a character to the add-friend query.
+    pub fn friend_add_push(&mut self, c: char) {
+        self.friend_add_query.push(c);
+        // A fresh edit invalidates any previously resolved preview. Bump the
+        // generation and drop any in-flight/published search result so a late
+        // worker can't resurrect a stale preview (and add target) for the
+        // now-edited query — its tagged result will no longer match.
+        self.friend_search_result = None;
+        self.friend_search_gen = self.friend_search_gen.wrapping_add(1);
+        if let Ok(mut pending) = self.friend_search_pending.lock() {
+            *pending = None;
+        }
+    }
+
+    /// Delete the last character from the add-friend query.
+    pub fn friend_add_pop(&mut self) {
+        self.friend_add_query.pop();
+        self.friend_search_result = None;
+        self.friend_search_gen = self.friend_search_gen.wrapping_add(1);
+        if let Ok(mut pending) = self.friend_search_pending.lock() {
+            *pending = None;
+        }
+    }
+
+    /// Resolve the typed reference to a concrete account via `friends search`,
+    /// off the UI thread. The worker publishes the result into shared cells that
+    /// [`Browser::poll_friends_ops`] adopts; the status line reflects progress.
+    pub fn friend_search(&mut self) {
+        let query = self.friend_add_query.trim().to_string();
+        if query.is_empty() {
+            return;
+        }
+        if let Ok(mut status) = self.friend_add_status.lock() {
+            *status = "searching...".to_string();
+        }
+        let status = self.friend_add_status.clone();
+        let pending = self.friend_search_pending.clone();
+        // Tag the worker with the generation it was launched for; the poll only
+        // adopts a result whose tag still matches the current generation.
+        let search_gen = self.friend_search_gen;
+        thread::spawn(move || match aurelia::friends_search(&query) {
+            Ok(found) => {
+                if let Ok(mut status) = status.lock() {
+                    *status = format!("Found {}", found.display_name());
+                }
+                if let Ok(mut pending) = pending.lock() {
+                    *pending = Some((search_gen, found));
+                }
+            }
+            Err(err) => {
+                if let Ok(mut status) = status.lock() {
+                    *status = format!("Not found: {}", err);
+                }
+            }
+        });
+    }
+
+    /// Send a friend request for the resolved account (or, if no search has run,
+    /// the raw typed query) via `friends add`, off the UI thread. On success the
+    /// roster is flagged for refresh and the overlay reports the outcome.
+    pub fn friend_add_confirm(&mut self) {
+        // Prefer the resolved SteamID; fall back to the raw query so `add` still
+        // works if the user skipped the search step.
+        let target = match &self.friend_search_result {
+            Some(found) => found.steam_id.to_string(),
+            None => self.friend_add_query.trim().to_string(),
+        };
+        if target.is_empty() {
+            return;
+        }
+        if let Ok(mut status) = self.friend_add_status.lock() {
+            *status = "sending request...".to_string();
+        }
+        let status = self.friend_add_status.clone();
+        let refresh = self.friends_refresh_pending.clone();
+        thread::spawn(move || match aurelia::friends_add(&target) {
+            Ok(()) => {
+                if let Ok(mut status) = status.lock() {
+                    *status = "Request sent.".to_string();
+                }
+                if let Ok(mut refresh) = refresh.lock() {
+                    *refresh = true;
+                }
+            }
+            Err(err) => {
+                if let Ok(mut status) = status.lock() {
+                    *status = format!("Failed: {}", err);
+                }
+            }
+        });
+    }
+
+    /// Remove the highlighted friend (or cancel a pending request) via
+    /// `friends remove`, off the UI thread. On success the roster is flagged for
+    /// refresh. A missing selection is a no-op.
+    pub fn friend_remove_confirm(&mut self) {
+        let Some(friend) = self.selected_friend() else {
+            return;
+        };
+        let steamid = friend.steam_id;
+        let refresh = self.friends_refresh_pending.clone();
+        thread::spawn(move || {
+            if aurelia::friends_remove(steamid).is_ok() {
+                if let Ok(mut refresh) = refresh.lock() {
+                    *refresh = true;
+                }
+            }
+        });
+    }
+
+    /// Apply any async friend-management results: adopt a resolved search into
+    /// the preview, and re-fetch the roster (off the UI thread) when an add or
+    /// remove has succeeded. Called once per event-loop iteration.
+    pub fn poll_friends_ops(&mut self) {
+        // Adopt a resolved search result published by the worker thread, but only
+        // if it was launched for the current query generation. A result tagged
+        // with a stale generation (the query was edited or the overlay toggled
+        // after the worker spawned) is dropped, closing the TOCTOU where a late
+        // worker could briefly revive a preview for the now-edited query.
+        let adopted = self
+            .friend_search_pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.take());
+        if let Some((search_gen, found)) = adopted {
+            if search_gen == self.friend_search_gen {
+                self.friend_search_result = Some(found);
+            }
+        }
+
+        // Re-fetch the roster after a successful add/remove. The fetch itself is
+        // a quick CLI call; run it on a worker and adopt the list next poll via
+        // the same `friends` field (kept simple: a one-shot blocking re-fetch on
+        // a detached thread that swaps the vec in through a channel-free flag).
+        let needs_refresh = self
+            .friends_refresh_pending
+            .lock()
+            .map(|mut flag| std::mem::replace(&mut *flag, false))
+            .unwrap_or(false);
+        if needs_refresh {
+            // Fetch off the UI thread, then publish into the search-pending-style
+            // roster cell adopted on a later poll.
+            let roster = self.friends_roster_pending.clone();
+            thread::spawn(move || {
+                let list = aurelia::friends().unwrap_or_default();
+                if let Ok(mut slot) = roster.lock() {
+                    *slot = Some(list);
+                }
+            });
+        }
+
+        // Adopt a freshly fetched roster, if one is ready, keeping the highlight
+        // in range.
+        if let Ok(mut slot) = self.friends_roster_pending.lock() {
+            if let Some(list) = slot.take() {
+                self.friends = list;
+                if self.friends_index >= self.friends.len() {
+                    self.friends_index = self.friends.len().saturating_sub(1);
+                }
+            }
+        }
     }
 
     /// Open a dedicated chat **in a new terminal window** with the highlighted
@@ -1012,6 +1343,202 @@ impl Browser {
     /// Scroll the market overlay up by one row (clamped).
     pub fn market_scroll_up(&mut self) {
         self.market_scroll = self.market_scroll.saturating_sub(1);
+    }
+
+    // --- Community Market search overlay ---
+
+    /// Open the Community Market search overlay, clearing any previous query and
+    /// results. No backend call happens until the user submits a query.
+    pub fn open_market_search(&mut self) {
+        self.show_market_search = true;
+        self.market_query.clear();
+        self.market_results.clear();
+        self.market_results_index = 0;
+        self.market_results_scroll = 0;
+        self.market_search_status.clear();
+        // A fresh overlay invalidates any in-flight search; bump the generation so
+        // a late worker's tagged result is dropped by `poll_market`.
+        self.market_search_gen = self.market_search_gen.wrapping_add(1);
+        if let Ok(mut slot) = self.market_search_cell.lock() {
+            *slot = (self.market_search_gen, aurelia::MarketSearchState::Idle);
+        }
+        if let Ok(mut slot) = self.market_price_cell.lock() {
+            *slot = aurelia::MarketPriceState::Idle;
+        }
+    }
+
+    /// Close the market search overlay and drop its state.
+    pub fn close_market_search(&mut self) {
+        self.show_market_search = false;
+        self.market_query.clear();
+        self.market_results.clear();
+        self.market_results_index = 0;
+        self.market_results_scroll = 0;
+        self.market_search_status.clear();
+        // Invalidate any in-flight search so a late worker can't publish into the
+        // next time the overlay is opened.
+        self.market_search_gen = self.market_search_gen.wrapping_add(1);
+    }
+
+    /// Append a typed character to the search query.
+    pub fn market_query_push(&mut self, c: char) {
+        self.market_query.push(c);
+        // A fresh edit invalidates any in-flight search for the prior query; bump
+        // the generation so its tagged result is dropped by `poll_market`.
+        self.market_search_gen = self.market_search_gen.wrapping_add(1);
+    }
+
+    /// Remove the last character from the search query.
+    pub fn market_query_pop(&mut self) {
+        self.market_query.pop();
+        self.market_search_gen = self.market_search_gen.wrapping_add(1);
+    }
+
+    /// Kick off a Community Market search for the typed query, off the UI thread.
+    /// The worker publishes into the shared cell; [`poll_market`] adopts it. A
+    /// no-op when the query is blank.
+    pub fn submit_market_search(&mut self) {
+        let query = self.market_query.trim().to_string();
+        if query.is_empty() {
+            return;
+        }
+        self.market_search_status = "searching...".to_string();
+        // Tag the worker with the generation it was launched for; `poll_market`
+        // only adopts a result whose tag still matches the current generation, so
+        // an out-of-order OLDER search can't clobber a NEWER one's results.
+        let search_gen = self.market_search_gen;
+        if let Ok(mut slot) = self.market_search_cell.lock() {
+            *slot = (search_gen, aurelia::MarketSearchState::Loading);
+        }
+        let cell = Arc::clone(&self.market_search_cell);
+        thread::spawn(move || aurelia::market_search_async(query, search_gen, cell));
+    }
+
+    /// Look up the highlighted result's market price, off the UI thread. The
+    /// worker publishes into the shared price cell; [`poll_market`] adopts it. A
+    /// no-op when no result is highlighted.
+    pub fn lookup_market_price(&mut self) {
+        let Some(result) = self.selected_market_result() else {
+            return;
+        };
+        let app_id = result.app_id;
+        let name = result.market_hash_name.clone();
+        if name.is_empty() {
+            self.market_search_status = "no item name to price".to_string();
+            return;
+        }
+        self.market_search_status = format!("pricing {}...", result.display_name());
+        if let Ok(mut slot) = self.market_price_cell.lock() {
+            *slot = aurelia::MarketPriceState::Loading;
+        }
+        let cell = Arc::clone(&self.market_price_cell);
+        thread::spawn(move || aurelia::market_price_async(app_id, name, cell));
+    }
+
+    /// Adopt any completed search/price result published by the worker threads,
+    /// updating the results list and status line. Called once per frame from the
+    /// event loop; cheap and non-blocking (no disk/CLI access on the UI thread).
+    pub fn poll_market(&mut self) {
+        if !self.show_market_search {
+            return;
+        }
+
+        // Adopt a finished search, but only if it was launched for the current
+        // query generation. A result tagged with a stale generation (the query
+        // was edited or the overlay toggled after the worker spawned) is dropped,
+        // closing the out-of-order clobber where a slow OLDER search could
+        // overwrite a NEWER one's results.
+        let search = self.market_search_cell.lock().ok().and_then(|mut slot| {
+            let search_gen = slot.0;
+            let done = !matches!(
+                &slot.1,
+                aurelia::MarketSearchState::Idle | aurelia::MarketSearchState::Loading
+            );
+            if done && search_gen == self.market_search_gen {
+                let (_, state) = std::mem::replace(
+                    &mut *slot,
+                    (self.market_search_gen, aurelia::MarketSearchState::Idle),
+                );
+                Some(state)
+            } else if done {
+                // Stale result: discard it (reset to Idle) without adopting.
+                slot.1 = aurelia::MarketSearchState::Idle;
+                None
+            } else {
+                None
+            }
+        });
+        match search {
+            Some(aurelia::MarketSearchState::Ready(results)) => {
+                let count = results.len();
+                self.market_results = results;
+                self.market_results_index = 0;
+                self.market_results_scroll = 0;
+                self.market_search_status = if count == 0 {
+                    "no results".to_string()
+                } else {
+                    format!("{} results", count)
+                };
+            }
+            Some(aurelia::MarketSearchState::Failed(err)) => {
+                self.market_results.clear();
+                self.market_results_index = 0;
+                self.market_results_scroll = 0;
+                self.market_search_status = format!("Failed: {}", err);
+            }
+            _ => {}
+        }
+
+        // Adopt a finished price lookup (does not disturb the results list).
+        let price = self
+            .market_price_cell
+            .lock()
+            .ok()
+            .map(|mut slot| {
+                let done = !matches!(
+                    &*slot,
+                    aurelia::MarketPriceState::Idle | aurelia::MarketPriceState::Loading
+                );
+                if done {
+                    std::mem::replace(&mut *slot, aurelia::MarketPriceState::Idle)
+                } else {
+                    aurelia::MarketPriceState::Loading
+                }
+            });
+        match price {
+            Some(aurelia::MarketPriceState::Ready(p)) => {
+                self.market_search_status = match p.summary() {
+                    Some(s) => format!("{} — {}", p.market_hash_name, s),
+                    None => format!("{} — no price data", p.market_hash_name),
+                };
+            }
+            Some(aurelia::MarketPriceState::Failed(err)) => {
+                self.market_search_status = format!("Price failed: {}", err);
+            }
+            _ => {}
+        }
+    }
+
+    /// The highlighted search result, if any.
+    pub fn selected_market_result(&self) -> Option<&aurelia::MarketSearchResultJson> {
+        self.market_results.get(self.market_results_index)
+    }
+
+    /// Move the search-results highlight down by one row (clamped). The widget
+    /// derives its scroll window from the index so the highlight stays visible.
+    pub fn market_result_next(&mut self) {
+        if self.market_results.is_empty() {
+            self.market_results_index = 0;
+            return;
+        }
+        if self.market_results_index + 1 < self.market_results.len() {
+            self.market_results_index += 1;
+        }
+    }
+
+    /// Move the search-results highlight up by one row (clamped).
+    pub fn market_result_previous(&mut self) {
+        self.market_results_index = self.market_results_index.saturating_sub(1);
     }
 
     /// Fetch the given game's subscribed Workshop items (blocking) and open the

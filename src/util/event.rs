@@ -58,7 +58,17 @@ impl Events {
                     // Map the raw terminal event to a key code we act on. Mouse
                     // wheel scrolling is folded into Down/Up so the list handlers
                     // work for both keyboard and mouse.
-                    let code = match read().unwrap() {
+                    let event = match read() {
+                        Ok(event) => event,
+                        Err(err) => {
+                            // A read error (e.g. the terminal going away on
+                            // shutdown) must not panic and silently kill input;
+                            // log it and stop the thread cleanly.
+                            log!(err);
+                            return;
+                        }
+                    };
+                    let code = match event {
                         CrossEvent::Key(KeyEvent {
                             code: kc,
                             modifiers,

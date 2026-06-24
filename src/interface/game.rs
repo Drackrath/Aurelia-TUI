@@ -94,30 +94,36 @@ impl Game {
     }
 
     pub fn query_proton(&self) {
-        let guard = {
-            let mut tier = self.proton_tier.lock().unwrap();
-            if None == *tier {
-                *tier = Some("-".to_string());
-                true
-            } else {
-                false
+        let guard = match self.proton_tier.lock() {
+            Ok(mut tier) => {
+                if None == *tier {
+                    *tier = Some("-".to_string());
+                    true
+                } else {
+                    false
+                }
             }
+            Err(_) => false,
         };
         if guard {
             let reference = self.proton_tier.clone();
             let id = self.id;
             thread::spawn(move || {
                 if let Some(response) = proton_data::ProtonData::get(id) {
-                    let mut status = reference.lock().unwrap();
-                    *status = Some(response.format());
+                    if let Ok(mut status) = reference.lock() {
+                        *status = Some(response.format());
+                    }
                 }
             });
         }
     }
 
     pub fn get_proton(&self) -> String {
-        let status = self.proton_tier.lock().unwrap();
-        (*status).clone().unwrap_or_else(|| "-".to_string())
+        self.proton_tier
+            .lock()
+            .ok()
+            .and_then(|status| status.clone())
+            .unwrap_or_else(|| "-".to_string())
     }
 
     /// Lazily fetch store metadata (developer/publisher/description) the first
@@ -131,33 +137,40 @@ impl Game {
         let id = self.id;
         thread::spawn(move || {
             if let Ok(info) = aurelia::fetch_info(id) {
-                let mut slot = reference.lock().unwrap();
-                *slot = Some(info);
+                if let Ok(mut slot) = reference.lock() {
+                    *slot = Some(info);
+                }
             }
         });
     }
 
     pub fn get_developer(&self) -> String {
-        if let Some(info) = &*self.info.lock().unwrap() {
-            if !info.developers.is_empty() {
-                return info.developers.join(", ");
+        if let Ok(guard) = self.info.lock() {
+            if let Some(info) = &*guard {
+                if !info.developers.is_empty() {
+                    return info.developers.join(", ");
+                }
             }
         }
         self.developer.clone()
     }
 
     pub fn get_publisher(&self) -> String {
-        if let Some(info) = &*self.info.lock().unwrap() {
-            if !info.publishers.is_empty() {
-                return info.publishers.join(", ");
+        if let Ok(guard) = self.info.lock() {
+            if let Some(info) = &*guard {
+                if !info.publishers.is_empty() {
+                    return info.publishers.join(", ");
+                }
             }
         }
         self.publisher.clone()
     }
 
     pub fn get_description(&self) -> String {
-        if let Some(info) = &*self.info.lock().unwrap() {
-            return info.description.clone();
+        if let Ok(guard) = self.info.lock() {
+            if let Some(info) = &*guard {
+                return info.description.clone();
+            }
         }
         String::new()
     }
@@ -176,8 +189,10 @@ impl Game {
     /// install/launch; otherwise derives one from the cached install fields so
     /// the listing reflects installed-vs-uninstalled after a cache reload.
     pub fn get_status(&self) -> Option<GameStatus> {
-        if let Some(live) = &*self.status.lock().unwrap() {
-            return Some(live.clone());
+        if let Ok(guard) = self.status.lock() {
+            if let Some(live) = &*guard {
+                return Some(live.clone());
+            }
         }
         let state = if !self.installed {
             "uninstalled"
@@ -194,8 +209,9 @@ impl Game {
     }
 
     pub fn update_status(self, new_status: GameStatus) {
-        let mut status = self.status.lock().unwrap();
-        *status = Some(new_status);
+        if let Ok(mut status) = self.status.lock() {
+            *status = Some(new_status);
+        }
     }
 
     pub fn move_with_status(game: Game, maybe_status: Option<GameStatus>) -> Game {

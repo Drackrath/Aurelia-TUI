@@ -292,6 +292,32 @@ impl FriendJson {
     }
 }
 
+/// The resolved account from `aurelia friends search <query> --json`. Key names
+/// match the CLI's output (`steam_id`, `persona_name`, `profile_url`). Every
+/// field is `#[serde(default)]` so a missing/renamed key never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FriendSearchJson {
+    /// Resolved SteamID64. The CLI emits it as a number; accept a string too.
+    #[serde(default, deserialize_with = "de_steam_id")]
+    pub steam_id: u64,
+    /// Display (persona) name, if known.
+    #[serde(default)]
+    pub persona_name: Option<String>,
+    /// The account's community profile URL, if known.
+    #[serde(default)]
+    pub profile_url: Option<String>,
+}
+
+impl FriendSearchJson {
+    /// Display name, falling back to the SteamID when no persona is known.
+    pub fn display_name(&self) -> String {
+        self.persona_name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| self.steam_id.to_string())
+    }
+}
+
 /// One chat message from `aurelia chat history <id> --json` (an item of the
 /// serialized history array). Key names match the CLI's `ChatMessage` struct
 /// (`sender`, `from_self`, `message`, `timestamp`). Everything is
@@ -636,6 +662,259 @@ impl MarketListingJson {
     }
 }
 
+/// One result row from `aurelia market search <query> --json` (an item of the
+/// response's `results` array). The Community Market search needs no login. Key
+/// names match the CLI's `--json` output; everything is `#[serde(default)]` so a
+/// missing/partial/`null` field never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MarketSearchResultJson {
+    /// The app the item belongs to (used for the follow-up price lookup).
+    #[serde(default)]
+    pub app_id: u32,
+    /// The app's name (e.g. "Team Fortress 2").
+    #[serde(default)]
+    pub app_name: String,
+    /// The exact market hash name (what a price lookup needs).
+    #[serde(default)]
+    pub market_hash_name: String,
+    /// The display name (falls back to `market_hash_name`).
+    #[serde(default)]
+    pub name: String,
+    /// How many sell listings are open for the item.
+    #[serde(default)]
+    pub sell_listings: u64,
+    /// The lowest sell price in the currency's minor units (cents).
+    #[serde(default)]
+    pub sell_price: u64,
+    /// The lowest sell price pre-formatted by the CLI (e.g. "$2.34").
+    #[serde(default)]
+    pub sell_price_text: String,
+}
+
+impl MarketSearchResultJson {
+    /// Best display name: the visible `name`, falling back to the market hash
+    /// name, then a placeholder.
+    pub fn display_name(&self) -> String {
+        if !self.name.is_empty() {
+            self.name.clone()
+        } else if !self.market_hash_name.is_empty() {
+            self.market_hash_name.clone()
+        } else {
+            "(unnamed item)".to_string()
+        }
+    }
+
+    /// The price text, preferring the CLI's pre-formatted string and falling
+    /// back to a major-unit decimal of `sell_price` (cents). Empty when neither
+    /// is known.
+    pub fn price_text(&self) -> String {
+        if !self.sell_price_text.is_empty() {
+            self.sell_price_text.clone()
+        } else if self.sell_price > 0 {
+            format!("{}.{:02}", self.sell_price / 100, self.sell_price % 100)
+        } else {
+            String::new()
+        }
+    }
+}
+
+/// A price lookup result from `aurelia market price <app_id> <name> --json`. The
+/// Community Market price needs no login. Every field is `#[serde(default)]` so a
+/// missing/partial/`null` payload still parses (an empty result is rendered as
+/// "no data").
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MarketPriceJson {
+    /// The market hash name the price is for (echoed back by the CLI).
+    #[serde(default)]
+    pub market_hash_name: String,
+    /// Lowest current sell price (pre-formatted, e.g. "$2.34").
+    #[serde(default)]
+    pub lowest_price: Option<String>,
+    /// Median recent sale price (pre-formatted).
+    #[serde(default)]
+    pub median_price: Option<String>,
+    /// 24-hour sales volume (the CLI emits a formatted string, e.g. "69,730").
+    #[serde(default)]
+    pub volume: Option<String>,
+}
+
+impl MarketPriceJson {
+    /// A one-line summary of the known price fields, suitable for a status line.
+    /// Returns `None` when the payload carried no usable data.
+    pub fn summary(&self) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(p) = self.lowest_price.as_deref().filter(|s| !s.is_empty()) {
+            parts.push(format!("low {}", p));
+        }
+        if let Some(p) = self.median_price.as_deref().filter(|s| !s.is_empty()) {
+            parts.push(format!("median {}", p));
+        }
+        if let Some(v) = self.volume.as_deref().filter(|s| !s.is_empty()) {
+            parts.push(format!("vol {}", v));
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("   "))
+        }
+    }
+}
+
+/// The top-level object from `aurelia market search <query> --json`: the matched
+/// results array. Only the `results` array is surfaced.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct MarketSearchResponse {
+    #[serde(default)]
+    results: Vec<MarketSearchResultJson>,
+}
+
+/// Search the Community Market (`aurelia market search <query> --json`). No login
+/// required. The CLI wraps the matches under a `results` key; accept either that
+/// or a bare array. An empty/`null` result yields an empty `Vec`.
+pub fn market_search(query: &str) -> Result<Vec<MarketSearchResultJson>, STError> {
+    let value = run_json(&["market", "search", query])?;
+    // Accept either the wrapping object (`{ "results": [..] }`) or a bare array.
+    if value.get("results").is_some() {
+        let parsed: MarketSearchResponse = serde_json::from_value(value)?;
+        Ok(parsed.results)
+    } else if value.is_null() {
+        Ok(Vec::new())
+    } else {
+        Ok(serde_json::from_value(value)?)
+    }
+}
+
+/// Look up a single item's Community Market price
+/// (`aurelia market price <app_id> <name> --json`). No login required; `name` is
+/// the exact (case-sensitive) market hash name.
+pub fn market_price(app_id: u32, name: &str) -> Result<MarketPriceJson, STError> {
+    let value = run_json(&["market", "price", &app_id.to_string(), name])?;
+    // A `null` payload (e.g. no price history for the item) is "no data", not a
+    // parse error: deserializing `null` into the struct would fail, so treat it
+    // as an empty result (rendered as "no price data").
+    if value.is_null() {
+        return Ok(MarketPriceJson::default());
+    }
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Run `aurelia <args> --json` standalone (`AURELIA_NO_DAEMON=1`), parsing the
+/// stdout JSON. This mirrors [`run_json`] but forces a no-daemon invocation, as
+/// used by the threaded market workers so they never share the UI process's
+/// daemon connection. stderr (diagnostics) is discarded.
+fn run_json_standalone(args: &[&str]) -> Result<serde_json::Value, STError> {
+    let output = process::Command::new(bin())
+        .args(args)
+        .arg("--json")
+        .env("AURELIA_NO_DAEMON", "1")
+        .stdin(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .output()
+        .map_err(STError::Process)?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Err(STError::Problem(format!(
+            "aurelia produced no output for `{}`",
+            args.join(" ")
+        )));
+    }
+
+    let value: serde_json::Value = serde_json::from_str(trimmed)?;
+    if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+        return Err(STError::Problem(err.to_string()));
+    }
+    Ok(value)
+}
+
+/// Run a Community Market search off the UI thread, publishing the outcome into
+/// `cell` when it completes. The CLI is invoked standalone (`AURELIA_NO_DAEMON`),
+/// matching the other threaded calls. Intended to be spawned on its own thread so
+/// the UI never blocks on the search subprocess.
+///
+/// The published payload is tagged with `search_gen`, the search generation
+/// captured at spawn time, so the UI can drop an out-of-order result whose query
+/// has since been superseded (see `Browser::poll_market`).
+pub fn market_search_async(
+    query: String,
+    search_gen: u64,
+    cell: Arc<Mutex<(u64, MarketSearchState)>>,
+) {
+    let result = run_json_standalone(&["market", "search", &query]).and_then(|value| {
+        if value.get("results").is_some() {
+            let parsed: MarketSearchResponse = serde_json::from_value(value)?;
+            Ok(parsed.results)
+        } else if value.is_null() {
+            Ok(Vec::new())
+        } else {
+            Ok(serde_json::from_value(value)?)
+        }
+    });
+    if let Ok(mut slot) = cell.lock() {
+        *slot = (
+            search_gen,
+            match result {
+                Ok(results) => MarketSearchState::Ready(results),
+                Err(err) => MarketSearchState::Failed(err.to_string()),
+            },
+        );
+    }
+}
+
+/// Run a Community Market price lookup off the UI thread, publishing the outcome
+/// into `cell` when it completes. Invoked standalone (`AURELIA_NO_DAEMON`) like
+/// the other threaded calls.
+pub fn market_price_async(app_id: u32, name: String, cell: Arc<Mutex<MarketPriceState>>) {
+    let result = run_json_standalone(&["market", "price", &app_id.to_string(), &name]).and_then(
+        |value| {
+            // A `null` payload is "no data", not a parse error (deserializing
+            // `null` into the struct would fail); treat it as an empty result.
+            if value.is_null() {
+                Ok(MarketPriceJson::default())
+            } else {
+                Ok(serde_json::from_value(value)?)
+            }
+        },
+    );
+    if let Ok(mut slot) = cell.lock() {
+        *slot = match result {
+            Ok(price) => MarketPriceState::Ready(price),
+            Err(err) => MarketPriceState::Failed(err.to_string()),
+        };
+    }
+}
+
+/// The state of an in-flight (or completed) Community Market search, shared
+/// between the UI thread and the worker thread via an `Arc<Mutex<..>>` cell.
+#[derive(Debug, Clone, Default)]
+pub enum MarketSearchState {
+    /// No search has been run yet.
+    #[default]
+    Idle,
+    /// A search is running; the worker thread has not published a result.
+    Loading,
+    /// The search completed with these results (possibly empty).
+    Ready(Vec<MarketSearchResultJson>),
+    /// The search failed; the `String` is the error message.
+    Failed(String),
+}
+
+/// The state of an in-flight (or completed) Community Market price lookup, shared
+/// between the UI thread and the worker thread via an `Arc<Mutex<..>>` cell.
+#[derive(Debug, Clone, Default)]
+pub enum MarketPriceState {
+    /// No lookup has been run yet.
+    #[default]
+    Idle,
+    /// A lookup is running; the worker thread has not published a result.
+    Loading,
+    /// The lookup completed with this price.
+    Ready(MarketPriceJson),
+    /// The lookup failed; the `String` is the error message.
+    Failed(String),
+}
+
 /// One active sell listing, from the `listings` array of `aurelia market
 /// listings --json`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -689,6 +968,15 @@ pub struct ProtonJson {
     /// Whether this runtime is the configured global default (computed by `proton_list`).
     #[serde(default)]
     pub is_default: bool,
+}
+
+impl ProtonJson {
+    /// Whether this runtime can be uninstalled: only an installed *custom* (GE)
+    /// runtime qualifies. Valve runtimes are managed by Steam and cannot be
+    /// removed here; nothing that isn't on disk can be uninstalled.
+    pub fn uninstallable(&self) -> bool {
+        self.installed && !self.label.eq_ignore_ascii_case("Valve")
+    }
 }
 
 /// An entry of the `installed` array from `aurelia proton list --json`
@@ -875,10 +1163,31 @@ pub fn cloud_list(app_id: i32) -> Result<Vec<CloudFileJson>, STError> {
     Ok(serde_json::from_value(files)?)
 }
 
-/// Sync a game's Steam Cloud saves (`aurelia cloud sync <id> --json`). This is a
-/// blocking call and can be slow; errors surface via `run_json`.
-pub fn cloud_sync(app_id: i32) -> Result<(), STError> {
-    run_json(&["cloud", "sync", &app_id.to_string()])?;
+/// Which way a Steam Cloud sync should move files. `Both` mirrors the CLI's
+/// default (download then upload); the directional variants pass `--down` /
+/// `--up` to restrict the transfer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloudDirection {
+    /// Download then upload (the CLI default, `cloud sync`).
+    Both,
+    /// Download only (`cloud sync --down`).
+    Down,
+    /// Upload only (`cloud sync --up`).
+    Up,
+}
+
+/// Sync a game's Steam Cloud saves (`aurelia cloud sync <id> --json`), optionally
+/// restricted to one direction via `--down` / `--up`. This is a blocking call and
+/// can be slow; errors surface via `run_json`.
+pub fn cloud_sync(app_id: i32, direction: CloudDirection) -> Result<(), STError> {
+    let id = app_id.to_string();
+    let mut args = vec!["cloud", "sync", &id];
+    match direction {
+        CloudDirection::Both => {}
+        CloudDirection::Down => args.push("--down"),
+        CloudDirection::Up => args.push("--up"),
+    }
+    run_json(&args)?;
     Ok(())
 }
 
@@ -911,6 +1220,31 @@ pub fn friends() -> Result<Vec<FriendJson>, STError> {
     Ok(serde_json::from_value(list)?)
 }
 
+/// Resolve a friend reference (SteamID64, profile URL, or vanity name) to a
+/// concrete account via `aurelia friends search <query> --json`. Read-only: it
+/// needs no login and sends nothing. The CLI returns a single object with the
+/// resolved `steam_id`, `persona_name`, and `profile_url`.
+pub fn friends_search(query: &str) -> Result<FriendSearchJson, STError> {
+    let value = run_json(&["friends", "search", query])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Send a friend request to the account named by `query` (SteamID64, profile
+/// URL, or vanity name) via `aurelia friends add <query> --json`. The returned
+/// value is ignored; only errors are propagated.
+pub fn friends_add(query: &str) -> Result<(), STError> {
+    run_json(&["friends", "add", query])?;
+    Ok(())
+}
+
+/// Remove a friend, or cancel/decline a pending request, by SteamID64 via
+/// `aurelia friends remove <steamid> --json`. The returned value is ignored;
+/// only errors are propagated.
+pub fn friends_remove(steamid: u64) -> Result<(), STError> {
+    run_json(&["friends", "remove", &steamid.to_string()])?;
+    Ok(())
+}
+
 /// Fetch the recent chat history with a friend (`aurelia chat history <id>
 /// --count <n> --json`). The CLI serializes the message array directly, but
 /// accept an object-wrapped form (`{ "messages": [...] }`) too. An empty/null
@@ -933,11 +1267,29 @@ pub fn chat_history(steamid: u64, count: u32) -> Result<Vec<ChatMessageJson>, ST
     Ok(serde_json::from_value(list)?)
 }
 
-/// Send a direct message to a friend (`aurelia chat send <id> <message>
-/// --json`). The message is passed as a single trailing argument. The returned
-/// value is ignored; only errors are propagated.
+/// Send a direct message to a friend (`aurelia chat send --json <id> <message>`).
+///
+/// The CLI declares the message as a trailing var-arg (`<MESSAGE>...` — "all
+/// remaining words are joined with spaces"), so it greedily absorbs everything
+/// after the SteamID. `--json` must therefore come BEFORE the message: routing
+/// through `run_json` (which appends `--json` last) would let the flag be
+/// swallowed into the message text and literally sent to the friend. The
+/// returned value is ignored; only an explicit `{"error": …}` is propagated.
 pub fn chat_send(steamid: u64, message: &str) -> Result<(), STError> {
-    run_json(&["chat", "send", &steamid.to_string(), message])?;
+    let output = process::Command::new(bin())
+        .args(["chat", "send", "--json", &steamid.to_string(), message])
+        .stdin(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .output()
+        .map_err(STError::Process)?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+            return Err(STError::Problem(err.to_string()));
+        }
+    }
     Ok(())
 }
 
@@ -1111,6 +1463,87 @@ pub fn proton_list() -> Result<Vec<ProtonJson>, STError> {
 /// only errors are propagated.
 pub fn proton_default(version: &str) -> Result<(), STError> {
     run_json(&["proton", "default", version])?;
+    Ok(())
+}
+
+/// Download and install a Proton/Wine runtime by name
+/// (`aurelia proton install <name> --json`), streaming progress into the shared
+/// status cell. Blocks until the download/install finishes; intended to be run
+/// on a dedicated thread (mirrors [`install`]).
+pub fn proton_install(name: String, status: Arc<Mutex<Option<GameStatus>>>) {
+    set_status(&status, "processing...");
+
+    let spawned = process::Command::new(bin())
+        .args(["proton", "install", &name, "--json"])
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn();
+
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(err) => {
+            set_status(&status, &format!("Failed: {}", err));
+            log!("Failed to spawn aurelia proton install", name, err);
+            return;
+        }
+    };
+
+    // Drain stdout (the small terminal result object) on a helper thread so the
+    // child never blocks writing it while we consume the larger stderr stream.
+    let stdout = child.stdout.take();
+    let result_handle = thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(mut out) = stdout {
+            let _ = out.read_to_string(&mut buf);
+        }
+        buf
+    });
+
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<ProgressJson>(line) {
+                if event.event.as_deref() == Some("progress") {
+                    let label = match event.state.as_deref() {
+                        Some("extracting") => "extracting",
+                        Some("verifying") => "verifying",
+                        _ => "downloading",
+                    };
+                    set_status(
+                        &status,
+                        &format!("{} {:.1}%", label, event.percent.unwrap_or(0.0)),
+                    );
+                }
+            }
+        }
+    }
+
+    let result = result_handle.join().unwrap_or_default();
+    let _ = child.wait();
+
+    match serde_json::from_str::<serde_json::Value>(result.trim()) {
+        Ok(value) => {
+            if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+                set_status(&status, &format!("Failed: {}", err));
+            } else {
+                set_status(&status, "Installed!");
+            }
+        }
+        // No parseable result line: fall back on the exit status we already waited on.
+        Err(_) => set_status(&status, "Installed!"),
+    }
+}
+
+/// Uninstall an installed custom (GE) Proton/Wine runtime
+/// (`aurelia proton uninstall <name> --json`). Blocks until the CLI reports the
+/// result (a fast local removal from `compatibilitytools.d`); the parsed value
+/// is ignored beyond error detection.
+pub fn proton_uninstall(name: &str) -> Result<(), STError> {
+    run_json(&["proton", "uninstall", name])?;
     Ok(())
 }
 

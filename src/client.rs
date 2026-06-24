@@ -51,6 +51,9 @@ pub enum Command {
     Update(i32, Arc<Mutex<Option<GameStatus>>>),
     /// Launch a game and wait for it to exit.
     Run(i32, Arc<Mutex<Option<GameStatus>>>),
+    /// Download and install a Proton/Wine runtime by name, streaming progress
+    /// into the shared status cell.
+    ProtonInstall(String, Arc<Mutex<Option<GameStatus>>>),
     /// No-op kept for UI compatibility (aurelia manages the Steam client itself).
     StartClient,
 }
@@ -186,6 +189,9 @@ fn execute(
             }
             Command::Run(id, status) => {
                 thread::spawn(move || aurelia::play(id, status));
+            }
+            Command::ProtonInstall(name, status) => {
+                thread::spawn(move || aurelia::proton_install(name, status));
             }
             Command::StartClient => {
                 // `aurelia play` brings up whatever it needs; nothing to do.
@@ -333,6 +339,18 @@ impl Client {
     pub fn update(&self, game: &Game) -> Result<(), STError> {
         let sender = self.sender.lock()?;
         sender.send(Command::Update(game.id, game.status_counter()))?;
+        Ok(())
+    }
+
+    /// Queues a Proton/Wine runtime install by name, streaming progress into the
+    /// shared status cell.
+    pub fn proton_install(
+        &self,
+        name: &str,
+        status: Arc<Mutex<Option<GameStatus>>>,
+    ) -> Result<(), STError> {
+        let sender = self.sender.lock()?;
+        sender.send(Command::ProtonInstall(name.to_string(), status))?;
         Ok(())
     }
 
