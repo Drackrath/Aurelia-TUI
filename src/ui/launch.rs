@@ -2,11 +2,12 @@
 //! the selected game (a normal launch, a level editor, an OS-specific binary,
 //! ...), scrollable.
 
-use tui::text::{Span, Spans, Text};
+use tui::text::{Span, Spans};
 use tui::widgets::Paragraph;
 
 use crate::browse::Browser;
 use crate::theme;
+use crate::ui::paneled_paragraph;
 
 /// Build the launch-options overlay content from the browse state. Each option
 /// renders as its description, the command (executable + arguments), and an OS
@@ -16,12 +17,7 @@ pub fn launch(browser: &Browser) -> Paragraph<'static> {
     let title = format!("Launch options ({})", items.len());
 
     if items.is_empty() {
-        return Paragraph::new(Text::from(Span::styled(
-            "No launch options.",
-            theme::dim(),
-        )))
-        .block(theme::panel(title))
-        .style(theme::base());
+        return paneled_paragraph(Span::styled("No launch options.", theme::dim()), title);
     }
 
     let lines: Vec<Spans<'static>> = items
@@ -38,7 +34,5 @@ pub fn launch(browser: &Browser) -> Paragraph<'static> {
         })
         .collect();
 
-    Paragraph::new(Text::from(lines))
-        .block(theme::panel(title))
-        .style(theme::base())
+    paneled_paragraph(lines, title)
 }

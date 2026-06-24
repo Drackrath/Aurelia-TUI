@@ -2,11 +2,12 @@
 //! with the logged-in user's unlock state, scrollable.
 
 use tui::style::Style;
-use tui::text::{Span, Spans, Text};
+use tui::text::{Span, Spans};
 use tui::widgets::Paragraph;
 
 use crate::browse::Browser;
 use crate::theme;
+use crate::ui::paneled_paragraph;
 
 /// Build the achievements overlay content from the browse state. Each row is a
 /// unlock marker (✓ unlocked / ○ locked), the achievement name, and its global
@@ -17,9 +18,7 @@ pub fn achievements(browser: &Browser) -> Paragraph<'static> {
     let title = format!("Achievements ({} unlocked / {})", unlocked, items.len());
 
     if items.is_empty() {
-        return Paragraph::new(Text::from("No achievements."))
-            .block(theme::panel(title))
-            .style(theme::base());
+        return paneled_paragraph("No achievements.", title);
     }
 
     let lines: Vec<Spans<'static>> = items
@@ -51,7 +50,5 @@ pub fn achievements(browser: &Browser) -> Paragraph<'static> {
         })
         .collect();
 
-    Paragraph::new(Text::from(lines))
-        .block(theme::panel(title))
-        .style(theme::base())
+    paneled_paragraph(lines, title)
 }

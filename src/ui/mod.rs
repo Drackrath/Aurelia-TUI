@@ -37,6 +37,19 @@ use tui::widgets::Paragraph;
 
 use crate::theme;
 
+/// A [`Paragraph`] framed by the standard [`theme::panel`] (titled, soft-blue
+/// border) over a [`theme::base`] fill — the common scaffolding behind the
+/// scrollable list overlays (achievements, depots, inventory, market, launch …).
+///
+/// `content` is anything convertible into a [`Text`] — a `Vec<Spans>` of rows, a
+/// single styled `Span`, or a plain `&str` empty-state line — so each builder
+/// hands over the body it assembled and shares the block/style wiring.
+pub fn paneled_paragraph(content: impl Into<Text<'static>>, title: String) -> Paragraph<'static> {
+    Paragraph::new(content)
+        .block(theme::panel(title))
+        .style(theme::base())
+}
+
 /// A shared single-line text-entry overlay: a `label`, the typed `value` (with a
 /// trailing caret), an optional `status` line, all framed by `title`.
 ///
