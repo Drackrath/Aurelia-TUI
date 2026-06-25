@@ -8,7 +8,7 @@
 //! The `*_screenshot` tests dump the rendered buffer as text; run them with
 //! `cargo test --test friends_chat -- --nocapture` to eyeball the layout.
 
-use aurelia_tui::browse::Browser;
+use aurelia_tui::browse::{Browser, View};
 use aurelia_tui::interface::aurelia::{ChatMessageJson, FriendJson, FriendSearchJson, LibraryGameJson};
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::ui;
@@ -74,7 +74,7 @@ fn friends_panel_focus_aware_and_highlights() {
     b.friends_index = 0;
 
     // Unfocused: calmer title, no selection background (marker still present).
-    b.friends_focused = false;
+    b.view = View::Library;
     let unfocused = render_rows(40, 8, |f| {
         f.render_widget(ui::friends::friends(&b, 6), Rect::new(0, 0, 40, 8));
     });
@@ -86,7 +86,7 @@ fn friends_panel_focus_aware_and_highlights() {
     print_shot("Friends (unfocused)", &unfocused);
 
     // Focused: louder title advertising chat + new-window shortcuts.
-    b.friends_focused = true;
+    b.view = View::Friends;
     let focused = render_rows(40, 8, |f| {
         f.render_widget(ui::friends::friends(&b, 6), Rect::new(0, 0, 40, 8));
     });
@@ -104,7 +104,7 @@ fn friends_whole_list_scrolls_to_keep_highlight_visible() {
     b.friends = (0..10)
         .map(|i| friend(i as u64, &format!("Friend{i}"), 1, None))
         .collect();
-    b.friends_focused = true;
+    b.view = View::Friends;
 
     // Only 3 content rows visible. Highlight the 8th friend: the window must
     // scroll so Friend7 is visible and the early ones are scrolled off.

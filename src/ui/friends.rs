@@ -7,7 +7,7 @@
 //! selector moving inside a static viewport, the entire list slides so the
 //! highlight never falls off the bottom edge.
 //!
-//! The panel is also *focus-aware*. When `browser.friends_focused` is true the
+//! The panel is also *focus-aware*. When `browser.friends_focused()` is true the
 //! title advertises the chat/window shortcuts and the highlighted row gets the
 //! full selection style; when focus is elsewhere the title is calmer and the
 //! highlight is softened (marker only, no selection background) so it is obvious
@@ -28,7 +28,7 @@ use crate::theme;
 pub fn friends(browser: &Browser, visible_rows: usize) -> Paragraph<'static> {
     let items = &browser.friends;
     let len = items.len();
-    let focused = browser.friends_focused;
+    let focused = browser.friends_focused();
 
     // Title: louder and action-hinting while focused, calmer otherwise.
     let title = if focused {
@@ -37,9 +37,16 @@ pub fn friends(browser: &Browser, visible_rows: usize) -> Paragraph<'static> {
         format!("Friends ({}) — [F] focus", len)
     };
 
-    // Empty state: no panic, just a dim hint telling the user how to load.
+    // Empty state: while the lazy load is in flight show a loading line so the
+    // tab appears instantly; otherwise a dim hint (an actually-empty roster or a
+    // not-yet-opened panel).
     if items.is_empty() {
-        return Paragraph::new(Text::from("Press [F] to load friends."))
+        let line = if browser.friends_loading {
+            "Loading friends…"
+        } else {
+            "Press [F] to load friends."
+        };
+        return Paragraph::new(Text::from(line))
             .block(theme::panel(title))
             .style(theme::dim());
     }

@@ -53,6 +53,9 @@ impl fmt::Display for STError {
                 "An error occured spawning the aurelia process. Is the `aurelia` CLI installed and on your PATH?\n{:?}",
                 e
             ),
+            // The CLI's own message is already human-readable; show it directly
+            // rather than the `Problem("…")` debug wrapper.
+            STError::Problem(msg) => write!(f, "{}", msg),
             _ => write!(f, "{:?}", self),
         }
     }

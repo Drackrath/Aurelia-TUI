@@ -43,8 +43,15 @@ pub enum Command {
     LoadGames,
     /// Invalidate the cache and re-verify the session.
     Restart,
-    /// Install a game, streaming progress into the shared status cell.
-    Install(i32, Arc<Mutex<Option<GameStatus>>>),
+    /// Install a game, streaming progress into the shared status cell. The
+    /// control handle lets the UI pause/stop the in-flight download; the last
+    /// field is the chosen library folder (drive/location), `None` for default.
+    Install(
+        i32,
+        Arc<Mutex<Option<GameStatus>>>,
+        aurelia::InstallControl,
+        Option<String>,
+    ),
     /// Verify a game's integrity, streaming progress into the shared status cell.
     Verify(i32, Arc<Mutex<Option<GameStatus>>>),
     /// Update a game to the latest version, streaming progress into the shared status cell.
@@ -69,7 +76,20 @@ fn handle_login(
     let (next, err, who) = match aurelia::health() {
         Ok(health) if health.logged_in => {
             log!("aurelia session authenticated", health.account);
-            (State::Loaded(0, -2), None, health.account)
+            // The footer shows `steam: {who}`. Prefer the Steam persona / display
+            // name over the login (account) name: the health probe only reports
+            // the account name, so resolve the persona for our own SteamID via
+            // `friends search` (best-effort; falls back to the account name).
+            let who = health.account.map(|account| {
+                health
+                    .steam_id
+                    .filter(|id| *id != 0)
+                    .and_then(|id| aurelia::friends_search(&id.to_string()).ok())
+                    .and_then(|f| f.persona_name)
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or(account)
+            });
+            (State::Loaded(0, -2), None, who)
         }
         Ok(_) => {
             log!("aurelia session not authenticated");
@@ -178,8 +198,8 @@ fn execute(
                 log!("Restarting for user", user);
                 handle_login(&state, &last_error, &account)?;
             }
-            Command::Install(id, status) => {
-                thread::spawn(move || aurelia::install(id, status));
+            Command::Install(id, status, control, library) => {
+                thread::spawn(move || aurelia::install(id, status, control, library));
             }
             Command::Verify(id, status) => {
                 thread::spawn(move || aurelia::verify(id, status));
@@ -321,10 +341,22 @@ impl Client {
             .unwrap_or(LoginPhase::Idle)
     }
 
-    /// Queues installation of the provided game.
-    pub fn install(&self, game: &Game) -> Result<(), STError> {
+    /// Queues installation of the provided game. `control` lets the UI pause or
+    /// stop the in-flight download (see [`Browser::begin_install`]); `library`
+    /// is the chosen install location (a library root), `None` for default.
+    pub fn install(
+        &self,
+        game: &Game,
+        control: aurelia::InstallControl,
+        library: Option<String>,
+    ) -> Result<(), STError> {
         let sender = self.sender.lock()?;
-        sender.send(Command::Install(game.id, game.status_counter()))?;
+        sender.send(Command::Install(
+            game.id,
+            game.status_counter(),
+            control,
+            library,
+        ))?;
         Ok(())
     }
 
@@ -356,6 +388,11 @@ impl Client {
 
     /// Invalidates the cache and re-verifies the session, forcing a fresh load.
     pub fn restart(&self) -> Result<(), STError> {
+        // Move off `LoggedIn` synchronously so the Loading loop doesn't act on
+        // the stale state — and read the games cache the worker is about to
+        // invalidate — before the reload completes. `Loaded(0, -1)` is the
+        // "loading" sentinel the loop waits on.
+        *self.state.lock()? = State::Loaded(0, -1);
         let sender = self.sender.lock()?;
         sender.send(Command::Restart)?;
         Ok(())

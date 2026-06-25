@@ -20,28 +20,16 @@ pub enum Event<I> {
 /// A small event handler that wrap termion input and tick events. Each event
 /// type is handled in its own thread and returned to a common `Receiver`
 ///
-/// # Latch/debounce contract
+/// # Input contract
 ///
-/// The input thread is *latched*: after it delivers one [`Event::Input`] it
-/// stops forwarding keys (folding key-repeat / held keys into a single press)
-/// until the consumer calls [`Events::release`]. A consumer loop that reads a
-/// key via [`Events::next`] **must** call [`Events::release`] once it has
-/// finished handling that key, otherwise the input goes permanently deaf — the
-/// next keypress (even `Esc`/`q`) is never delivered. Tick events are *not*
-/// latched and require no release.
-///
-/// To keep a future consumer loop from silently reintroducing the "deaf after
-/// one keypress" bug, [`Events::next`] tracks whether a latched `Input` is
-/// still outstanding and `debug_assert!`s in debug builds if a second `next`
-/// blocks on `recv` while the previous `Input` was never released. The
-/// assertion only fires in debug builds, so release behaviour is unchanged.
+/// Every distinct keypress is forwarded to the channel as an [`Event::Input`];
+/// the input thread never drops or debounces user keys, so fast typing is
+/// lossless and the consumer can simply call [`Events::next`] in a loop without
+/// any release/re-arm handshake. Tick events are produced independently by the
+/// tick thread.
 pub struct Events {
     rx: mpsc::Receiver<Event<KeyCode>>,
     stop: Arc<AtomicBool>,
-    debounce: Arc<AtomicBool>,
-    /// True between delivering an `Input` and the consumer's `release()`. Used
-    /// only to catch a missing `release()` in debug builds; never gates I/O.
-    latched: std::cell::Cell<bool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -52,7 +40,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Config {
         Config {
-            tick_rate: Duration::from_millis(500),
+            // ~4 redraws/second when idle: fast enough for the smooth list-name
+            // marquee and snappy adoption of async (friends/workshop) results,
+            // while still cheap (tui only writes the cells that actually change).
+            tick_rate: Duration::from_millis(250),
         }
     }
 }
@@ -65,18 +56,17 @@ impl Events {
     pub fn with_config(config: Config) -> Events {
         let (tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
-        let debounce = Arc::new(AtomicBool::new(true));
 
         let _input_handle = {
             let tx = tx.clone();
             let stop = stop.clone();
-            let debounce = debounce.clone();
             thread::spawn(move || {
                 //matching the key
                 loop {
                     // Map the raw terminal event to a key code we act on. Mouse
                     // wheel scrolling is folded into Down/Up so the list handlers
-                    // work for both keyboard and mouse.
+                    // work for both keyboard and wheel. (Shift+drag selection is
+                    // handled by the terminal itself and never reaches here.)
                     let event = match read() {
                         Ok(event) => event,
                         Err(err) => {
@@ -110,13 +100,11 @@ impl Events {
                         _ => None,
                     };
 
+                    // Forward every keypress; no debounce so no user key is lost.
                     if let Some(kc) = code {
-                        if debounce.load(Ordering::Relaxed) {
-                            if let Err(err) = tx.send(Event::Input(kc)) {
-                                log!(err);
-                                return;
-                            }
-                            debounce.store(false, Ordering::Relaxed);
+                        if let Err(err) = tx.send(Event::Input(kc)) {
+                            log!(err);
+                            return;
                         }
                     }
                     if stop.load(Ordering::Relaxed) {
@@ -137,41 +125,13 @@ impl Events {
                 }
             })
         };
-        Events {
-            rx,
-            stop,
-            debounce,
-            latched: std::cell::Cell::new(false),
-        }
+        Events { rx, stop }
     }
 
-    /// Re-arm the input latch so the next keypress is delivered. Must be called
-    /// once after handling each [`Event::Input`]; see the type-level docs.
-    pub fn release(&self) {
-        self.latched.set(false);
-        self.debounce.store(true, Ordering::Relaxed);
-    }
-
-    /// Block for the next input or tick event.
-    ///
-    /// Each delivered [`Event::Input`] latches the input thread; the caller must
-    /// call [`Events::release`] before the next `next()` that expects a fresh
-    /// key, or input goes deaf. In debug builds a missing `release()` trips a
-    /// `debug_assert!` here so the regression is caught in development rather
-    /// than shipping as a silently unresponsive UI. Release builds are
-    /// unaffected.
+    /// Block for the next input or tick event. Every keypress is delivered
+    /// exactly once, in order, with no release handshake required.
     pub fn next(&self) -> Result<Event<KeyCode>, mpsc::RecvError> {
-        debug_assert!(
-            !self.latched.get(),
-            "Events::next() called while a previous Input is still latched; \
-             the consumer loop must call Events::release() after handling each \
-             keypress or input goes deaf"
-        );
-        let event = self.rx.recv()?;
-        if matches!(event, Event::Input(_)) {
-            self.latched.set(true);
-        }
-        Ok(event)
+        self.rx.recv()
     }
 }
 

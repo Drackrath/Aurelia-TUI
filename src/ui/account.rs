@@ -19,7 +19,8 @@ fn row(label: &str, value: String) -> Row<'static> {
 pub fn account(browser: &Browser) -> Table<'static> {
     let rows = match &browser.account_info {
         Some(info) => vec![
-            row("Account", info.account_name.clone()),
+            row("Player", info.display_name()),
+            row("Login", info.account_name.clone()),
             row("SteamID", info.steam_id.to_string()),
             row("Country", info.country.clone()),
             row(

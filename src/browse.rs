@@ -3,6 +3,7 @@
 //! fuzzy text query, and a sort order, and owns the selection. Every browse
 //! widget renders from this; the event loop only mutates it.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -48,6 +49,29 @@ impl Filter {
     pub fn index(self) -> usize {
         Filter::TABS.iter().position(|f| *f == self).unwrap_or(0)
     }
+}
+
+/// Which top-level view the tab bar is on. The four library filters all live in
+/// the `Library` view; selecting the `Friends` tab (one slot to the right of
+/// the filters) swaps the main list for the Friends & Chat panel and grants it
+/// keyboard focus. The tab bar treats these as a single ring: the filters
+/// occupy slots `0..TABS.len()` and Friends occupies the slot after them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Library,
+    Friends,
+}
+
+/// Where a game's install currently sits, from the UI's point of view. Drives
+/// whether the pause / resume / stop keys do anything for the selected game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallPhase {
+    /// No UI-tracked install for this game.
+    Idle,
+    /// A download is in progress (pausable / stoppable).
+    Active,
+    /// The download was paused (resumable / stoppable).
+    Paused,
 }
 
 /// Sort order for the visible list.
@@ -96,7 +120,18 @@ pub fn badge(game: &Game) -> Badge {
     let status = game.get_status();
     let state = status.as_ref().map(|s| s.state.as_str()).unwrap_or("");
 
-    if state.contains("downloading") || state.contains("processing") || state.contains("verifying") {
+    if state.starts_with("paused") {
+        // A paused download: freeze the last-seen percent next to a pause glyph.
+        let note = state
+            .split_whitespace()
+            .find(|t| t.ends_with('%'))
+            .map(|p| p.to_string());
+        Badge {
+            glyph: "⏸",
+            style: Style::default().fg(theme::WARN),
+            note,
+        }
+    } else if state.contains("downloading") || state.contains("processing") || state.contains("verifying") {
         // Pull a percentage out of e.g. "downloading 42.0%" if present.
         let note = state
             .split_whitespace()
@@ -145,6 +180,8 @@ pub struct Browser {
     pub filtering: bool,
     /// Whether the help overlay is open.
     pub show_help: bool,
+    /// Scroll offset (top row) within the help overlay.
+    pub help_scroll: u16,
     /// Whether the Steam Cloud overlay is open.
     pub show_cloud: bool,
     /// Cloud files for the game the overlay is showing.
@@ -171,9 +208,11 @@ pub struct Browser {
     pub achievements: Vec<aurelia::AchievementJson>,
     /// Scroll offset (top row) within the achievements overlay.
     pub ach_scroll: usize,
-    /// Whether the always-visible Friends panel currently holds keyboard focus
-    /// (so j/k move the highlight and c/Enter/t act on the selected friend).
-    pub friends_focused: bool,
+    /// The active top-level view. `Library` shows the game list under the four
+    /// filter tabs; `Friends` swaps the list for the Friends & Chat panel (the
+    /// fifth tab) and gives it keyboard focus (so j/k move the highlight and
+    /// c/Enter/t act on the selected friend).
+    pub view: View,
     /// The logged-in user's friends (loaded lazily the first time the panel is
     /// focused).
     pub friends: Vec<aurelia::FriendJson>,
@@ -211,6 +250,13 @@ pub struct Browser {
     /// A freshly fetched roster published by the refresh worker, adopted into
     /// `friends` on the next poll (off-UI-thread handoff).
     friends_roster_pending: Arc<Mutex<Option<Vec<aurelia::FriendJson>>>>,
+    /// Whether the roster has been fetched at least once. Distinguishes a
+    /// genuinely empty friends list from a not-yet-loaded one, so the lazy load
+    /// on first entering the Friends tab fires exactly once.
+    friends_loaded: bool,
+    /// True while the initial (lazy) roster fetch is in flight, so the Friends
+    /// panel can show "Loading friends…" instead of an empty/"no friends" state.
+    pub friends_loading: bool,
     /// Whether the chat view is open.
     pub show_chat: bool,
     /// The messages in the open conversation (loaded when chat opens).
@@ -389,6 +435,35 @@ pub struct Browser {
     market_search_cell: Arc<Mutex<(u64, aurelia::MarketSearchState)>>,
     /// Shared cell the background price worker publishes its result into.
     market_price_cell: Arc<Mutex<aurelia::MarketPriceState>>,
+    /// Per-game install controls, keyed by app id. An entry is created when the
+    /// UI starts an install and lets it pause/stop the in-flight download.
+    install_controls: HashMap<i32, aurelia::InstallControl>,
+    /// The library folder each in-flight install was started in, keyed by app
+    /// id, so a paused install resumes into the *same* library (not the default).
+    install_library_choice: HashMap<i32, Option<String>>,
+    /// Whether the "game not installed — install now?" prompt is open (shown
+    /// when the user tries to launch a game the listing marks not installed).
+    pub confirm_install: bool,
+    /// Whether the install-location picker (choose which Steam library folder to
+    /// install into) is open.
+    pub show_install_picker: bool,
+    /// The available library folders shown in the picker (roots from `aurelia
+    /// libraries`, each with its drive's free space).
+    pub install_libraries: Vec<aurelia::LibraryJson>,
+    /// Estimated on-disk size of the game being installed, for the picker to
+    /// show and to gauge whether a library has room. `None` if unknown.
+    pub install_estimate: Option<u64>,
+    /// The highlighted row within the install picker.
+    pub install_picker_index: usize,
+    /// Off-thread inbox for targeted single-game install-state refreshes (after
+    /// an install completes or is cancelled). A worker fetches the fresh `list`
+    /// entry and drops it here; [`Browser::poll_game_refresh`] adopts it,
+    /// patching just that game's `installed`/update flags — no full reload.
+    game_refresh_slot: Arc<Mutex<Vec<aurelia::LibraryGameJson>>>,
+    /// A transient one-line notice (e.g. an action that failed) shown in the
+    /// status bar until the next keypress. Keeps a failed backend call from
+    /// having to crash the whole TUI to report itself.
+    pub notice: Option<String>,
 }
 
 impl Browser {
@@ -401,6 +476,7 @@ impl Browser {
             state: ListState::default(),
             filtering: false,
             show_help: false,
+            help_scroll: 0,
             show_cloud: false,
             cloud_files: Vec::new(),
             cloud_status: String::new(),
@@ -414,7 +490,7 @@ impl Browser {
             show_achievements: false,
             achievements: Vec::new(),
             ach_scroll: 0,
-            friends_focused: false,
+            view: View::Library,
             friends: Vec::new(),
             friends_index: 0,
             show_friend_add: false,
@@ -426,6 +502,8 @@ impl Browser {
             confirm_friend_remove: false,
             friends_refresh_pending: Arc::new(Mutex::new(false)),
             friends_roster_pending: Arc::new(Mutex::new(None)),
+            friends_loaded: false,
+            friends_loading: false,
             show_chat: false,
             chat_messages: Vec::new(),
             chat_steamid: 0,
@@ -506,6 +584,15 @@ impl Browser {
             market_search_gen: 0,
             market_search_cell: Arc::new(Mutex::new((0, aurelia::MarketSearchState::Idle))),
             market_price_cell: Arc::new(Mutex::new(aurelia::MarketPriceState::Idle)),
+            install_controls: HashMap::new(),
+            install_library_choice: HashMap::new(),
+            confirm_install: false,
+            show_install_picker: false,
+            install_libraries: Vec::new(),
+            install_estimate: None,
+            install_picker_index: 0,
+            game_refresh_slot: Arc::new(Mutex::new(Vec::new())),
+            notice: None,
         };
         browser.reset_selection();
         browser
@@ -1008,25 +1095,59 @@ impl Browser {
         self.ach_scroll = self.ach_scroll.saturating_sub(1);
     }
 
-    /// Toggle keyboard focus on the always-visible Friends panel. The first time
-    /// the panel is focused its friends are fetched (blocking); a fetch error
-    /// simply leaves the list empty ("Press [F] to load friends."). Unfocusing
-    /// just drops focus — the list stays so it keeps showing in the panel.
-    pub fn toggle_friends_focus(&mut self) {
-        if self.friends_focused {
-            self.friends_focused = false;
-            return;
+    /// Scroll the help overlay down by one row (clamped to the last row).
+    pub fn help_scroll_down(&mut self) {
+        let max = crate::ui::help::row_count().saturating_sub(1);
+        if self.help_scroll < max {
+            self.help_scroll += 1;
         }
-        if self.friends.is_empty() {
-            self.friends = aurelia::friends().unwrap_or_default();
-            self.friends_index = 0;
-        }
-        self.friends_focused = true;
     }
 
-    /// Drop focus on the Friends panel (Esc), keeping the loaded list.
+    /// Scroll the help overlay up by one row (clamped).
+    pub fn help_scroll_up(&mut self) {
+        self.help_scroll = self.help_scroll.saturating_sub(1);
+    }
+
+    /// Whether the Friends tab is the active view (so the Friends & Chat panel
+    /// holds keyboard focus). Derived from the view — the Friends tab *is* the
+    /// focus, so there is no separate focus flag to drift out of sync.
+    pub fn friends_focused(&self) -> bool {
+        self.view == View::Friends
+    }
+
+    /// Enter the Friends view (select the Friends tab). The tab is shown
+    /// immediately; the roster is lazy-loaded off the UI thread the first time
+    /// (the panel shows "Loading friends…" until [`Browser::poll_friends_ops`]
+    /// adopts the result), so tabbing in never blocks/lags. Idempotent:
+    /// re-entering keeps the already-loaded list.
+    pub fn enter_friends(&mut self) {
+        self.view = View::Friends;
+        if !self.friends_loaded && !self.friends_loading {
+            self.friends_index = 0;
+            self.friends_loading = true;
+            // Reuse the existing off-thread refresh path: flag it and the poll
+            // loop spawns the worker and adopts the roster when it lands.
+            if let Ok(mut flag) = self.friends_refresh_pending.lock() {
+                *flag = true;
+            }
+        }
+    }
+
+    /// Toggle the Friends view on/off. Entering loads the roster (see
+    /// [`Browser::enter_friends`]); leaving returns to the Library view (the
+    /// active filter is preserved) while keeping the loaded list.
+    pub fn toggle_friends_focus(&mut self) {
+        if self.view == View::Friends {
+            self.view = View::Library;
+        } else {
+            self.enter_friends();
+        }
+    }
+
+    /// Leave the Friends view (Esc), returning to the Library list while keeping
+    /// the loaded friends list.
     pub fn unfocus_friends(&mut self) {
-        self.friends_focused = false;
+        self.view = View::Library;
     }
 
     /// The highlighted friend, if any.
@@ -1238,6 +1359,8 @@ impl Browser {
         if let Ok(mut slot) = self.friends_roster_pending.lock() {
             if let Some(list) = slot.take() {
                 self.friends = list;
+                self.friends_loaded = true;
+                self.friends_loading = false;
                 if self.friends_index >= self.friends.len() {
                     self.friends_index = self.friends.len().saturating_sub(1);
                 }
@@ -2124,6 +2247,217 @@ impl Browser {
         self.visible().len()
     }
 
+    /// Open the install-location picker for `app_id`, fetching the available
+    /// Steam library folders (blocking). Returns `false` without opening if no
+    /// libraries could be enumerated, so the caller can fall back to a default
+    /// install.
+    pub fn open_install_picker(&mut self, app_id: i32) -> bool {
+        let libraries = aurelia::libraries().unwrap_or_default();
+        if libraries.is_empty() {
+            return false;
+        }
+        self.install_libraries = libraries;
+        // The on-disk estimate, for showing the size and gauging fit. Treat 0
+        // (unavailable) as unknown.
+        self.install_estimate = aurelia::install_estimate(app_id).ok().filter(|&b| b > 0);
+        self.install_picker_index = 0;
+        self.show_install_picker = true;
+        true
+    }
+
+    /// Close the install-location picker.
+    pub fn close_install_picker(&mut self) {
+        self.show_install_picker = false;
+        self.install_libraries.clear();
+        self.install_estimate = None;
+        self.install_picker_index = 0;
+    }
+
+    /// Whether the highlighted library has room for the estimated install. True
+    /// when either the estimate or the library's free space is unknown — don't
+    /// block on missing data; the CLI re-checks authoritatively.
+    pub fn selected_library_fits(&self) -> bool {
+        match self.install_libraries.get(self.install_picker_index) {
+            Some(lib) => match (self.install_estimate, lib.free_bytes) {
+                (Some(est), Some(free)) => free >= est,
+                _ => true,
+            },
+            None => false,
+        }
+    }
+
+    /// Move the install-picker highlight down (clamped).
+    pub fn install_picker_next(&mut self) {
+        let max = self.install_libraries.len().saturating_sub(1);
+        if self.install_picker_index < max {
+            self.install_picker_index += 1;
+        }
+    }
+
+    /// Move the install-picker highlight up (clamped).
+    pub fn install_picker_previous(&mut self) {
+        self.install_picker_index = self.install_picker_index.saturating_sub(1);
+    }
+
+    /// The library folder path currently highlighted in the install picker.
+    pub fn selected_install_library(&self) -> Option<String> {
+        self.install_libraries
+            .get(self.install_picker_index)
+            .map(|lib| lib.path.clone())
+    }
+
+    /// Register a fresh install control for `app_id` (replacing any prior one),
+    /// remember the chosen `library` (so a later resume targets the same one),
+    /// and return a clone to hand to [`crate::client::Client::install`]. Called
+    /// when the UI starts (or resumes) an install.
+    pub fn begin_install(
+        &mut self,
+        app_id: i32,
+        library: Option<String>,
+    ) -> aurelia::InstallControl {
+        let control = aurelia::InstallControl::new();
+        self.install_controls.insert(app_id, control.clone());
+        self.install_library_choice.insert(app_id, library);
+        control
+    }
+
+    /// The library a tracked install of `app_id` was started in, for resuming a
+    /// paused download into the same place.
+    pub fn install_library_for(&self, app_id: i32) -> Option<String> {
+        self.install_library_choice
+            .get(&app_id)
+            .cloned()
+            .flatten()
+    }
+
+    /// How the selected game's UI-tracked install currently sits. Reads the live
+    /// status cell, but only for games this session actually started installing.
+    pub fn install_phase(&self, game: &Game) -> InstallPhase {
+        if !self.install_controls.contains_key(&game.id) {
+            return InstallPhase::Idle;
+        }
+        let state = game.get_status().map(|s| s.state).unwrap_or_default();
+        if state.starts_with("paused") {
+            InstallPhase::Paused
+        } else if state.contains("downloading")
+            || state.contains("processing")
+            || state.contains("queued")
+            || state.contains("verifying")
+            || state.contains("moving")
+        {
+            InstallPhase::Active
+        } else {
+            InstallPhase::Idle
+        }
+    }
+
+    /// Pause the in-flight install of `app_id`: flag its control so the worker
+    /// finalises as "paused", then ask the backend to stop the download (it is
+    /// left on disk so [`Browser::begin_install`] resumes it). A no-op if no
+    /// install is tracked for the game.
+    pub fn pause_install(&mut self, app_id: i32) {
+        if let Some(control) = self.install_controls.get(&app_id) {
+            control.set(aurelia::InstallAction::Paused);
+            let _ = aurelia::install_stop(app_id);
+        }
+    }
+
+    /// Stop (cancel) the install of `app_id`: flag its control so the worker
+    /// clears the status, then ask the backend to abort the download. The
+    /// game is reset to not-installed immediately (badge + flag), and a
+    /// background re-fetch confirms the on-disk state shortly after.
+    pub fn stop_install(&mut self, app_id: i32) {
+        if let Some(control) = self.install_controls.remove(&app_id) {
+            self.install_library_choice.remove(&app_id);
+            control.set(aurelia::InstallAction::Stopped);
+            let _ = aurelia::install_stop(app_id);
+            if let Some(game) = self.items.iter_mut().find(|g| g.id == app_id) {
+                game.installed = false;
+                if let Ok(mut s) = game.status_counter().lock() {
+                    *s = None;
+                }
+            }
+            self.request_game_refresh(app_id);
+        }
+    }
+
+    /// Spawn an off-thread `list` fetch and drop the matching game's fresh entry
+    /// into [`Browser::game_refresh_slot`] for the next poll to adopt. Used to
+    /// reconcile one game's install state after an install completes/cancels
+    /// without a full-screen reload.
+    pub fn request_game_refresh(&self, app_id: i32) {
+        let slot = Arc::clone(&self.game_refresh_slot);
+        thread::spawn(move || {
+            if let Ok(entries) = aurelia::fetch_library() {
+                if let Some(entry) = entries.into_iter().find(|e| e.app_id as i32 == app_id) {
+                    if let Ok(mut guard) = slot.lock() {
+                        guard.push(entry);
+                    }
+                }
+            }
+        });
+    }
+
+    /// Adopt any freshly-fetched single-game entries: patch the in-memory game's
+    /// install flags and drop its transient install status so the badge derives
+    /// from the refreshed state. Cheap and non-blocking when idle.
+    pub fn poll_game_refresh(&mut self) {
+        let updates: Vec<aurelia::LibraryGameJson> = match self.game_refresh_slot.lock() {
+            Ok(mut guard) => std::mem::take(&mut *guard),
+            Err(_) => Vec::new(),
+        };
+        if updates.is_empty() {
+            return;
+        }
+        for entry in updates {
+            let id = entry.app_id as i32;
+            if let Some(game) = self.items.iter_mut().find(|g| g.id == id) {
+                game.installed = entry.is_installed;
+                game.install_dir = entry.install_path.clone().unwrap_or_default();
+                game.update_available = entry.update_available;
+                if let Ok(mut s) = game.status_counter().lock() {
+                    *s = None;
+                }
+            }
+        }
+        self.clamp_selection();
+    }
+
+    /// Detect tracked installs that have just finished and reconcile them. On
+    /// success a targeted re-fetch updates the game's `installed` flag (so the
+    /// listing no longer wrongly offers uninstall on a half-installed game); a
+    /// failed install keeps its badge. Either way the finished control is
+    /// dropped. Call once per event-loop iteration.
+    pub fn poll_install_completions(&mut self) {
+        let terminal: Vec<(i32, bool)> = self
+            .install_controls
+            .keys()
+            .copied()
+            .filter_map(|id| {
+                let state = self
+                    .items
+                    .iter()
+                    .find(|g| g.id == id)
+                    .map(|g| g.get_status().map(|s| s.state).unwrap_or_default())
+                    .unwrap_or_default();
+                if state.starts_with("Installed!") || state == "done" {
+                    Some((id, true))
+                } else if state.starts_with("Failed") {
+                    Some((id, false))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for (id, succeeded) in terminal {
+            self.install_controls.remove(&id);
+            self.install_library_choice.remove(&id);
+            if succeeded {
+                self.request_game_refresh(id);
+            }
+        }
+    }
+
     /// Live tallies for the status bar, over the hidden/allowed-filtered universe.
     pub fn counts(&self) -> Counts {
         let config = Config::cached();
@@ -2246,19 +2580,41 @@ impl Browser {
     // --- Filter / sort / query mutations (all re-clamp the selection) ---
 
     pub fn set_filter(&mut self, filter: Filter) {
+        // Selecting a library filter always returns to the Library view (so the
+        // "All → Friends" transition reverses cleanly when a filter is picked).
+        self.view = View::Library;
         self.filter = filter;
         self.reset_selection();
     }
 
+    /// The active tab's index along the combined tab ring: `0..TABS.len()` for
+    /// the library filters, and `TABS.len()` for the Friends tab. The tab bar
+    /// renders from this so the highlight tracks the view.
+    pub fn tab_index(&self) -> usize {
+        match self.view {
+            View::Library => self.filter.index(),
+            View::Friends => Filter::TABS.len(),
+        }
+    }
+
+    /// Cycle through the combined tab ring (the four library filters followed by
+    /// the Friends tab). Stepping right off Favourites lands on Friends (which
+    /// loads the roster and focuses the panel); stepping right off Friends wraps
+    /// back to All. The library filters re-clamp the selection as before.
     pub fn cycle_filter(&mut self, forward: bool) {
-        let idx = self.filter.index();
-        let n = Filter::TABS.len();
+        // Slots: 0..TABS.len() are filters, TABS.len() is the Friends tab.
+        let slots = Filter::TABS.len() + 1;
+        let idx = self.tab_index();
         let next = if forward {
-            (idx + 1) % n
+            (idx + 1) % slots
         } else {
-            (idx + n - 1) % n
+            (idx + slots - 1) % slots
         };
-        self.set_filter(Filter::TABS[next]);
+        if next == Filter::TABS.len() {
+            self.enter_friends();
+        } else {
+            self.set_filter(Filter::TABS[next]);
+        }
     }
 
     pub fn cycle_sort(&mut self) {
@@ -2279,5 +2635,99 @@ impl Browser {
     pub fn clear_query(&mut self) {
         self.query.clear();
         self.reset_selection();
+    }
+}
+
+#[cfg(test)]
+mod install_tests {
+    use super::*;
+    use crate::interface::aurelia::{InstallAction, InstallControl, LibraryGameJson};
+    use crate::interface::game::Game;
+    use crate::interface::game_status::GameStatus;
+
+    fn game(id: i32) -> Game {
+        Game::from_library(LibraryGameJson {
+            app_id: id as u32,
+            name: "Game".to_string(),
+            is_installed: false,
+            install_path: None,
+            update_available: false,
+            is_owned: true,
+            is_family_shared: false,
+            platform: None,
+            active_branch: None,
+            assets: None,
+            store_url: None,
+        })
+    }
+
+    fn set_state(g: &Game, state: &str) {
+        *g.status_counter().lock().unwrap() = Some(GameStatus {
+            state: state.to_string(),
+            installdir: String::new(),
+            size: 0.0,
+        });
+    }
+
+    #[test]
+    fn install_phase_only_tracks_started_installs() {
+        let mut b = Browser::new(vec![]);
+        let g = game(42);
+
+        // An active-looking status on a game we never started installing is Idle.
+        set_state(&g, "downloading 12.0%");
+        assert_eq!(b.install_phase(&g), InstallPhase::Idle);
+
+        // Once we begin an install, the live status drives the phase.
+        b.begin_install(42, None);
+        assert_eq!(b.install_phase(&g), InstallPhase::Active);
+
+        set_state(&g, "paused 12.0%");
+        assert_eq!(b.install_phase(&g), InstallPhase::Paused);
+
+        // A finished install reads as Idle (so Space/c no longer act).
+        set_state(&g, "Installed!");
+        assert_eq!(b.install_phase(&g), InstallPhase::Idle);
+    }
+
+    #[test]
+    fn poll_game_refresh_patches_install_flags_and_clears_status() {
+        let g = game(99); // helper builds it not-installed
+        let mut b = Browser::new(vec![g]);
+        // A leftover transient status from the finished install.
+        set_state(b.items.iter().find(|x| x.id == 99).unwrap(), "Installed!");
+
+        // Simulate the off-thread worker dropping a fresh "now installed" entry.
+        b.game_refresh_slot.lock().unwrap().push(LibraryGameJson {
+            app_id: 99,
+            name: "Game".to_string(),
+            is_installed: true,
+            install_path: Some("dir".to_string()),
+            update_available: false,
+            is_owned: true,
+            is_family_shared: false,
+            platform: None,
+            active_branch: None,
+            assets: None,
+            store_url: None,
+        });
+
+        b.poll_game_refresh();
+
+        let updated = b.items.iter().find(|x| x.id == 99).unwrap();
+        assert!(updated.installed, "installed flag adopted from refreshed entry");
+        // The transient status was dropped, so the badge now derives from the
+        // installed flag (a steady "installed" state, not "Installed!").
+        assert_eq!(updated.get_status().map(|s| s.state).as_deref(), Some("installed"));
+    }
+
+    #[test]
+    fn install_control_action_roundtrips() {
+        let c = InstallControl::new();
+        assert_eq!(c.get(), InstallAction::Running);
+        c.set(InstallAction::Paused);
+        assert_eq!(c.get(), InstallAction::Paused);
+        c.set(InstallAction::Stopped);
+        assert_eq!(c.get(), InstallAction::Stopped);
     }
 }

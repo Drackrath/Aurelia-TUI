@@ -76,6 +76,14 @@ pub struct AccountJson {
     pub steam_id: u64,
     #[serde(default)]
     pub account_name: String,
+    /// Steam persona / display name (e.g. "Drackrath"). `aurelia account --json`
+    /// does NOT expose this; it is resolved separately via
+    /// `friends search <steam_id> --json` (whose `persona_name` key it shares)
+    /// and injected by [`account`]. `#[serde(default)]` plus the `display_name`
+    /// alias mean a future account schema that *does* emit a persona is also
+    /// picked up. Stays `None` when the persona can't be resolved.
+    #[serde(default, alias = "display_name")]
+    pub persona_name: Option<String>,
     #[serde(default)]
     pub country: String,
     #[serde(default)]
@@ -86,6 +94,17 @@ pub struct AccountJson {
     pub authed_machines: u32,
     #[serde(default)]
     pub vac_bans: u32,
+}
+
+impl AccountJson {
+    /// User-facing player name: the Steam persona / display name, falling back
+    /// to the account (login) name when no persona is known.
+    pub fn display_name(&self) -> String {
+        self.persona_name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| self.account_name.clone())
+    }
 }
 
 /// The launcher configuration, from `aurelia config show --json` (the
@@ -1099,6 +1118,28 @@ struct ProgressJson {
     state: Option<String>,
     #[serde(default)]
     percent: Option<f64>,
+    /// Estimated seconds remaining, or `None` when not yet estimable (the CLI
+    /// emits `eta_seconds: null` early in a transfer).
+    #[serde(default)]
+    eta_seconds: Option<u64>,
+}
+
+/// Format a download ETA into a compact " · ETA 3m 12s" suffix to sit next to
+/// the State value. Empty when the time is not yet estimable, so a status line
+/// without an estimate is unchanged.
+fn eta_suffix(eta_seconds: Option<u64>) -> String {
+    let Some(secs) = eta_seconds else {
+        return String::new();
+    };
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    let pretty = if h > 0 {
+        format!("{h}h {m:02}m")
+    } else if m > 0 {
+        format!("{m}m {s:02}s")
+    } else {
+        format!("{s}s")
+    };
+    format!(" · ETA {pretty}")
 }
 
 /// Run `aurelia <args> --json`, returning the parsed stdout JSON value.
@@ -1139,7 +1180,18 @@ pub fn health() -> Result<HealthJson, STError> {
 /// Fetch the logged-in Steam account (`aurelia account --json`).
 pub fn account() -> Result<AccountJson, STError> {
     let value = run_json(&["account"])?;
-    Ok(serde_json::from_value(value)?)
+    let mut account: AccountJson = serde_json::from_value(value)?;
+    // `aurelia account --json` reports the login (account) name but no persona /
+    // display name. Resolve the persona for the player's own SteamID via
+    // `friends search`, which shares the `persona_name` key. Best-effort: a
+    // failure (e.g. offline) just leaves `persona_name` `None` so the account
+    // name is shown instead.
+    if account.persona_name.is_none() && account.steam_id != 0 {
+        if let Ok(found) = friends_search(&account.steam_id.to_string()) {
+            account.persona_name = found.persona_name.filter(|n| !n.is_empty());
+        }
+    }
+    Ok(account)
 }
 
 /// Fetch the launcher configuration (`aurelia config show --json`).
@@ -1172,6 +1224,32 @@ pub fn wallet() -> Result<WalletJson, STError> {
 pub fn fetch_library() -> Result<Vec<LibraryGameJson>, STError> {
     let value = run_json(&["list"])?;
     Ok(serde_json::from_value(value)?)
+}
+
+/// One Steam library folder (a root containing `steamapps`), from
+/// `aurelia libraries --json`, with the free space on its drive.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LibraryJson {
+    pub path: String,
+    /// Free bytes on the drive, if the CLI could determine it.
+    #[serde(default)]
+    pub free_bytes: Option<u64>,
+}
+
+/// List the Steam library folders games can be installed into, one per
+/// drive/location, with each drive's free space (`aurelia libraries --json`).
+pub fn libraries() -> Result<Vec<LibraryJson>, STError> {
+    let value = run_json(&["libraries"])?;
+    let list = value.get("libraries").cloned().unwrap_or(value);
+    Ok(serde_json::from_value(list)?)
+}
+
+/// Estimate the on-disk install size of a game, in bytes
+/// (`aurelia install <id> --dry-run --json` → `disk_size`). Returns 0 if the
+/// estimate is unavailable.
+pub fn install_estimate(id: i32) -> Result<u64, STError> {
+    let value = run_json(&["install", &id.to_string(), "--dry-run"])?;
+    Ok(value.get("disk_size").and_then(|v| v.as_u64()).unwrap_or(0))
 }
 
 /// Fetch store metadata for a single app (`aurelia info <id> --json`).
@@ -1631,7 +1709,12 @@ pub fn proton_install(name: String, status: Arc<Mutex<Option<GameStatus>>>) {
                     };
                     set_status(
                         &status,
-                        &format!("{} {:.1}%", label, event.percent.unwrap_or(0.0)),
+                        &format!(
+                            "{} {:.1}%{}",
+                            label,
+                            event.percent.unwrap_or(0.0),
+                            eta_suffix(event.eta_seconds)
+                        ),
                     );
                 }
             }
@@ -1855,14 +1938,100 @@ fn set_status(status: &Arc<Mutex<Option<GameStatus>>>, msg: &str) {
     }
 }
 
+/// What the user has asked of an in-flight install. The install worker reads
+/// this once the `aurelia install` process exits (the daemon honours a
+/// [`install_stop`] by aborting the download, which ends the process) and
+/// finalises the status accordingly instead of treating the abort as a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallAction {
+    /// Install is running normally; finalise on its actual result.
+    Running,
+    /// User paused it — freeze the status at "paused …" so it can be resumed.
+    Paused,
+    /// User cancelled it — clear the status (the game reverts to not-installed).
+    Stopped,
+}
+
+/// A shared, cheaply-cloned handle to an install's [`InstallAction`]. The UI
+/// flips it (pause/stop) before issuing [`install_stop`]; the worker reads it
+/// when the process ends.
+#[derive(Debug, Clone)]
+pub struct InstallControl {
+    action: Arc<Mutex<InstallAction>>,
+}
+
+impl InstallControl {
+    pub fn new() -> Self {
+        Self {
+            action: Arc::new(Mutex::new(InstallAction::Running)),
+        }
+    }
+
+    pub fn set(&self, action: InstallAction) {
+        if let Ok(mut guard) = self.action.lock() {
+            *guard = action;
+        }
+    }
+
+    pub fn get(&self) -> InstallAction {
+        self.action
+            .lock()
+            .map(|g| *g)
+            .unwrap_or(InstallAction::Running)
+    }
+}
+
+impl Default for InstallControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Ask the backend to stop a running install (`aurelia install stop <id>`).
+/// Forwards to the session daemon, which aborts the download loop; the partial
+/// download is left on disk so a later `install` resumes it. A no-op (Ok) if no
+/// such install is in flight.
+pub fn install_stop(app_id: i32) -> Result<(), STError> {
+    run_json(&["install", "stop", &app_id.to_string()])?;
+    Ok(())
+}
+
+/// Freeze the status cell at "paused" (carrying the last-seen percent, if any),
+/// preserving the install dir/size.
+fn set_status_paused(status: &Arc<Mutex<Option<GameStatus>>>) {
+    if let Ok(mut guard) = status.lock() {
+        let pct = guard
+            .as_ref()
+            .and_then(|s| s.state.split_whitespace().find(|t| t.ends_with('%')))
+            .map(|p| format!("paused {p}"))
+            .unwrap_or_else(|| "paused".to_string());
+        let next = GameStatus::msg(&guard, &pct);
+        *guard = Some(next);
+    }
+}
+
 /// Install a game (`aurelia install <id> --json`), streaming progress into the
 /// shared status cell. Blocks until the install finishes; intended to be run on
-/// a dedicated thread.
-pub fn install(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
+/// a dedicated thread. `control` lets the UI pause (resumable) or stop (cancel)
+/// the install — when set, the worker finalises as paused/cleared instead of
+/// reporting the abort as a failure. `library` (a library root from
+/// [`libraries`]) targets a specific drive/location; `None` uses the default.
+pub fn install(
+    id: i32,
+    status: Arc<Mutex<Option<GameStatus>>>,
+    control: InstallControl,
+    library: Option<String>,
+) {
     set_status(&status, "processing...");
 
+    let id_str = id.to_string();
+    let mut args: Vec<&str> = vec!["install", &id_str, "--json"];
+    if let Some(library) = &library {
+        args.push("--library");
+        args.push(library);
+    }
     let spawned = process::Command::new(bin())
-        .args(["install", &id.to_string(), "--json"])
+        .args(&args)
         .stdin(process::Stdio::null())
         .stdout(process::Stdio::piped())
         .stderr(process::Stdio::piped())
@@ -1904,7 +2073,12 @@ pub fn install(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
                     };
                     set_status(
                         &status,
-                        &format!("{} {:.1}%", label, event.percent.unwrap_or(0.0)),
+                        &format!(
+                            "{} {:.1}%{}",
+                            label,
+                            event.percent.unwrap_or(0.0),
+                            eta_suffix(event.eta_seconds)
+                        ),
                     );
                 }
             }
@@ -1913,6 +2087,22 @@ pub fn install(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
 
     let result = result_handle.join().unwrap_or_default();
     let _ = child.wait();
+
+    // If the user paused/stopped, the process exited because the daemon aborted
+    // the download — finalise on the user's intent, not the aborted result.
+    match control.get() {
+        InstallAction::Paused => {
+            set_status_paused(&status);
+            return;
+        }
+        InstallAction::Stopped => {
+            if let Ok(mut guard) = status.lock() {
+                *guard = None;
+            }
+            return;
+        }
+        InstallAction::Running => {}
+    }
 
     match serde_json::from_str::<serde_json::Value>(result.trim()) {
         Ok(value) => {
@@ -2075,7 +2265,11 @@ pub fn update(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
                 if event.event.as_deref() == Some("progress") {
                     set_status(
                         &status,
-                        &format!("updating {:.1}%", event.percent.unwrap_or(0.0)),
+                        &format!(
+                            "updating {:.1}%{}",
+                            event.percent.unwrap_or(0.0),
+                            eta_suffix(event.eta_seconds)
+                        ),
                     );
                 }
             }

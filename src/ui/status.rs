@@ -20,6 +20,16 @@ pub fn status_bar(browser: &Browser, account: Option<&str>) -> Paragraph<'static
     // --- Line 1: status ---
     let mut line1: Vec<Span<'static>> = Vec::new();
 
+    // A transient notice (e.g. a failed action) takes the front of the line in
+    // the warning colour until the next keypress clears it.
+    if let Some(notice) = &browser.notice {
+        line1.push(Span::styled(
+            notice.clone(),
+            Style::default().fg(theme::WARN),
+        ));
+        line1.push(sep());
+    }
+
     // Live query, shown prominently when filtering or a query is present.
     if browser.filtering || !browser.query.is_empty() {
         let mut q = format!("/{}", browser.query);

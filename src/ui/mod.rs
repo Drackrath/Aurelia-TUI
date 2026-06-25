@@ -10,6 +10,7 @@ pub mod branches;
 pub mod config;
 pub mod confirm;
 pub mod depots;
+pub mod install_picker;
 pub mod detail;
 pub mod dlc;
 pub mod friend_add;

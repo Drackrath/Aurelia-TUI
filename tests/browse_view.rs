@@ -92,8 +92,9 @@ fn browse_widgets_render_without_panicking() {
 
     terminal
         .draw(|f| {
-            f.render_widget(ui::tabs::tabs(&browser), Rect::new(0, 0, 80, 3));
-            let list = ui::list::list(&browser);
+            f.render_widget(ui::tabs::library_tabs(&browser), Rect::new(0, 0, 60, 3));
+            f.render_widget(ui::tabs::friends_tabs(&browser), Rect::new(60, 0, 20, 3));
+            let list = ui::list::list(&browser, 40, 0);
             f.render_stateful_widget(list, Rect::new(0, 3, 40, 18), &mut browser.state);
             let selected = browser.selected();
             f.render_widget(
@@ -121,6 +122,62 @@ fn browse_widgets_render_without_panicking() {
     assert!(text.contains("Detail"), "detail panel renders");
 }
 
+#[test]
+fn install_picker_lists_libraries_and_marks_choice() {
+    isolate_config();
+    let mut browser = Browser::new(vec![]);
+    browser.install_libraries = vec![
+        aurelia_tui::interface::aurelia::LibraryJson {
+            path: "C:\\SteamLibrary".to_string(),
+            free_bytes: Some(2_000_000_000),
+        },
+        aurelia_tui::interface::aurelia::LibraryJson {
+            path: "D:\\Games\\SteamLibrary".to_string(),
+            free_bytes: Some(80_000_000_000),
+        },
+    ];
+    browser.install_estimate = Some(50_000_000_000); // ~50 GB: too big for C:, fits D:
+    browser.install_picker_index = 1;
+
+    let backend = TestBackend::new(70, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            f.render_widget(
+                ui::install_picker::install_picker(&browser),
+                Rect::new(0, 0, 70, 10),
+            );
+        })
+        .unwrap();
+
+    let rows: Vec<String> = (0..10)
+        .map(|y| {
+            (0..70)
+                .map(|x| terminal.backend().buffer().get(x, y).symbol.clone())
+                .collect::<String>()
+        })
+        .collect();
+    let joined = rows.join("\n");
+
+    assert!(joined.contains("which library"), "picker title shown");
+    assert!(joined.contains("C:\\SteamLibrary"), "first library listed");
+    assert!(joined.contains("D:\\Games\\SteamLibrary"), "second library listed");
+    // The selection marker sits on the highlighted (second) row.
+    let marked = rows.iter().find(|r| r.contains('\u{25b6}')).expect("a marked row");
+    assert!(
+        marked.contains("D:\\Games\\SteamLibrary"),
+        "the marker is on the chosen library, got: {marked}"
+    );
+    // The estimate header and per-drive free space are shown.
+    assert!(joined.contains("on disk"), "estimated install size shown");
+    assert!(joined.contains("free"), "free space shown per library");
+    // C: (2 GB free) can't fit the ~50 GB estimate -> marked; D: (80 GB) can.
+    let c_row = rows.iter().find(|r| r.contains("C:\\SteamLibrary")).unwrap();
+    assert!(c_row.contains('\u{2717}'), "the too-small drive is marked, got: {c_row}");
+    let d_row = rows.iter().find(|r| r.contains("D:\\Games\\SteamLibrary")).unwrap();
+    assert!(!d_row.contains('\u{2717}'), "the fitting drive is not marked, got: {d_row}");
+}
+
 /// Render the complete browse frame the way `main` lays it out — tabs / [list |
 /// cover+detail] / status — with a game that has no description (so the right
 /// pane has only two chunks). Regression for an index-out-of-bounds panic where
@@ -145,13 +202,18 @@ fn full_browse_frame_renders() {
                     Constraint::Length(2),
                 ])
                 .split(f.size());
-            f.render_widget(ui::tabs::tabs(&browser), chunks[0]);
+            let tab_areas = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(20), Constraint::Length(19)])
+                .split(chunks[0]);
+            f.render_widget(ui::tabs::library_tabs(&browser), tab_areas[0]);
+            f.render_widget(ui::tabs::friends_tabs(&browser), tab_areas[1]);
 
             let body = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
                 .split(chunks[1]);
-            let list = ui::list::list(&browser);
+            let list = ui::list::list(&browser, body[0].width, 0);
             f.render_stateful_widget(list, body[0], &mut browser.state);
 
             let selected = browser.selected();
