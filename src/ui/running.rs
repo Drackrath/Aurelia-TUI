@@ -13,10 +13,7 @@ use crate::theme;
 /// when empty.
 pub fn running(browser: &Browser) -> List<'static> {
     let items: Vec<ListItem<'static>> = if browser.running.is_empty() {
-        vec![ListItem::new(Spans::from(Span::styled(
-            "No games running.".to_string(),
-            theme::dim(),
-        )))]
+        crate::ui::empty_list_rows("No games running.")
     } else {
         browser
             .running
@@ -25,7 +22,7 @@ pub fn running(browser: &Browser) -> List<'static> {
             .map(|(i, entry)| {
                 let selected = i == browser.running_index;
 
-                let marker = if selected { "▶ " } else { "  " };
+                let marker = crate::ui::selection_marker(selected);
                 let name_style = if selected {
                     theme::selection(theme::ACCENT)
                 } else {

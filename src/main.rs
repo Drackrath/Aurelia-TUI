@@ -1,6 +1,7 @@
 extern crate aurelia_tui;
 
 use std::io;
+use std::time::Instant;
 
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture, KeyCode};
 use crossterm::execute;
@@ -12,7 +13,7 @@ use tui::{backend::CrosstermBackend, Terminal};
 
 use tui_image_rgba_updated::{ColorMode, Image};
 
-use aurelia_tui::browse::{Browser, Filter};
+use aurelia_tui::browse::{Browser, Filter, InstallPhase, View};
 use aurelia_tui::theme;
 use aurelia_tui::ui;
 use aurelia_tui::util::event::{Event, Events};
@@ -66,6 +67,10 @@ fn rgb(color: tui::style::Color) -> (u8, u8, u8) {
 
 fn entry() -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
+    // Capture the mouse so the wheel scrolls the lists. Text selection still
+    // works without a toggle: terminals intercept Shift+drag for their own
+    // native selection before the app ever sees those events, so the wheel and
+    // selecting/copying text coexist (hold Shift while dragging to select).
     let mut stdout = io::stdout();
     execute!(stdout, EnableMouseCapture)?;
     #[allow(unused)]
@@ -108,7 +113,50 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         _ => Browser::new(Vec::new()),
     };
 
+    // Wall-clock anchor for the list-name marquee. Deriving the scroll step from
+    // elapsed time (rather than a per-frame counter) keeps it advancing at a
+    // steady pace regardless of what triggered each redraw (tick or keypress).
+    let marquee_start = Instant::now();
+    /// Milliseconds per one-column marquee step (~4 columns/second).
+    const MARQUEE_STEP_MS: u128 = 250;
+    // The marquee restarts from the name's first character each time the cursor
+    // moves to a new row, so a hovered name always begins at its start with the
+    // " • " separator trailing at the end — never opening mid-scroll on the gap.
+    let mut marquee_row: Option<usize> = None;
+    let mut marquee_base: usize = 0;
+
     loop {
+        // Adopt any async friend-management results (resolved search previews and
+        // roster refreshes after an add/remove) before drawing this frame.
+        browser.poll_friends_ops();
+
+        // Drain any finished off-thread Workshop browse/search/subscribe worker
+        // before rendering, so its result lands on the next frame. Runs on every
+        // event (including ticks) and never blocks the UI thread.
+        browser.poll_workshop();
+
+        // Reconcile a game's install state once its install finishes, and adopt
+        // any targeted single-game refresh that landed — so `installed` (which
+        // gates uninstall) tracks reality without a full-screen reload.
+        browser.poll_install_completions();
+        browser.poll_game_refresh();
+
+        // A just-finished Proton install flips a runtime to [installed]; pick
+        // that up by refreshing the list once, then drop the status line. Done
+        // before draw since the render closure only borrows `browser` immutably.
+        if browser.show_proton && browser.proton_status_line().as_deref() == Some("Installed!") {
+            browser.refresh_proton();
+            browser.clear_proton_status();
+        }
+
+        let global_tick = (marquee_start.elapsed().as_millis() / MARQUEE_STEP_MS) as usize;
+        let marquee_sel = browser.selected_index();
+        if marquee_sel != marquee_row {
+            marquee_row = marquee_sel;
+            marquee_base = global_tick;
+        }
+        let marquee_tick = global_tick.saturating_sub(marquee_base);
+
         terminal.draw(|frame| {
             frame.render_widget(Block::default().style(theme::canvas()), frame.size());
 
@@ -123,29 +171,38 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     ])
                     .split(frame.size());
 
-                frame.render_widget(ui::tabs::tabs(&browser), chunks[0]);
+                // Top bar split into two sections: the library filters on the
+                // left and the Friends & Chat tab in its own box on the right,
+                // each with its own headline.
+                let tab_areas = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Min(20), Constraint::Length(19)])
+                    .split(chunks[0]);
+                frame.render_widget(ui::tabs::library_tabs(&browser), tab_areas[0]);
+                frame.render_widget(ui::tabs::friends_tabs(&browser), tab_areas[1]);
 
                 let body = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
                     .split(chunks[1]);
 
-                let list_widget = ui::list::list(&browser);
-                frame.render_stateful_widget(list_widget, body[0], &mut browser.state);
+                // Left pane: the game list under a library filter, or — when the
+                // Friends tab is selected — the Friends & Chat panel in its
+                // place (the "All → Friends" transition). The panel sizes its
+                // whole-list scroll to the full-height left column.
+                if browser.view == View::Friends {
+                    let friends_rows = body[0].height.saturating_sub(2) as usize;
+                    frame.render_widget(ui::friends::friends(&browser, friends_rows), body[0]);
+                } else {
+                    let list_widget = ui::list::list(&browser, body[0].width, marquee_tick);
+                    frame.render_stateful_widget(list_widget, body[0], &mut browser.state);
+                }
 
                 let selected = browser.selected();
-                let right = body[1];
-
-                // Split the right pane: game Details on top, the always-visible
-                // Friends & Chat panel pinned to the bottom (~1/3 of the height,
-                // clamped so neither half collapses on small/large terminals).
-                let friends_h = (right.height / 3).clamp(6, 16);
-                let right_split = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(6), Constraint::Length(friends_h)])
-                    .split(right);
-                let detail_area = right_split[0];
-                let friends_area = right_split[1];
+                // Game Details fill the whole right column; the Friends & Chat
+                // panel is reached via its own tab, so there is no bottom-right
+                // sidebar anymore.
+                let detail_area = body[1];
 
                 // Detail panel: the cover art is painted as its background and
                 // the details — including the description as its own row — are
@@ -193,13 +250,6 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     detail_area,
                 );
 
-                // Always-visible Friends & Chat panel on the bottom-right.
-                let friends_rows = friends_area.height.saturating_sub(2) as usize;
-                frame.render_widget(
-                    ui::friends::friends(&browser, friends_rows),
-                    friends_area,
-                );
-
                 frame.render_widget(
                     ui::status::status_bar(&browser, client.get_account().as_deref()),
                     chunks[2],
@@ -234,6 +284,16 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::market::market(&browser), area);
                 }
 
+                // Community Market search overlay floats above everything.
+                if browser.show_market_search {
+                    let area = ui::centered_rect(70, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    // Pass the inner content height (minus the block border) so the
+                    // result window never overflows the overlay.
+                    let rows = area.height.saturating_sub(2) as usize;
+                    frame.render_widget(ui::market_search::market_search(&browser, rows), area);
+                }
+
                 // Workshop overlay floats above everything.
                 if browser.show_workshop {
                     let area = ui::centered_rect(72, 80, frame.size());
@@ -245,7 +305,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 if browser.show_help {
                     let area = ui::centered_rect(64, 84, frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::help::help(), area);
+                    frame.render_widget(ui::help::help(browser.help_scroll), area);
                 }
 
                 // Steam Cloud overlay floats above everything.
@@ -281,6 +341,25 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     let area = ui::centered_rect(40, 30, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::wallet::wallet(&browser), area);
+                }
+
+                // "Not installed — install now?" prompt floats above the library.
+                if browser.confirm_install {
+                    if let Some(game) = browser.selected() {
+                        let area = ui::centered_rect(40, 20, frame.size());
+                        frame.render_widget(Clear, area);
+                        frame.render_widget(
+                            ui::confirm::confirm_install(&game.get_name()),
+                            area,
+                        );
+                    }
+                }
+
+                // Install-location picker floats above the library.
+                if browser.show_install_picker {
+                    let area = ui::centered_rect(64, 40, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::install_picker::install_picker(&browser), area);
                 }
 
                 // Uninstall confirmation prompt floats above the library.
@@ -342,6 +421,16 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     let area = ui::centered_rect(60, 70, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::proton::proton(&browser), area);
+
+                    // Destructive uninstall confirmation floats above the overlay.
+                    if browser.confirm_proton_uninstall {
+                        if let Some(p) = browser.selected_proton() {
+                            let prompt = ui::confirm::confirm_uninstall(&p.name);
+                            let confirm_area = ui::centered_rect(40, 20, frame.size());
+                            frame.render_widget(Clear, confirm_area);
+                            frame.render_widget(prompt, confirm_area);
+                        }
+                    }
                 }
 
                 // Running-games overlay floats above everything.
@@ -349,6 +438,25 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     let area = ui::centered_rect(60, 60, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::running::running(&browser), area);
+                }
+
+                // Add-friend (search/add) prompt floats above everything.
+                if browser.show_friend_add {
+                    let area = ui::centered_rect(60, 30, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::friend_add::friend_add_overlay(&browser), area);
+                }
+
+                // Remove-friend confirmation prompt floats above the friends panel.
+                if browser.confirm_friend_remove {
+                    if let Some(friend) = browser.selected_friend() {
+                        let area = ui::centered_rect(40, 20, frame.size());
+                        frame.render_widget(Clear, area);
+                        frame.render_widget(
+                            ui::confirm::confirm_remove_friend(&friend.display_name()),
+                            area,
+                        );
+                    }
                 }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
@@ -383,11 +491,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     Mode::LoginQr => {
                         frame.render_widget(App::build_qr(client.get_qr()), placement[0])
                     }
-                    Mode::LoginUser => {
-                        frame.render_widget(App::build_login_user(app.user.clone()), placement[0])
-                    }
-                    Mode::LoginPass => {
-                        frame.render_widget(App::build_login_pass(app.password.len()), placement[0])
+                    Mode::LoginUser | Mode::LoginPass => {
+                        frame.render_widget(App::build_splash(), placement[0])
                     }
                     Mode::LoginClassic => {
                         let status = match client.get_login_phase() {
@@ -431,13 +536,27 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Mode::Browse => {
+                    // Any keypress dismisses a transient notice from the prior
+                    // action (it is set again below if this action also fails).
+                    browser.notice = None;
                     if browser.show_cloud {
-                        // Steam Cloud overlay: Esc/q close, s syncs and re-fetches.
+                        // Steam Cloud overlay: Esc/q close, s syncs both ways,
+                        // d downloads only, u uploads only; each re-fetches.
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_cloud(),
                             KeyCode::Char('s') => {
                                 if let Some(game) = browser.selected() {
-                                    browser.sync_cloud(game.id);
+                                    browser.sync_cloud(game.id, aurelia::CloudDirection::Both);
+                                }
+                            }
+                            KeyCode::Char('d') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.sync_cloud(game.id, aurelia::CloudDirection::Down);
+                                }
+                            }
+                            KeyCode::Char('u') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.sync_cloud(game.id, aurelia::CloudDirection::Up);
                                 }
                             }
                             _ => {}
@@ -459,18 +578,52 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char(c) => browser.chat_push(c),
                             _ => {}
                         }
-                    } else if browser.friends_focused {
+                    } else if browser.show_friend_add {
+                        // Add-friend prompt: type the reference, Enter to resolve
+                        // it via `friends search`, a to send the request via
+                        // `friends add` (kept open to show status), Esc to cancel.
+                        match input {
+                            KeyCode::Esc => browser.close_friend_add(),
+                            KeyCode::Char('\n') | KeyCode::Enter => browser.friend_search(),
+                            KeyCode::Char('a') => browser.friend_add_confirm(),
+                            KeyCode::Backspace => browser.friend_add_pop(),
+                            KeyCode::Char(c) => browser.friend_add_push(c),
+                            _ => {}
+                        }
+                    } else if browser.confirm_friend_remove {
+                        // Remove-friend confirmation: y confirms, anything else cancels.
+                        match input {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                browser.friend_remove_confirm();
+                                browser.confirm_friend_remove = false;
+                            }
+                            _ => browser.confirm_friend_remove = false,
+                        }
+                    } else if browser.friends_focused() {
                         // Friends panel focused: j/k move the highlight (the whole
                         // list scrolls under it), c/Enter open the in-app chat, t
-                        // pops the chat into a new terminal window, Esc/F/q unfocus.
+                        // pops the chat into a new terminal window, a opens the
+                        // add-friend prompt, x removes the highlighted friend
+                        // (confirmed), Esc/F/q unfocus.
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('F') => {
                                 browser.unfocus_friends()
                             }
                             KeyCode::Enter | KeyCode::Char('c') => browser.open_chat(),
                             KeyCode::Char('t') => browser.open_chat_terminal(),
+                            KeyCode::Char('a') => browser.open_friend_add(),
+                            KeyCode::Char('x') => {
+                                if browser.selected_friend().is_some() {
+                                    browser.confirm_friend_remove = true;
+                                }
+                            }
                             KeyCode::Down | KeyCode::Char('j') => browser.friends_scroll_down(),
                             KeyCode::Up | KeyCode::Char('k') => browser.friends_scroll_up(),
+                            // Tab/Shift-Tab keep cycling the tab ring so the
+                            // Friends tab is not a dead end — stepping right off
+                            // it wraps back to All.
+                            KeyCode::Tab => browser.cycle_filter(true),
+                            KeyCode::BackTab => browser.cycle_filter(false),
                             _ => {}
                         }
                     } else if browser.show_inventory {
@@ -497,12 +650,130 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => browser.market_scroll_up(),
                             _ => {}
                         }
-                    } else if browser.show_workshop {
-                        // Workshop overlay: Esc/q close, j/k scroll.
+                    } else if browser.show_market_search {
+                        // Market search overlay: typing edits the query, Enter
+                        // runs the search (off-thread), Up/Down move the result
+                        // highlight, Tab prices the highlighted result (off-thread),
+                        // Esc closes. q/j/k are NOT shortcuts here so they can be
+                        // typed into the query.
                         match input {
-                            KeyCode::Esc | KeyCode::Char('q') => browser.close_workshop(),
-                            KeyCode::Down | KeyCode::Char('j') => browser.workshop_scroll_down(),
-                            KeyCode::Up | KeyCode::Char('k') => browser.workshop_scroll_up(),
+                            KeyCode::Esc => browser.close_market_search(),
+                            KeyCode::Char('\n') | KeyCode::Enter => {
+                                browser.submit_market_search()
+                            }
+                            KeyCode::Down => browser.market_result_next(),
+                            KeyCode::Up => browser.market_result_previous(),
+                            KeyCode::Backspace => browser.market_query_pop(),
+                            // Tab prices the highlighted result. A non-character
+                            // key is used so every letter stays typeable into the
+                            // query (the help overlay documents this).
+                            KeyCode::Tab => browser.lookup_market_price(),
+                            KeyCode::Char(c) => browser.market_query_push(c),
+                            _ => {}
+                        }
+                    } else if browser.show_workshop {
+                        if browser.workshop_comments_open {
+                            // Comments sub-pane (over the browse results): Esc
+                            // returns to the results, Up/Down scroll. No text is
+                            // edited here, so j/k are also accepted as scroll keys.
+                            match input {
+                                KeyCode::Esc => browser.close_workshop_comments(),
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    browser.workshop_comments_scroll_down()
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    browser.workshop_comments_scroll_up()
+                                }
+                                _ => {}
+                            }
+                        } else if browser.workshop_browse {
+                            // Browse/search pane: the query line takes typed
+                            // text (Enter searches off-thread). Navigation/action
+                            // use non-text keys so they never collide with what
+                            // the user is typing: Up/Down move the highlight,
+                            // Tab subscribes/unsubscribes it off-thread, F1/F2
+                            // rate it up/down off-thread, F3 opens its comments
+                            // sub-pane, and Esc returns to the subscribed list.
+                            match input {
+                                KeyCode::Esc => browser.workshop_exit_browse(),
+                                KeyCode::Char('\n') | KeyCode::Enter => {
+                                    browser.start_workshop_search()
+                                }
+                                KeyCode::Down => browser.workshop_next(),
+                                KeyCode::Up => browser.workshop_previous(),
+                                KeyCode::Tab => {
+                                    browser.workshop_toggle_subscribe_selected()
+                                }
+                                KeyCode::F(1) => browser.workshop_rate_selected(true),
+                                KeyCode::F(2) => browser.workshop_rate_selected(false),
+                                KeyCode::F(3) => browser.workshop_open_comments(),
+                                KeyCode::Backspace => browser.workshop_pop_query(),
+                                KeyCode::Char(c) => browser.workshop_push_query(c),
+                                _ => {}
+                            }
+                        } else {
+                            // Subscribed-items list: Esc/q close, j/k scroll,
+                            // 'b' opens the browse/search pane.
+                            match input {
+                                KeyCode::Esc | KeyCode::Char('q') => browser.close_workshop(),
+                                KeyCode::Char('b') => browser.workshop_enter_browse(),
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    browser.workshop_scroll_down()
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    browser.workshop_scroll_up()
+                                }
+                                _ => {}
+                            }
+                        }
+                    } else if browser.confirm_install {
+                        // "Not installed — install now?" prompt: y opens the
+                        // install-location picker for the game, anything cancels.
+                        match input {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                browser.confirm_install = false;
+                                if let Some(game) = browser.selected() {
+                                    if !browser.open_install_picker(game.id) {
+                                        let control = browser.begin_install(game.id, None);
+                                        client.install(&game, control, None)?;
+                                    }
+                                }
+                            }
+                            _ => browser.confirm_install = false,
+                        }
+                    } else if browser.show_install_picker {
+                        // Install-location picker: Up/Down choose a library,
+                        // Enter installs the selected game into it, Esc cancels.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                browser.close_install_picker()
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                browser.install_picker_next()
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                browser.install_picker_previous()
+                            }
+                            KeyCode::Enter | KeyCode::Char('\n') => {
+                                if !browser.selected_library_fits() {
+                                    // Not enough room — keep the picker open so
+                                    // another drive can be chosen.
+                                    browser.notice = Some(
+                                        "Not enough space on that drive — pick another."
+                                            .to_string(),
+                                    );
+                                } else {
+                                    if let (Some(game), Some(library)) = (
+                                        browser.selected(),
+                                        browser.selected_install_library(),
+                                    ) {
+                                        let control = browser
+                                            .begin_install(game.id, Some(library.clone()));
+                                        client.install(&game, control, Some(library))?;
+                                    }
+                                    browser.close_install_picker();
+                                }
+                            }
                             _ => {}
                         }
                     } else if browser.confirm_uninstall {
@@ -510,12 +781,22 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         match input {
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
                                 if let Some(game) = browser.selected() {
-                                    aurelia::uninstall(game.id)?;
-                                    // Reload the library so the listing reflects
-                                    // the now-uninstalled game (mirrors 'r').
-                                    cached = false;
-                                    app.mode = Mode::Loading;
-                                    client.restart()?;
+                                    match aurelia::uninstall(game.id) {
+                                        Ok(()) => {
+                                            // Reload the library so the listing
+                                            // reflects the now-uninstalled game
+                                            // (mirrors 'r').
+                                            cached = false;
+                                            app.mode = Mode::Loading;
+                                            client.restart()?;
+                                        }
+                                        // A failed uninstall must not crash the
+                                        // TUI — surface it and stay running.
+                                        Err(err) => {
+                                            browser.notice =
+                                                Some(format!("Uninstall failed: {err}"));
+                                        }
+                                    }
                                 }
                                 browser.confirm_uninstall = false;
                             }
@@ -570,9 +851,19 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => {}
                         }
+                    } else if browser.show_proton && browser.confirm_proton_uninstall {
+                        // Proton uninstall confirmation: y confirms (remove the
+                        // custom runtime + refresh), anything else cancels.
+                        match input {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                let _ = browser.do_proton_uninstall();
+                                browser.confirm_proton_uninstall = false;
+                            }
+                            _ => browser.confirm_proton_uninstall = false,
+                        }
                     } else if browser.show_proton {
-                        // Proton overlay: navigate and set the highlighted runtime
-                        // as the global default.
+                        // Proton overlay: navigate, set the highlighted runtime as
+                        // the global default, install it, or uninstall a custom one.
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_proton(),
                             KeyCode::Down | KeyCode::Char('j') => browser.proton_next(),
@@ -587,6 +878,23 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                         browser.proton_index =
                                             keep.min(browser.protons.len().saturating_sub(1));
                                     }
+                                }
+                            }
+                            KeyCode::Char('i') => {
+                                // Queue a (long-running) download off the UI thread;
+                                // progress streams into the proton status cell.
+                                if let Some(p) = browser.selected_proton() {
+                                    if !p.installed {
+                                        browser.clear_proton_status();
+                                        let _ = client
+                                            .proton_install(&p.name, browser.proton_status.clone());
+                                    }
+                                }
+                            }
+                            KeyCode::Char('u') => {
+                                // Only custom (installed GE) runtimes are removable.
+                                if browser.selected_proton_uninstallable() {
+                                    browser.confirm_proton_uninstall = true;
                                 }
                             }
                             _ => {}
@@ -637,8 +945,15 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             _ => {}
                         }
                     } else if browser.show_help {
-                        // Any key dismisses the help overlay.
-                        browser.show_help = false;
+                        // Help overlay: Esc/q/? close, j/k scroll.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+                                browser.show_help = false;
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => browser.help_scroll_down(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.help_scroll_up(),
+                            _ => {}
+                        }
                     } else if browser.show_account {
                         // `o` logs out of Steam; any other key dismisses the overlay.
                         match input {
@@ -686,7 +1001,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         match input {
                             KeyCode::Char('q') => break,
-                            KeyCode::Char('?') => browser.show_help = true,
+                            KeyCode::Char('?') => {
+                                browser.help_scroll = 0;
+                                browser.show_help = true;
+                            }
                             KeyCode::Char('A') => {
                                 // Fetch the account (blocking) and open the overlay;
                                 // ignore failures so a missing session is non-fatal.
@@ -718,6 +1036,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('2') => browser.set_filter(Filter::Installed),
                             KeyCode::Char('3') => browser.set_filter(Filter::Updates),
                             KeyCode::Char('4') => browser.set_filter(Filter::Favourites),
+                            KeyCode::Char('5') => browser.enter_friends(),
                             KeyCode::Char('s') => browser.cycle_sort(),
                             KeyCode::Char('a') => browser.open_achievements(),
                             KeyCode::Char('F') => browser.toggle_friends_focus(),
@@ -727,6 +1046,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             KeyCode::Char('m') => browser.open_market(),
+                            KeyCode::Char('S') => browser.open_market_search(),
                             KeyCode::Char('W') => {
                                 if let Some(game) = browser.selected() {
                                     browser.open_workshop(game.id);
@@ -741,12 +1061,51 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::PageUp => browser.page_up(10),
                             KeyCode::Char('\n') | KeyCode::Enter => {
                                 if let Some(game) = browser.selected() {
-                                    client.run(&game)?;
+                                    if game.installed {
+                                        client.run(&game)?;
+                                    } else {
+                                        // Not installed — offer to install it
+                                        // instead of launching nothing.
+                                        browser.confirm_install = true;
+                                    }
                                 }
                             }
                             KeyCode::Char('d') => {
                                 if let Some(game) = browser.selected() {
-                                    client.install(&game)?;
+                                    // Choose the install location first; fall back
+                                    // to the default library if none can be listed.
+                                    if !browser.open_install_picker(game.id) {
+                                        let control = browser.begin_install(game.id, None);
+                                        client.install(&game, control, None)?;
+                                    }
+                                }
+                            }
+                            // Space pauses an in-flight install, or resumes a
+                            // paused one (the download is left on disk so it
+                            // resumes where it left off).
+                            KeyCode::Char(' ') => {
+                                if let Some(game) = browser.selected() {
+                                    match browser.install_phase(&game) {
+                                        InstallPhase::Active => browser.pause_install(game.id),
+                                        InstallPhase::Paused => {
+                                            // Resume into the same library the
+                                            // download was started in.
+                                            let library =
+                                                browser.install_library_for(game.id);
+                                            let control = browser
+                                                .begin_install(game.id, library.clone());
+                                            client.install(&game, control, library)?;
+                                        }
+                                        InstallPhase::Idle => {}
+                                    }
+                                }
+                            }
+                            // Cancel an in-flight or paused install.
+                            KeyCode::Char('c') => {
+                                if let Some(game) = browser.selected() {
+                                    if browser.install_phase(&game) != InstallPhase::Idle {
+                                        browser.stop_install(game.id);
+                                    }
                                 }
                             }
                             KeyCode::Char('x') => {
@@ -962,7 +1321,6 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
             }
-            events.release();
         }
 
         if app.mode == Mode::Loading {
@@ -978,11 +1336,20 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 State::LoggedIn => {
-                    config.save()?;
-                    browser.set_items(client.games()?);
-                    terminal.hide_cursor()?;
-                    terminal.clear()?;
-                    app.mode = Mode::Browse;
+                    // The games cache can be momentarily missing/empty mid-reload
+                    // (right after a restart invalidates it). Treat an unreadable
+                    // cache as "not ready yet" and stay in Loading to retry next
+                    // iteration, rather than crashing the TUI on a parse error.
+                    match client.games() {
+                        Ok(games) => {
+                            config.save()?;
+                            browser.set_items(games);
+                            terminal.hide_cursor()?;
+                            terminal.clear()?;
+                            app.mode = Mode::Browse;
+                        }
+                        Err(_) => {}
+                    }
                 }
                 State::Failed => {
                     // No session — fall through to the sign-in landing page.
@@ -1033,7 +1400,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Drive artwork off the UI thread: `select` only acts when the selection
         // changes (loading a cached image inline, else kicking off a background
         // download), and `poll` adopts a completed download.
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop {
+        // Adopt any completed market search / price result published off-thread.
+        browser.poll_market();
+
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install {
             let selected = browser.selected();
             artwork::select(
                 selected.as_ref(),
@@ -1067,7 +1437,7 @@ fn chat_entry(steamid: u64, name: String) -> Result<(), Box<dyn std::error::Erro
     browser.refresh_chat();
 
     let events = Events::new();
-    // Re-fetch history every ~3s (6 ticks at the 500ms tick rate) so incoming
+    // Re-fetch history every ~3s (12 ticks at the 250ms tick rate) so incoming
     // messages surface without hammering the CLI on every frame.
     let mut ticks: u32 = 0;
     loop {
@@ -1078,16 +1448,18 @@ fn chat_entry(steamid: u64, name: String) -> Result<(), Box<dyn std::error::Erro
         })?;
 
         match events.next()? {
-            Event::Input(input) => match input {
-                KeyCode::Esc => break,
-                KeyCode::Char('\n') | KeyCode::Enter => browser.chat_send(),
-                KeyCode::Backspace => browser.chat_pop(),
-                KeyCode::Char(c) => browser.chat_push(c),
-                _ => {}
-            },
+            Event::Input(input) => {
+                match input {
+                    KeyCode::Esc => break,
+                    KeyCode::Char('\n') | KeyCode::Enter => browser.chat_send(),
+                    KeyCode::Backspace => browser.chat_pop(),
+                    KeyCode::Char(c) => browser.chat_push(c),
+                    _ => {}
+                }
+            }
             Event::Tick => {
                 ticks = ticks.wrapping_add(1);
-                if ticks % 6 == 0 {
+                if ticks % 12 == 0 {
                     browser.refresh_chat();
                 }
             }
@@ -1114,6 +1486,13 @@ fn main() {
 
     match entry() {
         Ok(()) => {}
-        Err(err) => println!("{:?}", err),
+        Err(err) => {
+            // entry() bailed before its own cleanup ran, so the terminal is
+            // still in raw mode with the mouse captured. Restore both before
+            // printing or the error lands in a garbled console.
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), DisableMouseCapture);
+            println!("{}", err);
+        }
     }
 }

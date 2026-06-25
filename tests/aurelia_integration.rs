@@ -79,10 +79,42 @@ fn classic_login_rejects_bad_credentials() {
 
 #[test]
 #[ignore]
+fn friends_search_resolves_a_known_account() {
+    // `friends search` is read-only and needs no login: it resolves a SteamID64
+    // / profile URL / vanity to a concrete account. Gabe Newell's well-known
+    // SteamID64 is a stable fixture.
+    let found = aurelia::friends_search("76561197960287930").expect("friends search --json");
+    assert_eq!(found.steam_id, 76561197960287930);
+    assert!(!found.display_name().is_empty(), "expected a display name");
+}
+
+#[test]
+#[ignore]
 fn info_parses_developers_and_publishers() {
     let raw = aurelia::fetch_library().expect("list");
     let app_id = raw[0].app_id as i32;
     let info = aurelia::fetch_info(app_id).expect("info --json should parse");
     assert_eq!(info.app_id, app_id as u32);
     assert!(!info.name.is_empty());
+}
+
+#[test]
+#[ignore]
+fn market_search_then_price_round_trips() {
+    // Both calls are read-only and need no login. Search for a well-known TF2
+    // item, then price the first result by its (app_id, market hash name).
+    let results = aurelia::market_search("Mann Co").expect("market search --json should parse");
+    assert!(!results.is_empty(), "expected at least one market result");
+
+    let first = &results[0];
+    assert!(!first.market_hash_name.is_empty(), "result has a hash name");
+
+    let price = aurelia::market_price(first.app_id, &first.market_hash_name)
+        .expect("market price --json should parse");
+    // The CLI echoes the queried name back; at least one price field should be set.
+    assert_eq!(price.market_hash_name, first.market_hash_name);
+    assert!(
+        price.summary().is_some(),
+        "expected some price/volume data for a popular item"
+    );
 }

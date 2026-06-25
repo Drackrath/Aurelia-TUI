@@ -3,7 +3,9 @@
 //! paint the expected content.
 
 use aurelia_tui::browse::{Browser, Filter};
-use aurelia_tui::interface::aurelia::LibraryGameJson;
+use aurelia_tui::interface::aurelia::{
+    LibraryGameJson, ProtonJson, WorkshopCommentJson, WorkshopItemJson,
+};
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::{theme, ui};
 use tui::backend::TestBackend;
@@ -90,8 +92,9 @@ fn browse_widgets_render_without_panicking() {
 
     terminal
         .draw(|f| {
-            f.render_widget(ui::tabs::tabs(&browser), Rect::new(0, 0, 80, 3));
-            let list = ui::list::list(&browser);
+            f.render_widget(ui::tabs::library_tabs(&browser), Rect::new(0, 0, 60, 3));
+            f.render_widget(ui::tabs::friends_tabs(&browser), Rect::new(60, 0, 20, 3));
+            let list = ui::list::list(&browser, 40, 0);
             f.render_stateful_widget(list, Rect::new(0, 3, 40, 18), &mut browser.state);
             let selected = browser.selected();
             f.render_widget(
@@ -119,6 +122,62 @@ fn browse_widgets_render_without_panicking() {
     assert!(text.contains("Detail"), "detail panel renders");
 }
 
+#[test]
+fn install_picker_lists_libraries_and_marks_choice() {
+    isolate_config();
+    let mut browser = Browser::new(vec![]);
+    browser.install_libraries = vec![
+        aurelia_tui::interface::aurelia::LibraryJson {
+            path: "C:\\SteamLibrary".to_string(),
+            free_bytes: Some(2_000_000_000),
+        },
+        aurelia_tui::interface::aurelia::LibraryJson {
+            path: "D:\\Games\\SteamLibrary".to_string(),
+            free_bytes: Some(80_000_000_000),
+        },
+    ];
+    browser.install_estimate = Some(50_000_000_000); // ~50 GB: too big for C:, fits D:
+    browser.install_picker_index = 1;
+
+    let backend = TestBackend::new(70, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            f.render_widget(
+                ui::install_picker::install_picker(&browser),
+                Rect::new(0, 0, 70, 10),
+            );
+        })
+        .unwrap();
+
+    let rows: Vec<String> = (0..10)
+        .map(|y| {
+            (0..70)
+                .map(|x| terminal.backend().buffer().get(x, y).symbol.clone())
+                .collect::<String>()
+        })
+        .collect();
+    let joined = rows.join("\n");
+
+    assert!(joined.contains("which library"), "picker title shown");
+    assert!(joined.contains("C:\\SteamLibrary"), "first library listed");
+    assert!(joined.contains("D:\\Games\\SteamLibrary"), "second library listed");
+    // The selection marker sits on the highlighted (second) row.
+    let marked = rows.iter().find(|r| r.contains('\u{25b6}')).expect("a marked row");
+    assert!(
+        marked.contains("D:\\Games\\SteamLibrary"),
+        "the marker is on the chosen library, got: {marked}"
+    );
+    // The estimate header and per-drive free space are shown.
+    assert!(joined.contains("on disk"), "estimated install size shown");
+    assert!(joined.contains("free"), "free space shown per library");
+    // C: (2 GB free) can't fit the ~50 GB estimate -> marked; D: (80 GB) can.
+    let c_row = rows.iter().find(|r| r.contains("C:\\SteamLibrary")).unwrap();
+    assert!(c_row.contains('\u{2717}'), "the too-small drive is marked, got: {c_row}");
+    let d_row = rows.iter().find(|r| r.contains("D:\\Games\\SteamLibrary")).unwrap();
+    assert!(!d_row.contains('\u{2717}'), "the fitting drive is not marked, got: {d_row}");
+}
+
 /// Render the complete browse frame the way `main` lays it out — tabs / [list |
 /// cover+detail] / status — with a game that has no description (so the right
 /// pane has only two chunks). Regression for an index-out-of-bounds panic where
@@ -143,13 +202,18 @@ fn full_browse_frame_renders() {
                     Constraint::Length(2),
                 ])
                 .split(f.size());
-            f.render_widget(ui::tabs::tabs(&browser), chunks[0]);
+            let tab_areas = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(20), Constraint::Length(19)])
+                .split(chunks[0]);
+            f.render_widget(ui::tabs::library_tabs(&browser), tab_areas[0]);
+            f.render_widget(ui::tabs::friends_tabs(&browser), tab_areas[1]);
 
             let body = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
                 .split(chunks[1]);
-            let list = ui::list::list(&browser);
+            let list = ui::list::list(&browser, body[0].width, 0);
             f.render_stateful_widget(list, body[0], &mut browser.state);
 
             let selected = browser.selected();
@@ -178,6 +242,30 @@ fn full_browse_frame_renders() {
         .map(|(x, y)| buf.get(x, y).symbol.clone())
         .collect();
     assert!(bottom.contains("tester"), "status bar renders at the bottom");
+}
+
+/// The Steam Cloud overlay advertises the sync directions in its title so the
+/// directional keys (`d` down-only, `u` up-only) are discoverable next to the
+/// plain `s` sync.
+#[test]
+fn cloud_overlay_shows_directional_hints() {
+    isolate_config();
+    let browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    let backend = TestBackend::new(80, 12);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            f.render_widget(ui::cloud::cloud(&browser), Rect::new(0, 0, 80, 12));
+        })
+        .unwrap();
+
+    let title: String = (0..80)
+        .map(|x| terminal.backend().buffer().get(x, 0).symbol.clone())
+        .collect();
+    assert!(title.contains("[s] sync"), "title keeps the both-ways sync hint");
+    assert!(title.contains("[d] down"), "title advertises download-only");
+    assert!(title.contains("[u] up"), "title advertises upload-only");
 }
 
 /// The cover panel and the detail panel must occupy separate, ordered rows so
@@ -224,4 +312,300 @@ fn cover_and_detail_do_not_overlap() {
         detail_row as i32 - cover_row as i32 >= 8,
         "Cover and Detail occupy clearly separate bands"
     );
+}
+
+fn proton(name: &str, label: &str, installed: bool) -> ProtonJson {
+    ProtonJson {
+        name: name.to_string(),
+        label: label.to_string(),
+        size: 0,
+        installed,
+        is_default: false,
+    }
+}
+
+/// Render the whole proton overlay into a wide buffer and return every cell as
+/// one string, so we can assert on the title hints regardless of row.
+fn render_proton(browser: &Browser) -> String {
+    let backend = TestBackend::new(90, 16);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| f.render_widget(ui::proton::proton(browser), f.size()))
+        .unwrap();
+    let buf = terminal.backend().buffer();
+    (0..16)
+        .map(|y| (0..90).map(|x| buf.get(x, y).symbol.clone()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Only an installed custom (GE) runtime is uninstallable; the overlay surfaces
+/// the [u] uninstall hint exactly then, and always offers [i] install.
+#[test]
+fn proton_overlay_offers_install_and_guards_uninstall() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.protons = vec![
+        proton("Proton 9.0", "Valve", true),         // installed but not removable
+        proton("GE-Proton11-1", "Proton-GE", false), // available, not installed
+        proton("GE-Proton10-34", "Proton-GE", true), // installed custom -> removable
+    ];
+
+    // Highlight the Valve runtime: install is always offered, uninstall is not.
+    browser.proton_index = 0;
+    assert!(!browser.selected_proton_uninstallable());
+    let valve = render_proton(&browser);
+    assert!(valve.contains("[i] install"), "install hint always present");
+    assert!(
+        !valve.contains("[u] uninstall"),
+        "Valve runtime must not offer uninstall"
+    );
+
+    // Highlight the installed GE runtime: uninstall is offered.
+    browser.proton_index = 2;
+    assert!(browser.selected_proton_uninstallable());
+    assert!(
+        render_proton(&browser).contains("[u] uninstall"),
+        "installed custom runtime offers uninstall"
+    );
+
+    // A not-installed runtime is never uninstallable.
+    browser.proton_index = 1;
+    assert!(!browser.selected_proton_uninstallable());
+}
+
+/// An in-flight install streams a status line into the overlay title.
+#[test]
+fn proton_overlay_shows_install_status() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.protons = vec![proton("GE-Proton11-1", "Proton-GE", false)];
+    *browser.proton_status.lock().unwrap() =
+        Some(aurelia_tui::interface::game_status::GameStatus::msg(
+            &None,
+            "downloading 42.0%",
+        ));
+    assert!(
+        render_proton(&browser).contains("downloading 42.0%"),
+        "streamed install status appears in the overlay"
+    );
+}
+
+fn workshop_item(id: u64, title: &str, subscribed: bool) -> WorkshopItemJson {
+    WorkshopItemJson {
+        id: Some(id),
+        title: title.to_string(),
+        subscribed,
+        ..Default::default()
+    }
+}
+
+/// Leaving browse mode and closing the overlay reset the browse state. (We set
+/// the flags directly rather than via `open_workshop`/`workshop_enter_browse`,
+/// which would shell out to the CLI.)
+#[test]
+fn workshop_browse_mode_toggles() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.show_workshop = true;
+    browser.workshop_browse = true;
+    browser.workshop_query = "x".to_string();
+
+    browser.workshop_exit_browse();
+    assert!(!browser.workshop_browse, "back to the subscribed list");
+
+    browser.close_workshop();
+    assert!(!browser.show_workshop, "overlay closed");
+    assert!(!browser.workshop_browse, "browse state reset on close");
+    assert!(browser.workshop_query.is_empty(), "query cleared on close");
+}
+
+/// Highlight navigation over the browse results is clamped at both ends.
+#[test]
+fn workshop_result_navigation_clamps() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.show_workshop = true;
+    browser.workshop_browse = true;
+    browser.workshop_results = vec![
+        workshop_item(10, "Mod A", false),
+        workshop_item(20, "Mod B", true),
+    ];
+    browser.workshop_index = 0;
+
+    browser.workshop_previous();
+    assert_eq!(browser.workshop_index, 0, "cannot go above the first row");
+
+    browser.workshop_next();
+    assert_eq!(browser.workshop_index, 1, "moved to the second row");
+    browser.workshop_next();
+    assert_eq!(browser.workshop_index, 1, "cannot go past the last row");
+
+    let sel = browser.selected_workshop_result().expect("a row is selected");
+    assert_eq!(sel.id, Some(20));
+}
+
+/// The browse pane renders the query, a result count, and the rows with their
+/// subscribed tags and the highlight marker.
+#[test]
+fn workshop_browse_pane_renders() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.show_workshop = true;
+    browser.workshop_browse = true;
+    browser.workshop_query = "aim".to_string();
+    browser.workshop_results = vec![
+        workshop_item(10, "AimTrainer", false),
+        workshop_item(20, "BotMap", true),
+    ];
+    browser.workshop_index = 1;
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            f.render_widget(ui::workshop::workshop(&browser), Rect::new(0, 0, 80, 24));
+        })
+        .unwrap();
+
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol.clone())
+        .collect();
+
+    assert!(text.contains("aim"), "query text is shown");
+    assert!(text.contains("AimTrainer"), "first result title shown");
+    assert!(text.contains("BotMap"), "second result title shown");
+    assert!(text.contains("subscribed"), "subscribed tag shown");
+    assert!(text.contains("browse"), "browse-mode title shown");
+}
+
+/// `workshop list` rows omit `subscribed` (the CLI only ever returns subscribed
+/// items), so the struct default must be `true` — the list-path invariant that
+/// `workshop_browse`'s explicit "force false" override depends on. Browse rows
+/// (which never carry the field) are forced to `false` inside the parse fn, so
+/// here we only pin the struct's own default behaviour both ways.
+#[test]
+fn workshop_item_subscribed_default() {
+    // Absent field -> defaults to subscribed (the `workshop list` contract).
+    let listed: WorkshopItemJson =
+        serde_json::from_str(r#"{ "id": 3733868922, "title": "Mod" }"#).unwrap();
+    assert!(
+        listed.subscribed,
+        "an item with no `subscribed` field defaults to subscribed (list path)"
+    );
+
+    // An explicit `false` (or the browse-path override) is honoured verbatim.
+    let unlisted: WorkshopItemJson =
+        serde_json::from_str(r#"{ "id": 42, "title": "X", "subscribed": false }"#).unwrap();
+    assert!(
+        !unlisted.subscribed,
+        "an explicit false is preserved (browse rows are forced false)"
+    );
+}
+
+/// Opening the comments sub-pane and exiting browse both reset its state. We set
+/// the flags directly rather than via `workshop_open_comments` (which would
+/// shell out to the CLI on a worker), to keep the test offline.
+#[test]
+fn workshop_comments_state_resets() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.show_workshop = true;
+    browser.workshop_browse = true;
+    browser.workshop_comments_open = true;
+    browser.workshop_comments = vec![WorkshopCommentJson {
+        author: "Ada".to_string(),
+        message: "great mod".to_string(),
+        ..Default::default()
+    }];
+    browser.workshop_comments_scroll = 0;
+
+    // Scroll is clamped to the single row (cannot advance past the last).
+    browser.workshop_comments_scroll_down();
+    assert_eq!(
+        browser.workshop_comments_scroll, 0,
+        "scroll clamps on a single comment"
+    );
+
+    browser.close_workshop_comments();
+    assert!(
+        !browser.workshop_comments_open,
+        "sub-pane closed and reset"
+    );
+    assert!(
+        browser.workshop_comments.is_empty(),
+        "comments dropped on close"
+    );
+
+    // Exiting browse also tears the sub-pane down.
+    browser.workshop_comments_open = true;
+    browser.workshop_exit_browse();
+    assert!(
+        !browser.workshop_comments_open,
+        "leaving browse closes the comments sub-pane"
+    );
+}
+
+/// The comments sub-pane renders the item id in the title, a comment count, and
+/// each comment's author header and body.
+#[test]
+fn workshop_comments_pane_renders() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.show_workshop = true;
+    browser.workshop_browse = true;
+    browser.workshop_comments_open = true;
+    browser.workshop_comments = vec![
+        WorkshopCommentJson {
+            author: "Ada".to_string(),
+            message: "great mod".to_string(),
+            ..Default::default()
+        },
+        WorkshopCommentJson {
+            author: "Grace".to_string(),
+            message: "crashes on load".to_string(),
+            ..Default::default()
+        },
+    ];
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            f.render_widget(ui::workshop::workshop(&browser), Rect::new(0, 0, 80, 24));
+        })
+        .unwrap();
+
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol.clone())
+        .collect();
+
+    assert!(text.contains("Comments"), "comments-pane title shown");
+    assert!(text.contains("Ada"), "first author shown");
+    assert!(text.contains("great mod"), "first comment body shown");
+    assert!(text.contains("Grace"), "second author shown");
+    assert!(text.contains("2 comment"), "comment count shown");
+}
+
+/// `workshop comments` rows parse leniently: aliases for the author/body keys
+/// are accepted and a missing author falls back to a placeholder.
+#[test]
+fn workshop_comment_parses_aliases() {
+    let c: WorkshopCommentJson =
+        serde_json::from_str(r#"{ "name": "Ada", "text": "hi", "time": 42 }"#).unwrap();
+    assert_eq!(c.author, "Ada");
+    assert_eq!(c.message, "hi");
+    assert_eq!(c.timestamp, 42);
+
+    let anon: WorkshopCommentJson = serde_json::from_str(r#"{ "body": "no name" }"#).unwrap();
+    assert_eq!(anon.display_author(), "(anonymous)");
+    assert_eq!(anon.message, "no name");
 }

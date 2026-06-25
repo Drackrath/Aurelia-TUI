@@ -7,87 +7,143 @@ use tui::widgets::Paragraph;
 
 use crate::theme;
 
-/// A bold accent group header.
-fn header(title: &str) -> Spans<'static> {
-    Spans::from(Span::styled(
-        title.to_string(),
-        Style::default()
-            .fg(theme::ACCENT)
-            .add_modifier(Modifier::BOLD),
-    ))
+/// One entry in the help list: either a group header or a key binding.
+enum Entry {
+    Header(&'static str),
+    Binding(&'static str, &'static str),
+    Blank,
 }
 
-/// A "key — description" binding line.
-fn binding(keys: &str, desc: &str) -> Spans<'static> {
-    Spans::from(vec![
-        Span::styled(format!("  {:<14}", keys), theme::key()),
-        Span::styled(desc.to_string(), Style::default().fg(theme::TEXT)),
-    ])
+/// Width of a single column (the half the overlay devotes to one entry).
+const COL_WIDTH: usize = 44;
+/// Width of the key field within a binding column.
+const KEY_WIDTH: usize = 16;
+
+/// Render a single entry into the spans for one half of a row.
+fn entry_spans(entry: &Entry) -> Vec<Span<'static>> {
+    match entry {
+        Entry::Header(title) => vec![Span::styled(
+            format!("{:<width$}", title, width = COL_WIDTH),
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )],
+        Entry::Binding(keys, desc) => {
+            let keys_field = format!("  {:<14}", keys);
+            // Clamp the description to whatever space remains in the column so
+            // the two columns stay aligned regardless of entry length.
+            let desc_width = COL_WIDTH.saturating_sub(KEY_WIDTH);
+            let desc: String = desc.chars().take(desc_width).collect();
+            vec![
+                Span::styled(keys_field, theme::key()),
+                Span::styled(
+                    format!("{:<width$}", desc, width = desc_width),
+                    Style::default().fg(theme::TEXT),
+                ),
+            ]
+        }
+        Entry::Blank => vec![Span::raw(" ".repeat(COL_WIDTH))],
+    }
 }
 
-/// Build the help overlay content.
-pub fn help() -> Paragraph<'static> {
-    let mut lines: Vec<Spans<'static>> = Vec::new();
+/// The full list of help entries, shared between rendering and the row count.
+fn entries() -> Vec<Entry> {
+    vec![
+        Entry::Header("Navigation"),
+        Entry::Binding("j / \u{2193}", "move down"),
+        Entry::Binding("k / \u{2191}", "move up"),
+        Entry::Binding("g", "jump to top"),
+        Entry::Binding("G", "jump to bottom"),
+        Entry::Binding("PageUp/Down", "page up / down"),
+        Entry::Binding("mouse wheel", "scroll the list"),
+        Entry::Binding("Shift+drag", "select text"),
+        Entry::Blank,
+        Entry::Header("Filtering"),
+        Entry::Binding("Tab / S-Tab", "cycle tabs (+Friends)"),
+        Entry::Binding("1 \u{2013} 5", "jump to a tab (5=Friends)"),
+        Entry::Binding("/", "focus text filter"),
+        Entry::Binding("Esc", "clear filter"),
+        Entry::Binding("s", "cycle sort"),
+        Entry::Blank,
+        Entry::Header("Actions"),
+        Entry::Binding("Enter", "launch game"),
+        Entry::Binding("a", "achievements"),
+        Entry::Binding("I", "inventory"),
+        Entry::Binding("m", "market listings"),
+        Entry::Binding("S", "search community market"),
+        Entry::Binding("  Enter / Tab", "  run / price highlighted"),
+        Entry::Binding("i", "expand / collapse desc"),
+        Entry::Binding("d", "install (pick library)"),
+        Entry::Binding("Space", "pause / resume install"),
+        Entry::Binding("c", "cancel install"),
+        Entry::Binding("x", "uninstall game"),
+        Entry::Binding("M", "move install"),
+        Entry::Binding("K", "relink install"),
+        Entry::Binding("N", "import install"),
+        Entry::Binding("v", "verify files"),
+        Entry::Binding("U", "update game"),
+        Entry::Binding("D", "manage DLC"),
+        Entry::Binding("b", "beta branches"),
+        Entry::Binding("o", "depots"),
+        Entry::Binding("P", "proton (d/i/u)"),
+        Entry::Binding("R", "running games"),
+        Entry::Binding("W", "workshop items"),
+        Entry::Binding("W then b", "browse workshop"),
+        Entry::Binding("f", "toggle favourite"),
+        Entry::Binding("H", "hide game"),
+        Entry::Binding("C", "cloud saves (s/d/u)"),
+        Entry::Binding("L", "launch options"),
+        Entry::Binding("r", "refresh library"),
+        Entry::Binding("A", "account"),
+        Entry::Binding("p", "settings"),
+        Entry::Binding("F / 5", "open Friends tab"),
+        Entry::Binding("c / Enter", "chat (Friends tab)"),
+        Entry::Binding("t", "chat in new window"),
+        Entry::Binding("a", "add friend (Friends)"),
+        Entry::Binding("x", "remove friend (Friends)"),
+        Entry::Binding("A then o", "log out"),
+        Entry::Binding("w", "wallet balance"),
+        Entry::Binding("l", "sign in again"),
+        Entry::Blank,
+        Entry::Header("General"),
+        Entry::Binding("?", "toggle this help"),
+        Entry::Binding("q", "quit"),
+    ]
+}
 
-    lines.push(header("Navigation"));
-    lines.push(binding("j / ↓", "move down"));
-    lines.push(binding("k / ↑", "move up"));
-    lines.push(binding("g", "jump to top"));
-    lines.push(binding("G", "jump to bottom"));
-    lines.push(binding("PageUp/PageDown", "page up / down"));
-    lines.push(binding("mouse wheel", "scroll the list"));
-    lines.push(Spans::from(""));
+/// The number of rendered rows (each row pairs two entries side by side).
+pub fn row_count() -> u16 {
+    entries().len().div_ceil(2) as u16
+}
 
-    lines.push(header("Filtering"));
-    lines.push(binding("Tab / Shift-Tab", "cycle view"));
-    lines.push(binding("1 – 4", "jump to a view"));
-    lines.push(binding("/", "focus text filter"));
-    lines.push(binding("Esc", "clear filter"));
-    lines.push(binding("s", "cycle sort"));
-    lines.push(Spans::from(""));
+/// Build the help overlay content as a two-column paragraph.
+///
+/// `scroll` is the vertical row offset applied so the overlay can be scrolled
+/// when the bindings overflow the popup.
+pub fn help(scroll: u16) -> Paragraph<'static> {
+    let entries = entries();
 
-    lines.push(header("Actions"));
-    lines.push(binding("Enter", "launch game"));
-    lines.push(binding("a", "achievements"));
-    lines.push(binding("I", "inventory"));
-    lines.push(binding("m", "market listings"));
-    lines.push(binding("i", "expand / collapse description"));
-    lines.push(binding("d", "install / download"));
-    lines.push(binding("x", "uninstall game"));
-    lines.push(binding("M", "move install"));
-    lines.push(binding("K", "relink install"));
-    lines.push(binding("N", "import install"));
-    lines.push(binding("v", "verify files"));
-    lines.push(binding("U", "update game"));
-    lines.push(binding("D", "manage DLC"));
-    lines.push(binding("b", "beta branches"));
-    lines.push(binding("o", "depots"));
-    lines.push(binding("P", "proton runtimes"));
-    lines.push(binding("R", "running games"));
-    lines.push(binding("W", "workshop items"));
-    lines.push(binding("f", "toggle favourite"));
-    lines.push(binding("H", "hide game"));
-    lines.push(binding("C", "cloud saves"));
-    lines.push(binding("L", "launch options"));
-    lines.push(binding("r", "refresh library"));
-    lines.push(binding("A", "account"));
-    lines.push(binding("p", "settings"));
-    lines.push(binding("F", "focus friends panel"));
-    lines.push(binding("c / Enter", "chat (friends focused)"));
-    lines.push(binding("t", "chat in new window (friends focused)"));
-    lines.push(binding("A then o", "log out"));
-    lines.push(binding("w", "wallet balance"));
-    lines.push(binding("l", "sign in again"));
-    lines.push(Spans::from(""));
+    // Split the entries into two roughly equal halves shown side by side.
+    let half = entries.len().div_ceil(2);
+    let (left, right) = entries.split_at(half);
 
-    lines.push(header("General"));
-    lines.push(binding("?", "toggle this help"));
-    lines.push(binding("q", "quit"));
+    let mut lines: Vec<Spans<'static>> = Vec::with_capacity(half);
+    for row in 0..half {
+        let mut spans = entry_spans(&left[row]);
+        spans.push(Span::raw("  "));
+        if let Some(entry) = right.get(row) {
+            spans.extend(entry_spans(entry));
+        }
+        lines.push(Spans::from(spans));
+    }
 
     let text = Text::from(lines);
 
     Paragraph::new(text)
-        .block(theme::panel("Help — press any key to close".to_string()))
+        .block(theme::panel(
+            "Help \u{2014} j/k scroll \u{00b7} Esc/q/? close".to_string(),
+        ))
         .style(theme::base())
         .alignment(Alignment::Left)
+        .scroll((scroll, 0))
 }

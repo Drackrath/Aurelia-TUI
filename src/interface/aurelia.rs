@@ -76,6 +76,14 @@ pub struct AccountJson {
     pub steam_id: u64,
     #[serde(default)]
     pub account_name: String,
+    /// Steam persona / display name (e.g. "Drackrath"). `aurelia account --json`
+    /// does NOT expose this; it is resolved separately via
+    /// `friends search <steam_id> --json` (whose `persona_name` key it shares)
+    /// and injected by [`account`]. `#[serde(default)]` plus the `display_name`
+    /// alias mean a future account schema that *does* emit a persona is also
+    /// picked up. Stays `None` when the persona can't be resolved.
+    #[serde(default, alias = "display_name")]
+    pub persona_name: Option<String>,
     #[serde(default)]
     pub country: String,
     #[serde(default)]
@@ -86,6 +94,17 @@ pub struct AccountJson {
     pub authed_machines: u32,
     #[serde(default)]
     pub vac_bans: u32,
+}
+
+impl AccountJson {
+    /// User-facing player name: the Steam persona / display name, falling back
+    /// to the account (login) name when no persona is known.
+    pub fn display_name(&self) -> String {
+        self.persona_name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| self.account_name.clone())
+    }
 }
 
 /// The launcher configuration, from `aurelia config show --json` (the
@@ -292,6 +311,32 @@ impl FriendJson {
     }
 }
 
+/// The resolved account from `aurelia friends search <query> --json`. Key names
+/// match the CLI's output (`steam_id`, `persona_name`, `profile_url`). Every
+/// field is `#[serde(default)]` so a missing/renamed key never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FriendSearchJson {
+    /// Resolved SteamID64. The CLI emits it as a number; accept a string too.
+    #[serde(default, deserialize_with = "de_steam_id")]
+    pub steam_id: u64,
+    /// Display (persona) name, if known.
+    #[serde(default)]
+    pub persona_name: Option<String>,
+    /// The account's community profile URL, if known.
+    #[serde(default)]
+    pub profile_url: Option<String>,
+}
+
+impl FriendSearchJson {
+    /// Display name, falling back to the SteamID when no persona is known.
+    pub fn display_name(&self) -> String {
+        self.persona_name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| self.steam_id.to_string())
+    }
+}
+
 /// One chat message from `aurelia chat history <id> --json` (an item of the
 /// serialized history array). Key names match the CLI's `ChatMessage` struct
 /// (`sender`, `from_self`, `message`, `timestamp`). Everything is
@@ -389,6 +434,36 @@ impl WorkshopItemJson {
             format!("Item {}", id)
         } else {
             "(untitled)".to_string()
+        }
+    }
+}
+
+/// One comment on a Workshop item, from `aurelia workshop comments <id> --json`.
+/// The CLI emits a bare array of comments; each carries an author display name,
+/// the body text, and a Unix timestamp. Everything is `#[serde(default)]` so a
+/// missing/extra field never breaks parsing, with a couple of aliases covering
+/// alternate key spellings.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WorkshopCommentJson {
+    /// The commenter's display name (the CLI key is `author`; `name`/`persona`
+    /// are accepted as fallbacks).
+    #[serde(default, alias = "name", alias = "persona", alias = "author_name")]
+    pub author: String,
+    /// The comment body (the CLI key is `message`; `text`/`body` accepted too).
+    #[serde(default, alias = "text", alias = "body", alias = "comment")]
+    pub message: String,
+    /// Unix timestamp (seconds) the comment was posted.
+    #[serde(default, alias = "time", alias = "timestamp_created")]
+    pub timestamp: i64,
+}
+
+impl WorkshopCommentJson {
+    /// Display author, falling back to a placeholder when none is present.
+    pub fn display_author(&self) -> String {
+        if self.author.is_empty() {
+            "(anonymous)".to_string()
+        } else {
+            self.author.clone()
         }
     }
 }
@@ -636,6 +711,259 @@ impl MarketListingJson {
     }
 }
 
+/// One result row from `aurelia market search <query> --json` (an item of the
+/// response's `results` array). The Community Market search needs no login. Key
+/// names match the CLI's `--json` output; everything is `#[serde(default)]` so a
+/// missing/partial/`null` field never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MarketSearchResultJson {
+    /// The app the item belongs to (used for the follow-up price lookup).
+    #[serde(default)]
+    pub app_id: u32,
+    /// The app's name (e.g. "Team Fortress 2").
+    #[serde(default)]
+    pub app_name: String,
+    /// The exact market hash name (what a price lookup needs).
+    #[serde(default)]
+    pub market_hash_name: String,
+    /// The display name (falls back to `market_hash_name`).
+    #[serde(default)]
+    pub name: String,
+    /// How many sell listings are open for the item.
+    #[serde(default)]
+    pub sell_listings: u64,
+    /// The lowest sell price in the currency's minor units (cents).
+    #[serde(default)]
+    pub sell_price: u64,
+    /// The lowest sell price pre-formatted by the CLI (e.g. "$2.34").
+    #[serde(default)]
+    pub sell_price_text: String,
+}
+
+impl MarketSearchResultJson {
+    /// Best display name: the visible `name`, falling back to the market hash
+    /// name, then a placeholder.
+    pub fn display_name(&self) -> String {
+        if !self.name.is_empty() {
+            self.name.clone()
+        } else if !self.market_hash_name.is_empty() {
+            self.market_hash_name.clone()
+        } else {
+            "(unnamed item)".to_string()
+        }
+    }
+
+    /// The price text, preferring the CLI's pre-formatted string and falling
+    /// back to a major-unit decimal of `sell_price` (cents). Empty when neither
+    /// is known.
+    pub fn price_text(&self) -> String {
+        if !self.sell_price_text.is_empty() {
+            self.sell_price_text.clone()
+        } else if self.sell_price > 0 {
+            format!("{}.{:02}", self.sell_price / 100, self.sell_price % 100)
+        } else {
+            String::new()
+        }
+    }
+}
+
+/// A price lookup result from `aurelia market price <app_id> <name> --json`. The
+/// Community Market price needs no login. Every field is `#[serde(default)]` so a
+/// missing/partial/`null` payload still parses (an empty result is rendered as
+/// "no data").
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MarketPriceJson {
+    /// The market hash name the price is for (echoed back by the CLI).
+    #[serde(default)]
+    pub market_hash_name: String,
+    /// Lowest current sell price (pre-formatted, e.g. "$2.34").
+    #[serde(default)]
+    pub lowest_price: Option<String>,
+    /// Median recent sale price (pre-formatted).
+    #[serde(default)]
+    pub median_price: Option<String>,
+    /// 24-hour sales volume (the CLI emits a formatted string, e.g. "69,730").
+    #[serde(default)]
+    pub volume: Option<String>,
+}
+
+impl MarketPriceJson {
+    /// A one-line summary of the known price fields, suitable for a status line.
+    /// Returns `None` when the payload carried no usable data.
+    pub fn summary(&self) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(p) = self.lowest_price.as_deref().filter(|s| !s.is_empty()) {
+            parts.push(format!("low {}", p));
+        }
+        if let Some(p) = self.median_price.as_deref().filter(|s| !s.is_empty()) {
+            parts.push(format!("median {}", p));
+        }
+        if let Some(v) = self.volume.as_deref().filter(|s| !s.is_empty()) {
+            parts.push(format!("vol {}", v));
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("   "))
+        }
+    }
+}
+
+/// The top-level object from `aurelia market search <query> --json`: the matched
+/// results array. Only the `results` array is surfaced.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct MarketSearchResponse {
+    #[serde(default)]
+    results: Vec<MarketSearchResultJson>,
+}
+
+/// Search the Community Market (`aurelia market search <query> --json`). No login
+/// required. The CLI wraps the matches under a `results` key; accept either that
+/// or a bare array. An empty/`null` result yields an empty `Vec`.
+pub fn market_search(query: &str) -> Result<Vec<MarketSearchResultJson>, STError> {
+    let value = run_json(&["market", "search", query])?;
+    // Accept either the wrapping object (`{ "results": [..] }`) or a bare array.
+    if value.get("results").is_some() {
+        let parsed: MarketSearchResponse = serde_json::from_value(value)?;
+        Ok(parsed.results)
+    } else if value.is_null() {
+        Ok(Vec::new())
+    } else {
+        Ok(serde_json::from_value(value)?)
+    }
+}
+
+/// Look up a single item's Community Market price
+/// (`aurelia market price <app_id> <name> --json`). No login required; `name` is
+/// the exact (case-sensitive) market hash name.
+pub fn market_price(app_id: u32, name: &str) -> Result<MarketPriceJson, STError> {
+    let value = run_json(&["market", "price", &app_id.to_string(), name])?;
+    // A `null` payload (e.g. no price history for the item) is "no data", not a
+    // parse error: deserializing `null` into the struct would fail, so treat it
+    // as an empty result (rendered as "no price data").
+    if value.is_null() {
+        return Ok(MarketPriceJson::default());
+    }
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Run `aurelia <args> --json` standalone (`AURELIA_NO_DAEMON=1`), parsing the
+/// stdout JSON. This mirrors [`run_json`] but forces a no-daemon invocation, as
+/// used by the threaded market workers so they never share the UI process's
+/// daemon connection. stderr (diagnostics) is discarded.
+fn run_json_standalone(args: &[&str]) -> Result<serde_json::Value, STError> {
+    let output = process::Command::new(bin())
+        .args(args)
+        .arg("--json")
+        .env("AURELIA_NO_DAEMON", "1")
+        .stdin(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .output()
+        .map_err(STError::Process)?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Err(STError::Problem(format!(
+            "aurelia produced no output for `{}`",
+            args.join(" ")
+        )));
+    }
+
+    let value: serde_json::Value = serde_json::from_str(trimmed)?;
+    if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+        return Err(STError::Problem(err.to_string()));
+    }
+    Ok(value)
+}
+
+/// Run a Community Market search off the UI thread, publishing the outcome into
+/// `cell` when it completes. The CLI is invoked standalone (`AURELIA_NO_DAEMON`),
+/// matching the other threaded calls. Intended to be spawned on its own thread so
+/// the UI never blocks on the search subprocess.
+///
+/// The published payload is tagged with `search_gen`, the search generation
+/// captured at spawn time, so the UI can drop an out-of-order result whose query
+/// has since been superseded (see `Browser::poll_market`).
+pub fn market_search_async(
+    query: String,
+    search_gen: u64,
+    cell: Arc<Mutex<(u64, MarketSearchState)>>,
+) {
+    let result = run_json_standalone(&["market", "search", &query]).and_then(|value| {
+        if value.get("results").is_some() {
+            let parsed: MarketSearchResponse = serde_json::from_value(value)?;
+            Ok(parsed.results)
+        } else if value.is_null() {
+            Ok(Vec::new())
+        } else {
+            Ok(serde_json::from_value(value)?)
+        }
+    });
+    if let Ok(mut slot) = cell.lock() {
+        *slot = (
+            search_gen,
+            match result {
+                Ok(results) => MarketSearchState::Ready(results),
+                Err(err) => MarketSearchState::Failed(err.to_string()),
+            },
+        );
+    }
+}
+
+/// Run a Community Market price lookup off the UI thread, publishing the outcome
+/// into `cell` when it completes. Invoked standalone (`AURELIA_NO_DAEMON`) like
+/// the other threaded calls.
+pub fn market_price_async(app_id: u32, name: String, cell: Arc<Mutex<MarketPriceState>>) {
+    let result = run_json_standalone(&["market", "price", &app_id.to_string(), &name]).and_then(
+        |value| {
+            // A `null` payload is "no data", not a parse error (deserializing
+            // `null` into the struct would fail); treat it as an empty result.
+            if value.is_null() {
+                Ok(MarketPriceJson::default())
+            } else {
+                Ok(serde_json::from_value(value)?)
+            }
+        },
+    );
+    if let Ok(mut slot) = cell.lock() {
+        *slot = match result {
+            Ok(price) => MarketPriceState::Ready(price),
+            Err(err) => MarketPriceState::Failed(err.to_string()),
+        };
+    }
+}
+
+/// The state of an in-flight (or completed) Community Market search, shared
+/// between the UI thread and the worker thread via an `Arc<Mutex<..>>` cell.
+#[derive(Debug, Clone, Default)]
+pub enum MarketSearchState {
+    /// No search has been run yet.
+    #[default]
+    Idle,
+    /// A search is running; the worker thread has not published a result.
+    Loading,
+    /// The search completed with these results (possibly empty).
+    Ready(Vec<MarketSearchResultJson>),
+    /// The search failed; the `String` is the error message.
+    Failed(String),
+}
+
+/// The state of an in-flight (or completed) Community Market price lookup, shared
+/// between the UI thread and the worker thread via an `Arc<Mutex<..>>` cell.
+#[derive(Debug, Clone, Default)]
+pub enum MarketPriceState {
+    /// No lookup has been run yet.
+    #[default]
+    Idle,
+    /// A lookup is running; the worker thread has not published a result.
+    Loading,
+    /// The lookup completed with this price.
+    Ready(MarketPriceJson),
+    /// The lookup failed; the `String` is the error message.
+    Failed(String),
+}
+
 /// One active sell listing, from the `listings` array of `aurelia market
 /// listings --json`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -689,6 +1017,15 @@ pub struct ProtonJson {
     /// Whether this runtime is the configured global default (computed by `proton_list`).
     #[serde(default)]
     pub is_default: bool,
+}
+
+impl ProtonJson {
+    /// Whether this runtime can be uninstalled: only an installed *custom* (GE)
+    /// runtime qualifies. Valve runtimes are managed by Steam and cannot be
+    /// removed here; nothing that isn't on disk can be uninstalled.
+    pub fn uninstallable(&self) -> bool {
+        self.installed && !self.label.eq_ignore_ascii_case("Valve")
+    }
 }
 
 /// An entry of the `installed` array from `aurelia proton list --json`
@@ -781,6 +1118,28 @@ struct ProgressJson {
     state: Option<String>,
     #[serde(default)]
     percent: Option<f64>,
+    /// Estimated seconds remaining, or `None` when not yet estimable (the CLI
+    /// emits `eta_seconds: null` early in a transfer).
+    #[serde(default)]
+    eta_seconds: Option<u64>,
+}
+
+/// Format a download ETA into a compact " · ETA 3m 12s" suffix to sit next to
+/// the State value. Empty when the time is not yet estimable, so a status line
+/// without an estimate is unchanged.
+fn eta_suffix(eta_seconds: Option<u64>) -> String {
+    let Some(secs) = eta_seconds else {
+        return String::new();
+    };
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    let pretty = if h > 0 {
+        format!("{h}h {m:02}m")
+    } else if m > 0 {
+        format!("{m}m {s:02}s")
+    } else {
+        format!("{s}s")
+    };
+    format!(" · ETA {pretty}")
 }
 
 /// Run `aurelia <args> --json`, returning the parsed stdout JSON value.
@@ -821,7 +1180,18 @@ pub fn health() -> Result<HealthJson, STError> {
 /// Fetch the logged-in Steam account (`aurelia account --json`).
 pub fn account() -> Result<AccountJson, STError> {
     let value = run_json(&["account"])?;
-    Ok(serde_json::from_value(value)?)
+    let mut account: AccountJson = serde_json::from_value(value)?;
+    // `aurelia account --json` reports the login (account) name but no persona /
+    // display name. Resolve the persona for the player's own SteamID via
+    // `friends search`, which shares the `persona_name` key. Best-effort: a
+    // failure (e.g. offline) just leaves `persona_name` `None` so the account
+    // name is shown instead.
+    if account.persona_name.is_none() && account.steam_id != 0 {
+        if let Ok(found) = friends_search(&account.steam_id.to_string()) {
+            account.persona_name = found.persona_name.filter(|n| !n.is_empty());
+        }
+    }
+    Ok(account)
 }
 
 /// Fetch the launcher configuration (`aurelia config show --json`).
@@ -856,6 +1226,32 @@ pub fn fetch_library() -> Result<Vec<LibraryGameJson>, STError> {
     Ok(serde_json::from_value(value)?)
 }
 
+/// One Steam library folder (a root containing `steamapps`), from
+/// `aurelia libraries --json`, with the free space on its drive.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LibraryJson {
+    pub path: String,
+    /// Free bytes on the drive, if the CLI could determine it.
+    #[serde(default)]
+    pub free_bytes: Option<u64>,
+}
+
+/// List the Steam library folders games can be installed into, one per
+/// drive/location, with each drive's free space (`aurelia libraries --json`).
+pub fn libraries() -> Result<Vec<LibraryJson>, STError> {
+    let value = run_json(&["libraries"])?;
+    let list = value.get("libraries").cloned().unwrap_or(value);
+    Ok(serde_json::from_value(list)?)
+}
+
+/// Estimate the on-disk install size of a game, in bytes
+/// (`aurelia install <id> --dry-run --json` → `disk_size`). Returns 0 if the
+/// estimate is unavailable.
+pub fn install_estimate(id: i32) -> Result<u64, STError> {
+    let value = run_json(&["install", &id.to_string(), "--dry-run"])?;
+    Ok(value.get("disk_size").and_then(|v| v.as_u64()).unwrap_or(0))
+}
+
 /// Fetch store metadata for a single app (`aurelia info <id> --json`).
 pub fn fetch_info(id: i32) -> Result<InfoJson, STError> {
     let value = run_json(&["info", &id.to_string()])?;
@@ -875,10 +1271,31 @@ pub fn cloud_list(app_id: i32) -> Result<Vec<CloudFileJson>, STError> {
     Ok(serde_json::from_value(files)?)
 }
 
-/// Sync a game's Steam Cloud saves (`aurelia cloud sync <id> --json`). This is a
-/// blocking call and can be slow; errors surface via `run_json`.
-pub fn cloud_sync(app_id: i32) -> Result<(), STError> {
-    run_json(&["cloud", "sync", &app_id.to_string()])?;
+/// Which way a Steam Cloud sync should move files. `Both` mirrors the CLI's
+/// default (download then upload); the directional variants pass `--down` /
+/// `--up` to restrict the transfer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloudDirection {
+    /// Download then upload (the CLI default, `cloud sync`).
+    Both,
+    /// Download only (`cloud sync --down`).
+    Down,
+    /// Upload only (`cloud sync --up`).
+    Up,
+}
+
+/// Sync a game's Steam Cloud saves (`aurelia cloud sync <id> --json`), optionally
+/// restricted to one direction via `--down` / `--up`. This is a blocking call and
+/// can be slow; errors surface via `run_json`.
+pub fn cloud_sync(app_id: i32, direction: CloudDirection) -> Result<(), STError> {
+    let id = app_id.to_string();
+    let mut args = vec!["cloud", "sync", &id];
+    match direction {
+        CloudDirection::Both => {}
+        CloudDirection::Down => args.push("--down"),
+        CloudDirection::Up => args.push("--up"),
+    }
+    run_json(&args)?;
     Ok(())
 }
 
@@ -911,6 +1328,31 @@ pub fn friends() -> Result<Vec<FriendJson>, STError> {
     Ok(serde_json::from_value(list)?)
 }
 
+/// Resolve a friend reference (SteamID64, profile URL, or vanity name) to a
+/// concrete account via `aurelia friends search <query> --json`. Read-only: it
+/// needs no login and sends nothing. The CLI returns a single object with the
+/// resolved `steam_id`, `persona_name`, and `profile_url`.
+pub fn friends_search(query: &str) -> Result<FriendSearchJson, STError> {
+    let value = run_json(&["friends", "search", query])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Send a friend request to the account named by `query` (SteamID64, profile
+/// URL, or vanity name) via `aurelia friends add <query> --json`. The returned
+/// value is ignored; only errors are propagated.
+pub fn friends_add(query: &str) -> Result<(), STError> {
+    run_json(&["friends", "add", query])?;
+    Ok(())
+}
+
+/// Remove a friend, or cancel/decline a pending request, by SteamID64 via
+/// `aurelia friends remove <steamid> --json`. The returned value is ignored;
+/// only errors are propagated.
+pub fn friends_remove(steamid: u64) -> Result<(), STError> {
+    run_json(&["friends", "remove", &steamid.to_string()])?;
+    Ok(())
+}
+
 /// Fetch the recent chat history with a friend (`aurelia chat history <id>
 /// --count <n> --json`). The CLI serializes the message array directly, but
 /// accept an object-wrapped form (`{ "messages": [...] }`) too. An empty/null
@@ -933,11 +1375,29 @@ pub fn chat_history(steamid: u64, count: u32) -> Result<Vec<ChatMessageJson>, ST
     Ok(serde_json::from_value(list)?)
 }
 
-/// Send a direct message to a friend (`aurelia chat send <id> <message>
-/// --json`). The message is passed as a single trailing argument. The returned
-/// value is ignored; only errors are propagated.
+/// Send a direct message to a friend (`aurelia chat send --json <id> <message>`).
+///
+/// The CLI declares the message as a trailing var-arg (`<MESSAGE>...` — "all
+/// remaining words are joined with spaces"), so it greedily absorbs everything
+/// after the SteamID. `--json` must therefore come BEFORE the message: routing
+/// through `run_json` (which appends `--json` last) would let the flag be
+/// swallowed into the message text and literally sent to the friend. The
+/// returned value is ignored; only an explicit `{"error": …}` is propagated.
 pub fn chat_send(steamid: u64, message: &str) -> Result<(), STError> {
-    run_json(&["chat", "send", &steamid.to_string(), message])?;
+    let output = process::Command::new(bin())
+        .args(["chat", "send", "--json", &steamid.to_string(), message])
+        .stdin(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .output()
+        .map_err(STError::Process)?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+            return Err(STError::Problem(err.to_string()));
+        }
+    }
     Ok(())
 }
 
@@ -998,6 +1458,92 @@ pub fn workshop_list(app_id: i32) -> Result<Vec<WorkshopItemJson>, STError> {
     let list = value
         .get("items")
         .or_else(|| value.get("workshop"))
+        .cloned()
+        .unwrap_or(value);
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
+}
+
+/// Browse/search a game's Workshop to discover items to subscribe to
+/// (`aurelia workshop browse <id> [--search <text>] --json`). The CLI emits an
+/// object with an `items` array (alongside `next_cursor`/`total`, which we
+/// ignore here); tolerate a bare array or an object wrapping the list under
+/// `items`/`results`. An empty `search` browses the default (trending) feed.
+///
+/// Intended to be called from a worker thread — it shells out to the CLI, which
+/// makes a network round-trip, so it must never run on the UI/render thread.
+pub fn workshop_browse(app_id: i32, search: &str) -> Result<Vec<WorkshopItemJson>, STError> {
+    let app = app_id.to_string();
+    let mut args: Vec<&str> = vec!["workshop", "browse", &app];
+    let trimmed = search.trim();
+    if !trimmed.is_empty() {
+        args.push("--search");
+        args.push(trimmed);
+    }
+    let value = run_json(&args)?;
+    // Accept either a bare array or a wrapping object (`{ "items": [..] }`).
+    let list = value
+        .get("items")
+        .or_else(|| value.get("results"))
+        .cloned()
+        .unwrap_or(value);
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    let mut items: Vec<WorkshopItemJson> = serde_json::from_value(list)?;
+    // `workshop browse` rows never carry a `subscribed` field, so the struct's
+    // `default = "default_true"` (which is correct for `workshop list`, whose
+    // rows are all subscribed) would wrongly mark every browse row subscribed.
+    // Force it off here: browse rows are "not subscribed unless we learn
+    // otherwise" (the overlay flips the flag locally on a successful subscribe).
+    for item in items.iter_mut() {
+        item.subscribed = false;
+    }
+    Ok(items)
+}
+
+/// Subscribe to a single Workshop item (`aurelia workshop subscribe <id>
+/// --json`). Returns the backend error on failure; the success payload is
+/// ignored. Network-bound — call off the UI thread.
+pub fn workshop_subscribe(item_id: u64) -> Result<(), STError> {
+    run_json(&["workshop", "subscribe", &item_id.to_string()])?;
+    Ok(())
+}
+
+/// Unsubscribe from a single Workshop item (`aurelia workshop unsubscribe <id>
+/// --json`). Returns the backend error on failure; the success payload is
+/// ignored. Network-bound — call off the UI thread.
+pub fn workshop_unsubscribe(item_id: u64) -> Result<(), STError> {
+    run_json(&["workshop", "unsubscribe", &item_id.to_string()])?;
+    Ok(())
+}
+
+/// Rate a single Workshop item thumbs-up or thumbs-down
+/// (`aurelia workshop rate <id> <up|down> --json`). `up` is `true`, `down` is
+/// `false`. Returns the backend error on failure; the success payload is
+/// ignored. Network-bound — call off the UI thread.
+pub fn workshop_rate(item_id: u64, up: bool) -> Result<(), STError> {
+    let vote = if up { "up" } else { "down" };
+    run_json(&["workshop", "rate", &item_id.to_string(), vote])?;
+    Ok(())
+}
+
+/// Read the comments on a single Workshop item
+/// (`aurelia workshop comments <id> --count <n> --json`). The CLI emits a bare
+/// array of comments; tolerate an object wrapping the list under
+/// `comments`/`items`. Network-bound — call off the UI thread.
+pub fn workshop_comments(item_id: u64, count: u32) -> Result<Vec<WorkshopCommentJson>, STError> {
+    let id = item_id.to_string();
+    let count = count.to_string();
+    // `<ID>` is a fixed positional and `--count` is a flag, so `--json` (appended
+    // by `run_json`) lands after both without swallowing a var-arg positional.
+    let value = run_json(&["workshop", "comments", &id, "--count", &count])?;
+    // Accept either a bare array or a wrapping object (`{ "comments": [..] }`).
+    let list = value
+        .get("comments")
+        .or_else(|| value.get("items"))
         .cloned()
         .unwrap_or(value);
     if list.is_null() {
@@ -1111,6 +1657,92 @@ pub fn proton_list() -> Result<Vec<ProtonJson>, STError> {
 /// only errors are propagated.
 pub fn proton_default(version: &str) -> Result<(), STError> {
     run_json(&["proton", "default", version])?;
+    Ok(())
+}
+
+/// Download and install a Proton/Wine runtime by name
+/// (`aurelia proton install <name> --json`), streaming progress into the shared
+/// status cell. Blocks until the download/install finishes; intended to be run
+/// on a dedicated thread (mirrors [`install`]).
+pub fn proton_install(name: String, status: Arc<Mutex<Option<GameStatus>>>) {
+    set_status(&status, "processing...");
+
+    let spawned = process::Command::new(bin())
+        .args(["proton", "install", &name, "--json"])
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn();
+
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(err) => {
+            set_status(&status, &format!("Failed: {}", err));
+            log!("Failed to spawn aurelia proton install", name, err);
+            return;
+        }
+    };
+
+    // Drain stdout (the small terminal result object) on a helper thread so the
+    // child never blocks writing it while we consume the larger stderr stream.
+    let stdout = child.stdout.take();
+    let result_handle = thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(mut out) = stdout {
+            let _ = out.read_to_string(&mut buf);
+        }
+        buf
+    });
+
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<ProgressJson>(line) {
+                if event.event.as_deref() == Some("progress") {
+                    let label = match event.state.as_deref() {
+                        Some("extracting") => "extracting",
+                        Some("verifying") => "verifying",
+                        _ => "downloading",
+                    };
+                    set_status(
+                        &status,
+                        &format!(
+                            "{} {:.1}%{}",
+                            label,
+                            event.percent.unwrap_or(0.0),
+                            eta_suffix(event.eta_seconds)
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    let result = result_handle.join().unwrap_or_default();
+    let _ = child.wait();
+
+    match serde_json::from_str::<serde_json::Value>(result.trim()) {
+        Ok(value) => {
+            if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+                set_status(&status, &format!("Failed: {}", err));
+            } else {
+                set_status(&status, "Installed!");
+            }
+        }
+        // No parseable result line: fall back on the exit status we already waited on.
+        Err(_) => set_status(&status, "Installed!"),
+    }
+}
+
+/// Uninstall an installed custom (GE) Proton/Wine runtime
+/// (`aurelia proton uninstall <name> --json`). Blocks until the CLI reports the
+/// result (a fast local removal from `compatibilitytools.d`); the parsed value
+/// is ignored beyond error detection.
+pub fn proton_uninstall(name: &str) -> Result<(), STError> {
+    run_json(&["proton", "uninstall", name])?;
     Ok(())
 }
 
@@ -1306,14 +1938,100 @@ fn set_status(status: &Arc<Mutex<Option<GameStatus>>>, msg: &str) {
     }
 }
 
+/// What the user has asked of an in-flight install. The install worker reads
+/// this once the `aurelia install` process exits (the daemon honours a
+/// [`install_stop`] by aborting the download, which ends the process) and
+/// finalises the status accordingly instead of treating the abort as a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallAction {
+    /// Install is running normally; finalise on its actual result.
+    Running,
+    /// User paused it — freeze the status at "paused …" so it can be resumed.
+    Paused,
+    /// User cancelled it — clear the status (the game reverts to not-installed).
+    Stopped,
+}
+
+/// A shared, cheaply-cloned handle to an install's [`InstallAction`]. The UI
+/// flips it (pause/stop) before issuing [`install_stop`]; the worker reads it
+/// when the process ends.
+#[derive(Debug, Clone)]
+pub struct InstallControl {
+    action: Arc<Mutex<InstallAction>>,
+}
+
+impl InstallControl {
+    pub fn new() -> Self {
+        Self {
+            action: Arc::new(Mutex::new(InstallAction::Running)),
+        }
+    }
+
+    pub fn set(&self, action: InstallAction) {
+        if let Ok(mut guard) = self.action.lock() {
+            *guard = action;
+        }
+    }
+
+    pub fn get(&self) -> InstallAction {
+        self.action
+            .lock()
+            .map(|g| *g)
+            .unwrap_or(InstallAction::Running)
+    }
+}
+
+impl Default for InstallControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Ask the backend to stop a running install (`aurelia install stop <id>`).
+/// Forwards to the session daemon, which aborts the download loop; the partial
+/// download is left on disk so a later `install` resumes it. A no-op (Ok) if no
+/// such install is in flight.
+pub fn install_stop(app_id: i32) -> Result<(), STError> {
+    run_json(&["install", "stop", &app_id.to_string()])?;
+    Ok(())
+}
+
+/// Freeze the status cell at "paused" (carrying the last-seen percent, if any),
+/// preserving the install dir/size.
+fn set_status_paused(status: &Arc<Mutex<Option<GameStatus>>>) {
+    if let Ok(mut guard) = status.lock() {
+        let pct = guard
+            .as_ref()
+            .and_then(|s| s.state.split_whitespace().find(|t| t.ends_with('%')))
+            .map(|p| format!("paused {p}"))
+            .unwrap_or_else(|| "paused".to_string());
+        let next = GameStatus::msg(&guard, &pct);
+        *guard = Some(next);
+    }
+}
+
 /// Install a game (`aurelia install <id> --json`), streaming progress into the
 /// shared status cell. Blocks until the install finishes; intended to be run on
-/// a dedicated thread.
-pub fn install(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
+/// a dedicated thread. `control` lets the UI pause (resumable) or stop (cancel)
+/// the install — when set, the worker finalises as paused/cleared instead of
+/// reporting the abort as a failure. `library` (a library root from
+/// [`libraries`]) targets a specific drive/location; `None` uses the default.
+pub fn install(
+    id: i32,
+    status: Arc<Mutex<Option<GameStatus>>>,
+    control: InstallControl,
+    library: Option<String>,
+) {
     set_status(&status, "processing...");
 
+    let id_str = id.to_string();
+    let mut args: Vec<&str> = vec!["install", &id_str, "--json"];
+    if let Some(library) = &library {
+        args.push("--library");
+        args.push(library);
+    }
     let spawned = process::Command::new(bin())
-        .args(["install", &id.to_string(), "--json"])
+        .args(&args)
         .stdin(process::Stdio::null())
         .stdout(process::Stdio::piped())
         .stderr(process::Stdio::piped())
@@ -1355,7 +2073,12 @@ pub fn install(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
                     };
                     set_status(
                         &status,
-                        &format!("{} {:.1}%", label, event.percent.unwrap_or(0.0)),
+                        &format!(
+                            "{} {:.1}%{}",
+                            label,
+                            event.percent.unwrap_or(0.0),
+                            eta_suffix(event.eta_seconds)
+                        ),
                     );
                 }
             }
@@ -1364,6 +2087,22 @@ pub fn install(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
 
     let result = result_handle.join().unwrap_or_default();
     let _ = child.wait();
+
+    // If the user paused/stopped, the process exited because the daemon aborted
+    // the download — finalise on the user's intent, not the aborted result.
+    match control.get() {
+        InstallAction::Paused => {
+            set_status_paused(&status);
+            return;
+        }
+        InstallAction::Stopped => {
+            if let Ok(mut guard) = status.lock() {
+                *guard = None;
+            }
+            return;
+        }
+        InstallAction::Running => {}
+    }
 
     match serde_json::from_str::<serde_json::Value>(result.trim()) {
         Ok(value) => {
@@ -1526,7 +2265,11 @@ pub fn update(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
                 if event.event.as_deref() == Some("progress") {
                     set_status(
                         &status,
-                        &format!("updating {:.1}%", event.percent.unwrap_or(0.0)),
+                        &format!(
+                            "updating {:.1}%{}",
+                            event.percent.unwrap_or(0.0),
+                            eta_suffix(event.eta_seconds)
+                        ),
                     );
                 }
             }

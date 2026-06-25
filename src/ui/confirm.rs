@@ -9,11 +9,25 @@ use crate::theme;
 
 /// Build the uninstall confirmation prompt for `game_name`.
 pub fn confirm_uninstall(game_name: &str) -> Paragraph<'static> {
+    confirm(format!("Uninstall {}?", game_name))
+}
+
+/// Build the remove-friend confirmation prompt for `friend_name`.
+pub fn confirm_remove_friend(friend_name: &str) -> Paragraph<'static> {
+    confirm(format!("Remove {}?", friend_name))
+}
+
+/// Build the "not installed — install now?" prompt shown when the user tries to
+/// launch a game the listing marks as not installed.
+pub fn confirm_install(game_name: &str) -> Paragraph<'static> {
+    confirm(format!("{} is not installed. Install now?", game_name))
+}
+
+/// Shared destructive-action confirmation popup: a `prompt` question over a
+/// `[y] confirm / [n] cancel` hint, framed by a WARN-accented border/title.
+fn confirm(prompt: String) -> Paragraph<'static> {
     let lines = vec![
-        Spans::from(Span::styled(
-            format!("Uninstall {}?", game_name),
-            Style::default().fg(theme::TEXT),
-        )),
+        Spans::from(Span::styled(prompt, Style::default().fg(theme::TEXT))),
         Spans::from(""),
         Spans::from(vec![
             Span::styled("[y]", theme::key()),

@@ -1,5 +1,5 @@
-//! The Steam Cloud overlay: lists the selected game's Cloud save files, with a
-//! key to sync them.
+//! The Steam Cloud overlay: lists the selected game's Cloud save files, with
+//! keys to sync them — `s` both ways, `d` download-only, `u` upload-only.
 
 use pretty_bytes::converter::convert;
 
@@ -44,7 +44,9 @@ pub fn cloud(browser: &Browser) -> Table<'static> {
             Cell::from(Span::styled("NAME", theme::label())),
             Cell::from(Span::styled("SIZE", theme::label())),
         ]))
-        .block(theme::panel("Steam Cloud ([s] sync)".to_string()))
+        .block(theme::panel(
+            "Steam Cloud ([s] sync  [d] down  [u] up)".to_string(),
+        ))
         .style(theme::base())
         .widths(&[Constraint::Percentage(75), Constraint::Percentage(25)])
 }

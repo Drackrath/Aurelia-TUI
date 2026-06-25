@@ -19,10 +19,17 @@ pub enum Event<I> {
 
 /// A small event handler that wrap termion input and tick events. Each event
 /// type is handled in its own thread and returned to a common `Receiver`
+///
+/// # Input contract
+///
+/// Every distinct keypress is forwarded to the channel as an [`Event::Input`];
+/// the input thread never drops or debounces user keys, so fast typing is
+/// lossless and the consumer can simply call [`Events::next`] in a loop without
+/// any release/re-arm handshake. Tick events are produced independently by the
+/// tick thread.
 pub struct Events {
     rx: mpsc::Receiver<Event<KeyCode>>,
     stop: Arc<AtomicBool>,
-    debounce: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -33,7 +40,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Config {
         Config {
-            tick_rate: Duration::from_millis(500),
+            // ~4 redraws/second when idle: fast enough for the smooth list-name
+            // marquee and snappy adoption of async (friends/workshop) results,
+            // while still cheap (tui only writes the cells that actually change).
+            tick_rate: Duration::from_millis(250),
         }
     }
 }
@@ -46,19 +56,28 @@ impl Events {
     pub fn with_config(config: Config) -> Events {
         let (tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
-        let debounce = Arc::new(AtomicBool::new(true));
 
         let _input_handle = {
             let tx = tx.clone();
             let stop = stop.clone();
-            let debounce = debounce.clone();
             thread::spawn(move || {
                 //matching the key
                 loop {
                     // Map the raw terminal event to a key code we act on. Mouse
                     // wheel scrolling is folded into Down/Up so the list handlers
-                    // work for both keyboard and mouse.
-                    let code = match read().unwrap() {
+                    // work for both keyboard and wheel. (Shift+drag selection is
+                    // handled by the terminal itself and never reaches here.)
+                    let event = match read() {
+                        Ok(event) => event,
+                        Err(err) => {
+                            // A read error (e.g. the terminal going away on
+                            // shutdown) must not panic and silently kill input;
+                            // log it and stop the thread cleanly.
+                            log!(err);
+                            return;
+                        }
+                    };
+                    let code = match event {
                         CrossEvent::Key(KeyEvent {
                             code: kc,
                             modifiers,
@@ -81,13 +100,11 @@ impl Events {
                         _ => None,
                     };
 
+                    // Forward every keypress; no debounce so no user key is lost.
                     if let Some(kc) = code {
-                        if debounce.load(Ordering::Relaxed) {
-                            if let Err(err) = tx.send(Event::Input(kc)) {
-                                log!(err);
-                                return;
-                            }
-                            debounce.store(false, Ordering::Relaxed);
+                        if let Err(err) = tx.send(Event::Input(kc)) {
+                            log!(err);
+                            return;
                         }
                     }
                     if stop.load(Ordering::Relaxed) {
@@ -108,13 +125,11 @@ impl Events {
                 }
             })
         };
-        Events { rx, stop, debounce }
+        Events { rx, stop }
     }
 
-    pub fn release(&self) {
-        self.debounce.store(true, Ordering::Relaxed);
-    }
-
+    /// Block for the next input or tick event. Every keypress is delivered
+    /// exactly once, in order, with no release handshake required.
     pub fn next(&self) -> Result<Event<KeyCode>, mpsc::RecvError> {
         self.rx.recv()
     }

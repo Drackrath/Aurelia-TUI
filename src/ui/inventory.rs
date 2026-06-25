@@ -1,11 +1,12 @@
 //! The inventory overlay (modal popup): the logged-in user's Steam inventory
 //! for the selected game, scrollable.
 
-use tui::text::{Span, Spans, Text};
+use tui::text::{Span, Spans};
 use tui::widgets::Paragraph;
 
 use crate::browse::Browser;
 use crate::theme;
+use crate::ui::paneled_paragraph;
 
 /// Build the inventory overlay content from the browse state. Each row is the
 /// item name, its stack count (accented when more than one), and a dim type
@@ -15,9 +16,7 @@ pub fn inventory(browser: &Browser) -> Paragraph<'static> {
     let title = format!("Inventory ({})", items.len());
 
     if items.is_empty() {
-        return Paragraph::new(Text::from("No inventory items."))
-            .block(theme::panel(title))
-            .style(theme::base());
+        return paneled_paragraph("No inventory items.", title);
     }
 
     let lines: Vec<Spans<'static>> = items
@@ -35,7 +34,5 @@ pub fn inventory(browser: &Browser) -> Paragraph<'static> {
         })
         .collect();
 
-    Paragraph::new(Text::from(lines))
-        .block(theme::panel(title))
-        .style(theme::base())
+    paneled_paragraph(lines, title)
 }

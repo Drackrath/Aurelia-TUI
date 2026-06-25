@@ -3,11 +3,12 @@
 
 use pretty_bytes::converter::convert;
 
-use tui::text::{Span, Spans, Text};
+use tui::text::{Span, Spans};
 use tui::widgets::Paragraph;
 
 use crate::browse::Browser;
 use crate::theme;
+use crate::ui::paneled_paragraph;
 
 /// Build the depots overlay from the browser's open depots state. Each row shows
 /// the depot name (falling back to its id) and the (human-readable) size; the
@@ -36,7 +37,5 @@ pub fn depots(browser: &Browser) -> Paragraph<'static> {
             .collect()
     };
 
-    Paragraph::new(Text::from(lines))
-        .block(theme::panel(format!("Depots ({})", browser.depots.len())))
-        .style(theme::base())
+    paneled_paragraph(lines, format!("Depots ({})", browser.depots.len()))
 }

@@ -55,12 +55,27 @@ Feature branches (all merged):
 
 _None — every in-scope `aurelia` command is now surfaced in the TUI._
 
+### Optional extensions — implemented (beyond original scope)
+
+- `friends` search/add/remove (`F` → `a` add overlay with `Enter` search + `a` send
+  request; `x` remove with `y`/`n` confirm) — all backend calls off the UI thread.
+- `market` search/price (`S` opens a search overlay: `Enter` search, `Up`/`Down` move,
+  `Tab` price the highlighted result, `Esc` close) — read-only, off the UI thread.
+- `proton` install/uninstall (in the `P` overlay: `i` install the highlighted runtime
+  with streamed progress, `u` uninstall a custom GE runtime with `y`/`n` confirm) —
+  off the UI thread, list refreshes after.
+- `cloud` directional sync (in the `C` overlay: `s` both ways, `d` download-only,
+  `u` upload-only — `cloud sync --down`/`--up`), off the UI thread.
+- `workshop` browse + subscribe/unsubscribe (in the `W` overlay: `b` opens a browse/search
+  pane — `Enter` searches, `Up`/`Down` move, `Tab` subscribes/unsubscribes the highlighted
+  item, `Esc` back to the subscribed list) — browse/search/subscribe and the post-action
+  list refresh all run off the UI thread, gen-tagged to drop stale results.
+
 ### Out of scope / optional extensions (documented, not planned)
 
-- Sub-command extensions of merged features: `friends` add/remove/search,
-  `market` price/search, `workshop` browse/install/subscribe/rate/comments,
-  `proton` install/uninstall, `config` language / per-game proton,
-  `cloud` direction flags, `dlc`/`install` `--restart-steam`.
+- Sub-command extensions of merged features:
+  `workshop` rate/comments,
+  `config` language / per-game proton, `dlc`/`install` `--restart-steam`.
 - `available` — effectively covered by the install/status badges.
 - `daemon` / `kill` — process/daemon infrastructure, not user-facing TUI features.
 - `luxtorpeda` — explicitly excluded.

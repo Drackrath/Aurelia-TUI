@@ -13,10 +13,7 @@ use crate::theme;
 /// single "No branches." row when empty.
 pub fn branches(browser: &Browser) -> List<'static> {
     let items: Vec<ListItem<'static>> = if browser.branches.is_empty() {
-        vec![ListItem::new(Spans::from(Span::styled(
-            "No branches.".to_string(),
-            theme::dim(),
-        )))]
+        crate::ui::empty_list_rows("No branches.")
     } else {
         browser
             .branches
@@ -25,7 +22,7 @@ pub fn branches(browser: &Browser) -> List<'static> {
             .map(|(i, entry)| {
                 let selected = i == browser.branch_index;
 
-                let marker = if selected { "▶ " } else { "  " };
+                let marker = crate::ui::selection_marker(selected);
                 let name_style = if selected {
                     theme::selection(theme::ACCENT)
                 } else {
