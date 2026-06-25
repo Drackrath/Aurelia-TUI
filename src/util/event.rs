@@ -19,10 +19,29 @@ pub enum Event<I> {
 
 /// A small event handler that wrap termion input and tick events. Each event
 /// type is handled in its own thread and returned to a common `Receiver`
+///
+/// # Latch/debounce contract
+///
+/// The input thread is *latched*: after it delivers one [`Event::Input`] it
+/// stops forwarding keys (folding key-repeat / held keys into a single press)
+/// until the consumer calls [`Events::release`]. A consumer loop that reads a
+/// key via [`Events::next`] **must** call [`Events::release`] once it has
+/// finished handling that key, otherwise the input goes permanently deaf — the
+/// next keypress (even `Esc`/`q`) is never delivered. Tick events are *not*
+/// latched and require no release.
+///
+/// To keep a future consumer loop from silently reintroducing the "deaf after
+/// one keypress" bug, [`Events::next`] tracks whether a latched `Input` is
+/// still outstanding and `debug_assert!`s in debug builds if a second `next`
+/// blocks on `recv` while the previous `Input` was never released. The
+/// assertion only fires in debug builds, so release behaviour is unchanged.
 pub struct Events {
     rx: mpsc::Receiver<Event<KeyCode>>,
     stop: Arc<AtomicBool>,
     debounce: Arc<AtomicBool>,
+    /// True between delivering an `Input` and the consumer's `release()`. Used
+    /// only to catch a missing `release()` in debug builds; never gates I/O.
+    latched: std::cell::Cell<bool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -118,15 +137,41 @@ impl Events {
                 }
             })
         };
-        Events { rx, stop, debounce }
+        Events {
+            rx,
+            stop,
+            debounce,
+            latched: std::cell::Cell::new(false),
+        }
     }
 
+    /// Re-arm the input latch so the next keypress is delivered. Must be called
+    /// once after handling each [`Event::Input`]; see the type-level docs.
     pub fn release(&self) {
+        self.latched.set(false);
         self.debounce.store(true, Ordering::Relaxed);
     }
 
+    /// Block for the next input or tick event.
+    ///
+    /// Each delivered [`Event::Input`] latches the input thread; the caller must
+    /// call [`Events::release`] before the next `next()` that expects a fresh
+    /// key, or input goes deaf. In debug builds a missing `release()` trips a
+    /// `debug_assert!` here so the regression is caught in development rather
+    /// than shipping as a silently unresponsive UI. Release builds are
+    /// unaffected.
     pub fn next(&self) -> Result<Event<KeyCode>, mpsc::RecvError> {
-        self.rx.recv()
+        debug_assert!(
+            !self.latched.get(),
+            "Events::next() called while a previous Input is still latched; \
+             the consumer loop must call Events::release() after handling each \
+             keypress or input goes deaf"
+        );
+        let event = self.rx.recv()?;
+        if matches!(event, Event::Input(_)) {
+            self.latched.set(true);
+        }
+        Ok(event)
     }
 }
 

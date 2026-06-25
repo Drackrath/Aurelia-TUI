@@ -17,10 +17,7 @@ use crate::theme;
 /// is in flight, the streamed status line (e.g. `downloading 42.0%`).
 pub fn proton(browser: &Browser) -> List<'static> {
     let items: Vec<ListItem<'static>> = if browser.protons.is_empty() {
-        vec![ListItem::new(Spans::from(Span::styled(
-            "No runtimes.".to_string(),
-            theme::dim(),
-        )))]
+        crate::ui::empty_list_rows("No runtimes.")
     } else {
         browser
             .protons
@@ -29,7 +26,7 @@ pub fn proton(browser: &Browser) -> List<'static> {
             .map(|(i, entry)| {
                 let selected = i == browser.proton_index;
 
-                let marker = if selected { "▶ " } else { "  " };
+                let marker = crate::ui::selection_marker(selected);
                 let name_style = if selected {
                     theme::selection(theme::ACCENT)
                 } else if entry.installed {

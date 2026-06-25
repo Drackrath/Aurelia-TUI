@@ -3,7 +3,9 @@
 //! paint the expected content.
 
 use aurelia_tui::browse::{Browser, Filter};
-use aurelia_tui::interface::aurelia::{LibraryGameJson, ProtonJson, WorkshopItemJson};
+use aurelia_tui::interface::aurelia::{
+    LibraryGameJson, ProtonJson, WorkshopCommentJson, WorkshopItemJson,
+};
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::{theme, ui};
 use tui::backend::TestBackend;
@@ -441,4 +443,107 @@ fn workshop_item_subscribed_default() {
         !unlisted.subscribed,
         "an explicit false is preserved (browse rows are forced false)"
     );
+}
+
+/// Opening the comments sub-pane and exiting browse both reset its state. We set
+/// the flags directly rather than via `workshop_open_comments` (which would
+/// shell out to the CLI on a worker), to keep the test offline.
+#[test]
+fn workshop_comments_state_resets() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.show_workshop = true;
+    browser.workshop_browse = true;
+    browser.workshop_comments_open = true;
+    browser.workshop_comments = vec![WorkshopCommentJson {
+        author: "Ada".to_string(),
+        message: "great mod".to_string(),
+        ..Default::default()
+    }];
+    browser.workshop_comments_scroll = 0;
+
+    // Scroll is clamped to the single row (cannot advance past the last).
+    browser.workshop_comments_scroll_down();
+    assert_eq!(
+        browser.workshop_comments_scroll, 0,
+        "scroll clamps on a single comment"
+    );
+
+    browser.close_workshop_comments();
+    assert!(
+        !browser.workshop_comments_open,
+        "sub-pane closed and reset"
+    );
+    assert!(
+        browser.workshop_comments.is_empty(),
+        "comments dropped on close"
+    );
+
+    // Exiting browse also tears the sub-pane down.
+    browser.workshop_comments_open = true;
+    browser.workshop_exit_browse();
+    assert!(
+        !browser.workshop_comments_open,
+        "leaving browse closes the comments sub-pane"
+    );
+}
+
+/// The comments sub-pane renders the item id in the title, a comment count, and
+/// each comment's author header and body.
+#[test]
+fn workshop_comments_pane_renders() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
+    browser.show_workshop = true;
+    browser.workshop_browse = true;
+    browser.workshop_comments_open = true;
+    browser.workshop_comments = vec![
+        WorkshopCommentJson {
+            author: "Ada".to_string(),
+            message: "great mod".to_string(),
+            ..Default::default()
+        },
+        WorkshopCommentJson {
+            author: "Grace".to_string(),
+            message: "crashes on load".to_string(),
+            ..Default::default()
+        },
+    ];
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            f.render_widget(ui::workshop::workshop(&browser), Rect::new(0, 0, 80, 24));
+        })
+        .unwrap();
+
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol.clone())
+        .collect();
+
+    assert!(text.contains("Comments"), "comments-pane title shown");
+    assert!(text.contains("Ada"), "first author shown");
+    assert!(text.contains("great mod"), "first comment body shown");
+    assert!(text.contains("Grace"), "second author shown");
+    assert!(text.contains("2 comment"), "comment count shown");
+}
+
+/// `workshop comments` rows parse leniently: aliases for the author/body keys
+/// are accepted and a missing author falls back to a placeholder.
+#[test]
+fn workshop_comment_parses_aliases() {
+    let c: WorkshopCommentJson =
+        serde_json::from_str(r#"{ "name": "Ada", "text": "hi", "time": 42 }"#).unwrap();
+    assert_eq!(c.author, "Ada");
+    assert_eq!(c.message, "hi");
+    assert_eq!(c.timestamp, 42);
+
+    let anon: WorkshopCommentJson = serde_json::from_str(r#"{ "body": "no name" }"#).unwrap();
+    assert_eq!(anon.display_author(), "(anonymous)");
+    assert_eq!(anon.message, "no name");
 }

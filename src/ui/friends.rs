@@ -75,7 +75,7 @@ pub fn friends(browser: &Browser, visible_rows: usize) -> Paragraph<'static> {
             };
 
             // Highlight marker: only the selected absolute row gets the arrow.
-            let marker = if selected { "▶ " } else { "  " };
+            let marker = crate::ui::selection_marker(selected);
 
             // Name style:
             // - selected AND focused -> full selection highlight.

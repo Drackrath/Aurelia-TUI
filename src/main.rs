@@ -615,13 +615,28 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             _ => {}
                         }
                     } else if browser.show_workshop {
-                        if browser.workshop_browse {
+                        if browser.workshop_comments_open {
+                            // Comments sub-pane (over the browse results): Esc
+                            // returns to the results, Up/Down scroll. No text is
+                            // edited here, so j/k are also accepted as scroll keys.
+                            match input {
+                                KeyCode::Esc => browser.close_workshop_comments(),
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    browser.workshop_comments_scroll_down()
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    browser.workshop_comments_scroll_up()
+                                }
+                                _ => {}
+                            }
+                        } else if browser.workshop_browse {
                             // Browse/search pane: the query line takes typed
                             // text (Enter searches off-thread). Navigation/action
                             // use non-text keys so they never collide with what
                             // the user is typing: Up/Down move the highlight,
-                            // Tab subscribes/unsubscribes it off-thread, and Esc
-                            // returns to the subscribed list.
+                            // Tab subscribes/unsubscribes it off-thread, F1/F2
+                            // rate it up/down off-thread, F3 opens its comments
+                            // sub-pane, and Esc returns to the subscribed list.
                             match input {
                                 KeyCode::Esc => browser.workshop_exit_browse(),
                                 KeyCode::Char('\n') | KeyCode::Enter => {
@@ -632,6 +647,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Tab => {
                                     browser.workshop_toggle_subscribe_selected()
                                 }
+                                KeyCode::F(1) => browser.workshop_rate_selected(true),
+                                KeyCode::F(2) => browser.workshop_rate_selected(false),
+                                KeyCode::F(3) => browser.workshop_open_comments(),
                                 KeyCode::Backspace => browser.workshop_pop_query(),
                                 KeyCode::Char(c) => browser.workshop_push_query(c),
                                 _ => {}

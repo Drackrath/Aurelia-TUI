@@ -419,6 +419,36 @@ impl WorkshopItemJson {
     }
 }
 
+/// One comment on a Workshop item, from `aurelia workshop comments <id> --json`.
+/// The CLI emits a bare array of comments; each carries an author display name,
+/// the body text, and a Unix timestamp. Everything is `#[serde(default)]` so a
+/// missing/extra field never breaks parsing, with a couple of aliases covering
+/// alternate key spellings.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WorkshopCommentJson {
+    /// The commenter's display name (the CLI key is `author`; `name`/`persona`
+    /// are accepted as fallbacks).
+    #[serde(default, alias = "name", alias = "persona", alias = "author_name")]
+    pub author: String,
+    /// The comment body (the CLI key is `message`; `text`/`body` accepted too).
+    #[serde(default, alias = "text", alias = "body", alias = "comment")]
+    pub message: String,
+    /// Unix timestamp (seconds) the comment was posted.
+    #[serde(default, alias = "time", alias = "timestamp_created")]
+    pub timestamp: i64,
+}
+
+impl WorkshopCommentJson {
+    /// Display author, falling back to a placeholder when none is present.
+    pub fn display_author(&self) -> String {
+        if self.author.is_empty() {
+            "(anonymous)".to_string()
+        } else {
+            self.author.clone()
+        }
+    }
+}
+
 /// Deserialize a SteamID64 that may arrive as a JSON number or string.
 fn de_steam_id<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
@@ -1410,6 +1440,38 @@ pub fn workshop_subscribe(item_id: u64) -> Result<(), STError> {
 pub fn workshop_unsubscribe(item_id: u64) -> Result<(), STError> {
     run_json(&["workshop", "unsubscribe", &item_id.to_string()])?;
     Ok(())
+}
+
+/// Rate a single Workshop item thumbs-up or thumbs-down
+/// (`aurelia workshop rate <id> <up|down> --json`). `up` is `true`, `down` is
+/// `false`. Returns the backend error on failure; the success payload is
+/// ignored. Network-bound — call off the UI thread.
+pub fn workshop_rate(item_id: u64, up: bool) -> Result<(), STError> {
+    let vote = if up { "up" } else { "down" };
+    run_json(&["workshop", "rate", &item_id.to_string(), vote])?;
+    Ok(())
+}
+
+/// Read the comments on a single Workshop item
+/// (`aurelia workshop comments <id> --count <n> --json`). The CLI emits a bare
+/// array of comments; tolerate an object wrapping the list under
+/// `comments`/`items`. Network-bound — call off the UI thread.
+pub fn workshop_comments(item_id: u64, count: u32) -> Result<Vec<WorkshopCommentJson>, STError> {
+    let id = item_id.to_string();
+    let count = count.to_string();
+    // `<ID>` is a fixed positional and `--count` is a flag, so `--json` (appended
+    // by `run_json`) lands after both without swallowing a var-arg positional.
+    let value = run_json(&["workshop", "comments", &id, "--count", &count])?;
+    // Accept either a bare array or a wrapping object (`{ "comments": [..] }`).
+    let list = value
+        .get("comments")
+        .or_else(|| value.get("items"))
+        .cloned()
+        .unwrap_or(value);
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
 }
 
 /// Fetch the logged-in account's active market listings and open buy orders

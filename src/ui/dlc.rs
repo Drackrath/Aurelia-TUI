@@ -13,10 +13,7 @@ use crate::theme;
 /// selection bar with a `▶` marker. Renders a single "No DLC." row when empty.
 pub fn dlc(browser: &Browser) -> List<'static> {
     let items: Vec<ListItem<'static>> = if browser.dlc.is_empty() {
-        vec![ListItem::new(Spans::from(Span::styled(
-            "No DLC.".to_string(),
-            theme::dim(),
-        )))]
+        crate::ui::empty_list_rows("No DLC.")
     } else {
         browser
             .dlc
@@ -37,7 +34,7 @@ pub fn dlc(browser: &Browser) -> List<'static> {
                     ("not owned", theme::dim())
                 };
 
-                let marker = if selected { "▶ " } else { "  " };
+                let marker = crate::ui::selection_marker(selected);
                 let name_style = if selected {
                     theme::selection(theme::ACCENT)
                 } else {

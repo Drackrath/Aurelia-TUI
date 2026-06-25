@@ -20,10 +20,63 @@ use crate::theme;
 /// subscribed-items list depending on the overlay mode.
 pub fn workshop(browser: &Browser) -> Paragraph<'static> {
     if browser.workshop_browse {
-        browse(browser)
+        if browser.workshop_comments_open {
+            comments(browser)
+        } else {
+            browse(browser)
+        }
     } else {
         subscribed(browser)
     }
+}
+
+/// The comments sub-pane: the item id in the title, a status/spinner line, then
+/// each comment as an author header followed by its body. Scrolled by
+/// `browser.workshop_comments_scroll`.
+fn comments(browser: &Browser) -> Paragraph<'static> {
+    let title = format!(
+        "Comments — item {} (Esc: back)",
+        browser.workshop_comments_id()
+    );
+    let mut lines: Vec<Spans<'static>> = Vec::new();
+
+    if browser.workshop_comments_loading {
+        lines.push(Spans::from(Span::styled(
+            "Loading comments…",
+            theme::accent(),
+        )));
+    } else if !browser.workshop_comments_status.is_empty() {
+        lines.push(Spans::from(Span::styled(
+            browser.workshop_comments_status.clone(),
+            theme::dim(),
+        )));
+    } else {
+        lines.push(Spans::from(Span::styled(
+            format!("{} comment(s)", browser.workshop_comments.len()),
+            theme::dim(),
+        )));
+    }
+    lines.push(Spans::from(""));
+
+    for comment in browser
+        .workshop_comments
+        .iter()
+        .skip(browser.workshop_comments_scroll)
+    {
+        lines.push(Spans::from(Span::styled(
+            comment.display_author(),
+            theme::accent(),
+        )));
+        lines.push(Spans::from(Span::styled(
+            comment.message.clone(),
+            theme::value(),
+        )));
+        lines.push(Spans::from(""));
+    }
+
+    Paragraph::new(Text::from(lines))
+        .block(theme::panel(title))
+        .style(theme::base())
 }
 
 /// The subscribed/installed items list. Each row is a state marker
@@ -76,7 +129,8 @@ fn subscribed(browser: &Browser) -> Paragraph<'static> {
 /// The browse/search pane: a query input line, a status/hint line, then the
 /// result rows with the highlight marked and each row tagged subscribed/not.
 fn browse(browser: &Browser) -> Paragraph<'static> {
-    let title = "Workshop browse — Enter: search, Tab: sub/unsub, Esc: back".to_string();
+    let title = "Workshop browse — Enter: search, Tab: sub, F1/F2: rate, F3: comments, Esc: back"
+        .to_string();
     let mut lines: Vec<Spans<'static>> = Vec::new();
 
     // Query input line.

@@ -33,7 +33,7 @@ pub mod workshop;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use tui::style::{Modifier, Style};
 use tui::text::{Span, Spans, Text};
-use tui::widgets::Paragraph;
+use tui::widgets::{ListItem, Paragraph};
 
 use crate::theme;
 
@@ -85,6 +85,29 @@ pub fn prompt_overlay(label: &str, value: &str, status: &str, title: &str) -> Pa
         .block(theme::panel(title.to_string()))
         .style(theme::base())
         .alignment(Alignment::Left)
+}
+
+/// The leading marker for a row in a selectable list overlay: the `▶ ` selection
+/// glyph for the highlighted row, or two spaces of padding otherwise so every
+/// row stays column-aligned. Centralizes the marker glyph shared by the
+/// branches/dlc/proton/running/friends/market-search lists; callers still own the
+/// per-list name styling, since that varies (online/installed/focus-aware).
+pub fn selection_marker(selected: bool) -> &'static str {
+    if selected {
+        "▶ "
+    } else {
+        "  "
+    }
+}
+
+/// The single dimmed placeholder row a list overlay shows when it has no
+/// entries (e.g. "No DLC.", "No branches."). Returns a one-element `Vec` so it
+/// drops straight into the `items` a [`tui::widgets::List`] is built from.
+pub fn empty_list_rows(message: impl Into<String>) -> Vec<ListItem<'static>> {
+    vec![ListItem::new(Spans::from(Span::styled(
+        message.into(),
+        theme::dim(),
+    )))]
 }
 
 /// A rectangle centered within `area`, sized as a percentage of it. Used to

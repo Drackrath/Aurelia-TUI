@@ -66,7 +66,7 @@ pub fn market_search(browser: &Browser, visible_rows: usize) -> Paragraph<'stati
 
         for (i, r) in results.iter().enumerate().skip(start).take(list_rows) {
             let selected = i == index;
-            let marker = if selected { "▶ " } else { "  " };
+            let marker = crate::ui::selection_marker(selected);
             let name_style = if selected {
                 theme::selection(theme::ACCENT)
             } else {

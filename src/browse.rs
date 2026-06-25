@@ -272,6 +272,29 @@ pub struct Browser {
     /// stale refresh can never clobber newer overlay state. This keeps the
     /// post-action `workshop list` shell-out entirely off the render thread.
     workshop_refresh_slot: Arc<Mutex<Option<(u64, Vec<aurelia::WorkshopItemJson>)>>>,
+    /// True while a rate (thumbs up/down) request is in flight.
+    pub workshop_rating: bool,
+    /// Slot a rate worker posts its outcome into: `(generation, Result<(), error>)`.
+    /// Drained by `poll_workshop`; a stale-generation result (the overlay closed
+    /// or moved on) is dropped rather than shown.
+    workshop_rate_slot: Arc<Mutex<Option<(u64, Result<(), String>)>>>,
+    /// Whether the comments sub-pane is open (over the browse results).
+    pub workshop_comments_open: bool,
+    /// True while a comments fetch is in flight (drives a spinner line).
+    pub workshop_comments_loading: bool,
+    /// The fetched comments for the item the sub-pane is showing.
+    pub workshop_comments: Vec<aurelia::WorkshopCommentJson>,
+    /// Scroll offset (top row) within the comments sub-pane.
+    pub workshop_comments_scroll: usize,
+    /// A transient status line for the comments sub-pane (errors / empty).
+    pub workshop_comments_status: String,
+    /// The id of the item the comments sub-pane was opened for (shown in title).
+    workshop_comments_id: u64,
+    /// Slot a comments worker posts its `(generation, result)` into; drained by
+    /// `poll_workshop` and applied only if the generation still matches, so a
+    /// slow fetch for a since-closed/superseded sub-pane is discarded.
+    workshop_comments_slot:
+        Arc<Mutex<Option<(u64, Result<Vec<aurelia::WorkshopCommentJson>, String>)>>>,
     /// Whether the uninstall confirmation prompt is open for the selection.
     pub confirm_uninstall: bool,
     /// Whether the DLC overlay is open.
@@ -430,6 +453,15 @@ impl Browser {
             workshop_acting: false,
             workshop_action_slot: Arc::new(Mutex::new(None)),
             workshop_refresh_slot: Arc::new(Mutex::new(None)),
+            workshop_rating: false,
+            workshop_rate_slot: Arc::new(Mutex::new(None)),
+            workshop_comments_open: false,
+            workshop_comments_loading: false,
+            workshop_comments: Vec::new(),
+            workshop_comments_scroll: 0,
+            workshop_comments_status: String::new(),
+            workshop_comments_id: 0,
+            workshop_comments_slot: Arc::new(Mutex::new(None)),
             confirm_uninstall: false,
             show_dlc: false,
             dlc: Vec::new(),
@@ -1604,6 +1636,8 @@ impl Browser {
         self.workshop_index = 0;
         self.workshop_searching = false;
         self.workshop_status.clear();
+        self.workshop_rating = false;
+        self.close_workshop_comments();
         self.show_workshop = true;
     }
 
@@ -1618,6 +1652,8 @@ impl Browser {
         self.workshop_index = 0;
         self.workshop_searching = false;
         self.workshop_status.clear();
+        self.workshop_rating = false;
+        self.close_workshop_comments();
         // Bump the generation so any in-flight worker's late result is dropped.
         self.workshop_gen = self.workshop_gen.wrapping_add(1);
     }
@@ -1654,6 +1690,8 @@ impl Browser {
         // Drop any in-flight search result.
         self.workshop_gen = self.workshop_gen.wrapping_add(1);
         self.workshop_searching = false;
+        self.workshop_rating = false;
+        self.close_workshop_comments();
     }
 
     /// Append a character to the browse query (browse mode only).
@@ -1789,6 +1827,56 @@ impl Browser {
                 }
             }
         }
+
+        // Drain a finished rate worker. The generation is checked so a late
+        // result for a since-closed/superseded overlay is dropped silently.
+        let rated = match self.workshop_rate_slot.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(_) => None,
+        };
+        if let Some((generation, result)) = rated {
+            // The in-flight rate is definitively finished, so always clear the
+            // re-press guard — otherwise bumping the generation while a rate is
+            // in flight (a new search, or closing the comments sub-pane) would
+            // strand `workshop_rating = true` and wedge rating forever. Only the
+            // user-visible status line is gated on the generation still matching.
+            self.workshop_rating = false;
+            if generation == self.workshop_gen {
+                self.workshop_status = match result {
+                    Ok(()) => "Rated.".to_string(),
+                    Err(err) => format!("Rate failed: {err}"),
+                };
+            }
+        }
+
+        // Drain a finished comments fetch. Apply only when the generation still
+        // matches (the sub-pane was not closed / superseded since the fetch
+        // started) and the sub-pane is still open.
+        let comments = match self.workshop_comments_slot.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(_) => None,
+        };
+        if let Some((generation, result)) = comments {
+            if generation == self.workshop_gen && self.workshop_comments_open {
+                self.workshop_comments_loading = false;
+                match result {
+                    Ok(items) => {
+                        self.workshop_comments = items;
+                        self.workshop_comments_scroll = 0;
+                        self.workshop_comments_status = if self.workshop_comments.is_empty() {
+                            "No comments.".to_string()
+                        } else {
+                            String::new()
+                        };
+                    }
+                    Err(err) => {
+                        self.workshop_comments = Vec::new();
+                        self.workshop_comments_scroll = 0;
+                        self.workshop_comments_status = format!("Comments failed: {err}");
+                    }
+                }
+            }
+        }
     }
 
     /// Toggle the subscription of the highlighted browse result off the UI
@@ -1840,6 +1928,98 @@ impl Browser {
                 *guard = Some((id, want_subscribed, result));
             }
         });
+    }
+
+    /// Rate the highlighted browse result thumbs-up (`up = true`) or thumbs-down
+    /// off the UI thread. The worker posts `(generation, result)` into
+    /// `workshop_rate_slot`, which `poll_workshop` drains to update the status
+    /// line. A request already in flight is a no-op so a held key cannot stack
+    /// calls; a missing selection / id is a no-op.
+    pub fn workshop_rate_selected(&mut self, up: bool) {
+        if self.workshop_rating {
+            return;
+        }
+        let Some(item) = self.selected_workshop_result() else {
+            return;
+        };
+        let Some(id) = item.id else {
+            return;
+        };
+        let slot = Arc::clone(&self.workshop_rate_slot);
+        let generation = self.workshop_gen;
+        self.workshop_rating = true;
+        self.workshop_status = if up {
+            "Rating up…".to_string()
+        } else {
+            "Rating down…".to_string()
+        };
+        thread::spawn(move || {
+            let result = aurelia::workshop_rate(id, up).map_err(|e| e.to_string());
+            if let Ok(mut guard) = slot.lock() {
+                *guard = Some((generation, result));
+            }
+        });
+    }
+
+    /// Open the comments sub-pane for the highlighted browse result and kick off
+    /// an off-thread fetch of its comments. The worker posts `(generation,
+    /// result)` into `workshop_comments_slot`, drained by `poll_workshop`. A
+    /// missing selection / id is a no-op.
+    pub fn workshop_open_comments(&mut self) {
+        let Some(item) = self.selected_workshop_result() else {
+            return;
+        };
+        let Some(id) = item.id else {
+            return;
+        };
+        self.workshop_comments_open = true;
+        self.workshop_comments_loading = true;
+        self.workshop_comments = Vec::new();
+        self.workshop_comments_scroll = 0;
+        self.workshop_comments_status.clear();
+        self.workshop_comments_id = id;
+        // Reuse the overlay generation so a fetch for a since-closed/superseded
+        // sub-pane is dropped on arrival (the gen is bumped on close/exit).
+        let generation = self.workshop_gen;
+        let slot = Arc::clone(&self.workshop_comments_slot);
+        thread::spawn(move || {
+            let result = aurelia::workshop_comments(id, 30).map_err(|e| e.to_string());
+            if let Ok(mut guard) = slot.lock() {
+                *guard = Some((generation, result));
+            }
+        });
+    }
+
+    /// Close the comments sub-pane and drop its contents. Bumps the overlay
+    /// generation so any in-flight comments fetch is discarded on arrival.
+    pub fn close_workshop_comments(&mut self) {
+        if self.workshop_comments_open {
+            self.workshop_gen = self.workshop_gen.wrapping_add(1);
+        }
+        self.workshop_comments_open = false;
+        self.workshop_comments_loading = false;
+        self.workshop_comments = Vec::new();
+        self.workshop_comments_scroll = 0;
+        self.workshop_comments_status.clear();
+        self.workshop_comments_id = 0;
+    }
+
+    /// The id of the item the comments sub-pane is showing.
+    pub fn workshop_comments_id(&self) -> u64 {
+        self.workshop_comments_id
+    }
+
+    /// Scroll the comments sub-pane down by one row (clamped).
+    pub fn workshop_comments_scroll_down(&mut self) {
+        let max = self.workshop_comments.len().saturating_sub(1);
+        if self.workshop_comments_scroll < max {
+            self.workshop_comments_scroll += 1;
+        }
+    }
+
+    /// Scroll the comments sub-pane up by one row (clamped).
+    pub fn workshop_comments_scroll_up(&mut self) {
+        self.workshop_comments_scroll = self.workshop_comments_scroll.saturating_sub(1);
     }
 
     /// Fetch the logged-in account (`aurelia account`) and open the overlay.
