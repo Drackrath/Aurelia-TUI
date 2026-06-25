@@ -46,9 +46,9 @@ pub fn icon_directory() -> Result<PathBuf, STError> {
     mkdir(dir)
 }
 
-pub fn icon_exists(id: i32) -> Result<PathBuf, STError> {
+pub fn icon_exists(id: i32, suffix: &str) -> Result<PathBuf, STError> {
     let dir = icon_directory()?;
-    let icon = &format!("{}.ico", id);
+    let icon = &format!("{}{}.ico", id, suffix);
     let icon = Path::new(icon);
     let icon = dir.join(icon);
     if icon.exists() {
@@ -58,9 +58,9 @@ pub fn icon_exists(id: i32) -> Result<PathBuf, STError> {
     }
 }
 
-pub fn icon_save(id: i32, icon: &[u8]) -> Result<(), STError> {
+pub fn icon_save(id: i32, suffix: &str, icon: &[u8]) -> Result<(), STError> {
     let dir = icon_directory()?;
-    let icon_path = &format!("{}.ico", id);
+    let icon_path = &format!("{}{}.ico", id, suffix);
     let icon_path = Path::new(icon_path);
     let icon_path = dir.join(icon_path);
     let mut file = File::create(icon_path)?;

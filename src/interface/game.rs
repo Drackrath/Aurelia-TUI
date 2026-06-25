@@ -36,6 +36,10 @@ pub struct Game {
     pub publisher: String,
     pub game_type: GameType,
     pub icon_url: Option<String>,
+    /// Portrait box/cover art (`assets.capsule`, e.g. `library_600x900.jpg`) —
+    /// distinct from the wide `icon_url` used as the detail-pane background.
+    #[serde(default)]
+    pub cover_url: Option<String>,
 
     // Install state, sourced from `aurelia list`. Serialized into the games
     // cache so the install status survives a cache round-trip (the live
@@ -72,6 +76,11 @@ impl Game {
                 .or_else(|| a.capsule.clone())
                 .or_else(|| a.hero.clone())
         });
+        // The cover art proper is the portrait library capsule (600x900).
+        let cover_url = entry
+            .assets
+            .as_ref()
+            .and_then(|a| a.capsule.clone().or_else(|| a.header.clone()));
         Game {
             id: entry.app_id as i32,
             name: entry.name,
@@ -82,6 +91,7 @@ impl Game {
             // so entries aren't hidden by the `allowed_games` filter.
             game_type: GameType::Game,
             icon_url,
+            cover_url,
             installed: entry.is_installed,
             install_dir: entry.install_path.unwrap_or_default(),
             update_available: entry.update_available,

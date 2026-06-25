@@ -57,6 +57,36 @@ fn fade_bottom(img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>, bg: (u8, 
     }
 }
 
+/// Scale `src` to fully cover a `tw`×`th` pixel target, preserving its aspect
+/// ratio by centre-cropping the overflow (`object-fit: cover`): the result is
+/// exactly `tw`×`th`, with the excess trimmed off the top/bottom or left/right.
+fn cover_resize(
+    src: &image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    tw: u32,
+    th: u32,
+) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
+    use image::imageops::{crop_imm, resize, FilterType};
+    let (sw, sh) = (src.width(), src.height());
+    if sw == 0 || sh == 0 || tw == 0 || th == 0 {
+        return src.clone();
+    }
+    // Largest centred sub-rectangle of `src` matching the target aspect ratio.
+    // `sw/sh` vs `tw/th` compared as cross-products to stay in integers.
+    let (cw, ch) = if sw as u64 * th as u64 >= sh as u64 * tw as u64 {
+        // Source is wider than the target — crop left/right (full height kept).
+        let cw = ((sh as u64 * tw as u64) / th as u64) as u32;
+        (cw.clamp(1, sw), sh)
+    } else {
+        // Source is taller than the target — crop top/bottom (full width kept).
+        let ch = ((sw as u64 * th as u64) / tw as u64) as u32;
+        (sw, ch.clamp(1, sh))
+    };
+    let ox = (sw - cw) / 2;
+    let oy = (sh - ch) / 2;
+    let cropped = crop_imm(src, ox, oy, cw, ch).to_image();
+    resize(&cropped, tw, th, FilterType::Triangle)
+}
+
 /// The RGB components of a theme [`Color::Rgb`] (falls back to black).
 fn rgb(color: tui::style::Color) -> (u8, u8, u8) {
     match color {
@@ -91,6 +121,20 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
     // discarded and unchanged selections are no-ops.
     let image_slot: ImageSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
     let mut requested_img_id: Option<i32> = None;
+    // The portrait cover art (capsule) is loaded on its own independent pipeline,
+    // separate from the wide background art above.
+    let mut cover_img: Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> = None;
+    let cover_slot: ImageSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let mut requested_cover_id: Option<i32> = None;
+    // Artwork (and the lazy detail fetches) are only rendered/loaded once input
+    // has been idle for a short delay, so scrolling stays smooth — no per-frame
+    // image resize, decode, or CLI fetch while flicking through the list.
+    let mut last_input_at = Instant::now()
+        .checked_sub(std::time::Duration::from_secs(1))
+        .unwrap_or_else(Instant::now);
+    let mut artwork_sel_id: Option<i32> = None;
+    /// How long input must be idle before artwork/details load and render.
+    const ARTWORK_IDLE: std::time::Duration = std::time::Duration::from_millis(200);
 
     // Setup event handlers
     let mut config = Config::new()?;
@@ -214,32 +258,61 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     height: detail_area.height.saturating_sub(2),
                 };
 
-                // Cover art as the Detail background — top-aligned, aspect-
-                // correct, and fading out toward the bottom so the lower detail
-                // rows stay readable.
-                if let Some(mut image) = img.clone() {
-                    let h = (inner.width / 2).min(inner.height);
-                    let w = (h * 2).min(inner.width);
-                    if w >= 2 && h >= 1 {
-                        fade_bottom(&mut image, rgb(theme::BG_DARK));
-                        let area = Rect {
-                            x: inner.x + (inner.width - w) / 2,
-                            y: inner.y,
-                            width: w,
-                            height: h,
-                        };
+                let desc_width = inner.width.saturating_mul(82) / 100;
+
+                // The art renders whenever it is loaded. While scrolling it is
+                // cleared (see the selection-change handler below), so nothing
+                // paints or resizes mid-scroll; a keypress that doesn't change
+                // the selection (e.g. launching a game) leaves it in place. The
+                // faded background art covers the *whole* pane; the portrait
+                // cover art sits on top, filling the region above `ID | Name`.
+                if inner.width >= 2 && inner.height >= 1 {
+                    if let Some(image) = img.clone() {
+                        let mut bg =
+                            cover_resize(&image, inner.width as u32, inner.height as u32 * 2);
+                        fade_bottom(&mut bg, rgb(theme::BG_DARK));
                         frame.render_widget(
-                            Image::with_img(image)
+                            Image::with_img(bg)
                                 .color_mode(ColorMode::Rgba)
                                 .style(Style::default().bg(theme::BG)),
-                            area,
+                            inner,
                         );
+                    }
+
+                    let content_h = ui::detail::content_height(
+                        selected.as_ref(),
+                        browser.expand_description,
+                        desc_width.saturating_sub(1),
+                    )
+                    .min(inner.height);
+                    let gap = inner.height.saturating_sub(content_h);
+                    if gap >= 4 {
+                        if let Some(image) = cover_img.clone() {
+                            if image.width() > 0 && image.height() > 0 {
+                                // Width from the art's aspect: box_w px = 2*gap * W/H.
+                                let box_w = ((gap as u32 * 2 * image.width()
+                                    / image.height())
+                                    as u16)
+                                    .clamp(1, inner.width);
+                                let thumb = cover_resize(&image, box_w as u32, gap as u32 * 2);
+                                frame.render_widget(
+                                    Image::with_img(thumb)
+                                        .color_mode(ColorMode::Rgba)
+                                        .style(Style::default().bg(theme::BG)),
+                                    Rect {
+                                        x: inner.x,
+                                        y: inner.y,
+                                        width: box_w,
+                                        height: gap,
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
 
-                // The (transparent) detail table draws its frame and rows over
-                // the art. Wrap the description to ~82% of the inner width.
-                let desc_width = inner.width.saturating_mul(82) / 100;
+                // The (transparent) detail table draws its frame and bottom-
+                // aligned rows over the art.
                 frame.render_widget(
                     ui::detail::detail(
                         selected.as_ref(),
@@ -529,6 +602,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
         if let Event::Input(input) = events.next()? {
+            // Mark input activity so artwork/details hold off until scrolling
+            // (or any keypress burst) settles.
+            last_input_at = Instant::now();
             match app.mode {
                 Mode::Terminated(_) => {
                     if let KeyCode::Char('q') = input {
@@ -1405,13 +1481,44 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
         if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install {
             let selected = browser.selected();
-            artwork::select(
-                selected.as_ref(),
-                &mut requested_img_id,
-                &mut img,
-                &image_slot,
-            );
+            let cur_sel = selected.as_ref().map(|g| g.id);
+            if cur_sel != artwork_sel_id {
+                // Selection changed: drop the stale art and forget the requested
+                // id so the new art reloads once input settles — nothing shows
+                // (or loads) for games merely scrolled past.
+                artwork_sel_id = cur_sel;
+                img = None;
+                cover_img = None;
+                requested_img_id = None;
+                requested_cover_id = None;
+            }
+            // Always adopt any in-flight (off-thread) loads.
             artwork::poll(requested_img_id, &mut img, &image_slot);
+            artwork::poll(requested_cover_id, &mut cover_img, &cover_slot);
+            // Only once input has been idle a moment do we kick off the
+            // (off-thread) artwork load and the lazy detail fetches (Proton tier
+            // + store metadata) — so flicking through the list doesn't fire a
+            // download/CLI call per game and scrolling stays smooth.
+            if last_input_at.elapsed() >= ARTWORK_IDLE {
+                artwork::select(
+                    selected.as_ref(),
+                    artwork::ImageKind::Background,
+                    &mut requested_img_id,
+                    &mut img,
+                    &image_slot,
+                );
+                artwork::select(
+                    selected.as_ref(),
+                    artwork::ImageKind::Cover,
+                    &mut requested_cover_id,
+                    &mut cover_img,
+                    &cover_slot,
+                );
+                if let Some(g) = selected.as_ref() {
+                    g.query_proton();
+                    g.query_info();
+                }
+            }
         }
     }
 
@@ -1494,5 +1601,36 @@ fn main() {
             let _ = execute!(io::stdout(), DisableMouseCapture);
             println!("{}", err);
         }
+    }
+}
+
+#[cfg(test)]
+mod cover_tests {
+    use super::cover_resize;
+
+    fn img(w: u32, h: u32) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
+        image::ImageBuffer::from_pixel(w, h, image::Rgba([10, 20, 30, 255]))
+    }
+
+    #[test]
+    fn cover_resize_fills_exact_target_dimensions() {
+        // Wide source into a taller target -> crops left/right, fills exactly.
+        let out = cover_resize(&img(200, 100), 20, 40);
+        assert_eq!((out.width(), out.height()), (20, 40));
+
+        // Tall source into a wider target -> crops top/bottom, fills exactly.
+        let out = cover_resize(&img(100, 200), 40, 20);
+        assert_eq!((out.width(), out.height()), (40, 20));
+
+        // Source already at the target aspect -> still the exact target size.
+        let out = cover_resize(&img(80, 160), 10, 20);
+        assert_eq!((out.width(), out.height()), (10, 20));
+    }
+
+    #[test]
+    fn cover_resize_returns_clone_on_degenerate_input() {
+        let zero = image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::new(0, 0);
+        let out = cover_resize(&zero, 10, 10);
+        assert_eq!((out.width(), out.height()), (0, 0));
     }
 }

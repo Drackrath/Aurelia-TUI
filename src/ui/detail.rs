@@ -65,15 +65,10 @@ fn blank() -> Row<'static> {
     Row::new(Vec::<Cell>::new())
 }
 
-/// Build the detail table for the selected game (or an empty-state table). The
-/// description is listed as its own row; `expand` controls whether it is capped
-/// at [`DESC_COLLAPSED_LINES`] or shown in full, and `width` is the value
-/// column width used to wrap it. `height` is the panel's inner height: the rows
-/// are bottom-aligned within it (padded from the top) so the details sit in the
-/// faded lower part of the cover art.
-pub fn detail(game: Option<&Game>, expand: bool, width: u16, height: u16) -> Table<'static> {
-    // Build the content rows and track their total height so we can pad the top
-    // and bottom-align them.
+/// Build the detail content rows for `game` and their total height. Does *not*
+/// trigger the lazy metadata fetches — the caller does that only when the
+/// selection has settled (so scrolling doesn't fire a fetch per game).
+fn build_content(game: Option<&Game>, expand: bool, width: u16) -> (Vec<Row<'static>>, u16) {
     let mut content: Vec<Row> = Vec::new();
     let mut content_h: u16 = 0;
     let mut push = |row: Row<'static>, h: u16| {
@@ -83,11 +78,6 @@ pub fn detail(game: Option<&Game>, expand: bool, width: u16, height: u16) -> Tab
 
     match game {
         Some(g) => {
-            // Kick off the lazy background fetches for the Proton tier and the
-            // store metadata (developer/publisher/description).
-            g.query_proton();
-            g.query_info();
-
             // Table head (id, name).
             push(
                 Row::new(vec![
@@ -188,8 +178,27 @@ pub fn detail(game: Option<&Game>, expand: bool, width: u16, height: u16) -> Tab
         ),
     }
 
+    (content, content_h)
+}
+
+/// The total height (rows) the detail content occupies — i.e. the height of the
+/// region from the `ID | Name` head down to the bottom of the panel. The caller
+/// uses this to size the cover art into the empty space above it.
+pub fn content_height(game: Option<&Game>, expand: bool, width: u16) -> u16 {
+    build_content(game, expand, width).1
+}
+
+/// Build the detail table for the selected game (or an empty-state table). The
+/// description is listed as its own row; `expand` controls whether it is capped
+/// at [`DESC_COLLAPSED_LINES`] or shown in full, and `width` is the value
+/// column width used to wrap it. `height` is the panel's inner height: the rows
+/// are bottom-aligned within it (padded from the top) so the cover art fills the
+/// empty space above the `ID | Name` head.
+pub fn detail(game: Option<&Game>, expand: bool, width: u16, height: u16) -> Table<'static> {
+    let (content, content_h) = build_content(game, expand, width);
+
     // Bottom-align: pad the top with empty rows so the content sits against the
-    // panel's lower edge, in the faded part of the cover art.
+    // panel's lower edge, leaving the top free for the cover art.
     let pad = height.saturating_sub(content_h);
     let mut rows: Vec<Row> = Vec::with_capacity(pad as usize + content.len());
     rows.resize_with(pad as usize, blank);
