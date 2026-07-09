@@ -2331,3 +2331,751 @@ pub fn play(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
         }
     }
 }
+
+// ===========================================================================
+// Extended CLI surface (added for the UI to call later): version pinning +
+// downgrade, launch scripts, collections, runtime plugins (umu / luxtorpeda /
+// steam-runtime), per-game config overrides, and extended `play` flags. Purely
+// additive: wrappers over `run_json` (or the streaming pattern for `downgrade`)
+// plus the JSON structs they deserialize into.
+// ===========================================================================
+
+/// One depot's current manifest id on a branch, from `aurelia manifests <id>
+/// [--depot <n>] --json`. The CLI emits a TOP-LEVEL array of these; used for
+/// version discovery ahead of a [`downgrade`]. Every field is `#[serde(default)]`
+/// so a missing key never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DepotManifestInfo {
+    #[serde(default)]
+    pub depot_id: u32,
+    #[serde(default)]
+    pub depot_name: Option<String>,
+    #[serde(default)]
+    pub branch: String,
+    #[serde(default)]
+    pub manifest_id: u64,
+    #[serde(default)]
+    pub size: u64,
+}
+
+/// A game's install & version-pin state, from `aurelia available <id> --json`.
+/// `pinned_manifests` maps each depot id (a *string* key) to its pinned manifest.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AvailableJson {
+    #[serde(default)]
+    pub app_id: u32,
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub install_path: Option<String>,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub pinned_manifests: std::collections::BTreeMap<String, u64>,
+}
+
+/// The result of pinning a game, from `aurelia pin <id> --json`. `manifests`
+/// maps each depot id (a *string* key) to the manifest it was pinned to.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PinJson {
+    #[serde(default)]
+    pub app_id: u32,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub manifests: std::collections::BTreeMap<String, u64>,
+}
+
+/// One launch-script entry, from `aurelia scripts list --json` (the `scripts`
+/// array). `path` is the resolved script path, or `None` when unresolved.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ScriptEntryJson {
+    #[serde(default)]
+    pub app_id: u32,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// A launch script's resolved path and contents, from `aurelia scripts show <id>
+/// --json`. When no script resolves, the CLI omits `contents` and reports
+/// `exists:false` with a null `path`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ScriptShowJson {
+    #[serde(default)]
+    pub app_id: u32,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub exists: bool,
+    #[serde(default)]
+    pub contents: Option<String>,
+}
+
+/// One library collection, from `aurelia collections list --json` (the
+/// `collections` array) or `aurelia collections show <name> --json`. `list`
+/// carries `count`; `show` carries `app_ids` — both default so either shape
+/// parses. `kind` is `"built-in"`, `"static"`, or `"dynamic"`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CollectionJson {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub dynamic: bool,
+    /// Member count (present on `list`).
+    #[serde(default)]
+    pub count: Option<u64>,
+    /// Member app ids (present on `show`; empty for a dynamic collection).
+    #[serde(default)]
+    pub app_ids: Vec<u32>,
+}
+
+/// A runtime plugin's on-disk install (the `installed` field of a plugin
+/// `status` object). `null` when nothing is installed. Mirrors the CLI's
+/// `InstalledUmu`/`InstalledLux` structs (`version`, `root`, `entry`).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PluginInstalledJson {
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub root: Option<String>,
+    #[serde(default)]
+    pub entry: Option<String>,
+}
+
+/// The status of an optional runtime plugin, from `aurelia umu status --json` or
+/// `aurelia luxtorpeda status --json`. `installed` is an object (or `null`)
+/// describing the on-disk payload.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PluginStatusJson {
+    #[serde(default)]
+    pub enabled: bool,
+    /// An externally-managed install path, if the user configured one.
+    #[serde(default)]
+    pub custom_path: Option<String>,
+    #[serde(default)]
+    pub installed: Option<PluginInstalledJson>,
+    /// Whether the host is Linux (the plugins only run there).
+    #[serde(default)]
+    pub linux: bool,
+}
+
+impl PluginStatusJson {
+    /// Whether the plugin's payload is present on disk.
+    pub fn is_installed(&self) -> bool {
+        self.installed.is_some()
+    }
+}
+
+/// The master Windows Steam runtime prefix status, from
+/// `aurelia steam-runtime status --json`. Paths arrive as strings; every field
+/// is `#[serde(default)]` so a missing/renamed key never breaks parsing.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SteamRuntimeStatusJson {
+    #[serde(default)]
+    pub root_dir: Option<String>,
+    #[serde(default)]
+    pub wine_prefix: Option<String>,
+    /// Prefix layout, `"root"` or `"pfx"`.
+    #[serde(default)]
+    pub layout_kind: String,
+    #[serde(default)]
+    pub steam_exe: Option<String>,
+    #[serde(default)]
+    pub steam_exe_present: bool,
+    #[serde(default)]
+    pub steam_runtime_runner: Option<String>,
+    #[serde(default)]
+    pub steam_runtime_runner_configured: bool,
+}
+
+/// A game's per-game launch settings, from `aurelia config game <id> --json`.
+/// `runner` is one of `"auto"`, `"luxtorpeda"`, or `"umu"`. Note the CLI keys are
+/// `forced_proton_version` / `platform_preference` / `runner` / `launch_script`
+/// (there is no `pinned`/`pinned_manifests` here — use [`available`] for those).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GameConfigJson {
+    #[serde(default)]
+    pub app_id: u32,
+    #[serde(default)]
+    pub forced_proton_version: Option<String>,
+    #[serde(default)]
+    pub platform_preference: Option<String>,
+    #[serde(default)]
+    pub runner: String,
+    #[serde(default)]
+    pub launch_script: Option<String>,
+}
+
+/// Extra launch flags for [`play_with`], mirroring `aurelia play`'s options.
+/// All default to unset/false (see [`PlayOpts::default`]).
+#[derive(Debug, Clone, Default)]
+pub struct PlayOpts {
+    /// Force a specific Proton/Wine runner (`--proton <v>`).
+    pub proton: Option<String>,
+    /// Run the Windows executable directly, no Proton layer (`--windows`).
+    pub windows: bool,
+    /// Route through the luxtorpeda native-engine plugin (`--native-engine`).
+    pub native_engine: bool,
+    /// Wrap the launch through umu-launcher (`--umu`).
+    pub umu: bool,
+    /// Wrap the launch with a specific launch script (`--script <p>`).
+    pub script: Option<String>,
+    /// Bypass all launch scripts for this launch (`--no-script`).
+    pub no_script: bool,
+    /// Launch with real Steam integration (`--steam`).
+    pub steam: bool,
+    /// Skip the pre-launch update check (`--noupdate`).
+    pub noupdate: bool,
+}
+
+/// List each depot's current manifest id per branch (`aurelia manifests <id>
+/// [--depot <n>] --json`). The CLI emits a TOP-LEVEL array; `depot` restricts it
+/// to one depot. Steam only exposes *current* ids — older ones live on SteamDB.
+pub fn manifests(app_id: i32, depot: Option<u32>) -> Result<Vec<DepotManifestInfo>, STError> {
+    let id = app_id.to_string();
+    let depot_str = depot.map(|d| d.to_string());
+    let mut args: Vec<&str> = vec!["manifests", &id];
+    if let Some(d) = &depot_str {
+        args.push("--depot");
+        args.push(d);
+    }
+    let value = run_json(&args)?;
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Report a game's install & version-pin state (`aurelia available <id> --json`).
+pub fn available(app_id: i32) -> Result<AvailableJson, STError> {
+    let value = run_json(&["available", &app_id.to_string()])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Pin a game to its currently-installed manifests, locking Aurelia's updates
+/// (`aurelia pin <id> --json`).
+pub fn pin(app_id: i32) -> Result<PinJson, STError> {
+    let value = run_json(&["pin", &app_id.to_string()])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Remove a game's version pin (`aurelia unpin <id> --json`). Returns whether the
+/// game had actually been pinned (`was_pinned`).
+pub fn unpin(app_id: i32) -> Result<bool, STError> {
+    let value = run_json(&["unpin", &app_id.to_string()])?;
+    Ok(value
+        .get("was_pinned")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false))
+}
+
+/// Install specific (usually older) depot manifests and pin them — a downgrade
+/// (`aurelia downgrade <id> --manifest <depot>:<manifest> ... --json`), streaming
+/// progress into the shared status cell exactly like [`update`]. `overrides`
+/// pairs each depot id with the manifest id to install; `branch` records the
+/// build's branch, `verify` runs an integrity pass afterward, and `no_pin` skips
+/// pinning. Blocks until it finishes; intended to be run on a dedicated thread.
+pub fn downgrade(
+    app_id: i32,
+    overrides: &[(u32, u64)],
+    branch: Option<&str>,
+    verify: bool,
+    no_pin: bool,
+    status: Arc<Mutex<Option<GameStatus>>>,
+) {
+    set_status(&status, "processing...");
+
+    let id = app_id.to_string();
+    // Use the combined `--manifest <depot>:<manifest>` form, one per override.
+    let manifest_args: Vec<String> = overrides
+        .iter()
+        .map(|(depot, manifest)| format!("{}:{}", depot, manifest))
+        .collect();
+    let mut args: Vec<&str> = vec!["downgrade", &id];
+    for m in &manifest_args {
+        args.push("--manifest");
+        args.push(m);
+    }
+    if let Some(b) = branch {
+        args.push("--branch");
+        args.push(b);
+    }
+    if verify {
+        args.push("--verify");
+    }
+    if no_pin {
+        args.push("--no-pin");
+    }
+    args.push("--json");
+
+    let spawned = process::Command::new(bin())
+        .args(&args)
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn();
+
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(err) => {
+            set_status(&status, &format!("Failed: {}", err));
+            log!("Failed to spawn aurelia downgrade", app_id, err);
+            return;
+        }
+    };
+
+    // Drain stdout (the small terminal result object) on a helper thread so the
+    // child never blocks writing it while we consume the larger stderr stream.
+    let stdout = child.stdout.take();
+    let result_handle = thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(mut out) = stdout {
+            let _ = out.read_to_string(&mut buf);
+        }
+        buf
+    });
+
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<ProgressJson>(line) {
+                if event.event.as_deref() == Some("progress") {
+                    let label = match event.state.as_deref() {
+                        Some("verifying") => "verifying",
+                        Some("moving") => "moving",
+                        Some("queued") => "queued",
+                        _ => "downgrading",
+                    };
+                    set_status(
+                        &status,
+                        &format!(
+                            "{} {:.1}%{}",
+                            label,
+                            event.percent.unwrap_or(0.0),
+                            eta_suffix(event.eta_seconds)
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    let result = result_handle.join().unwrap_or_default();
+    let _ = child.wait();
+
+    match serde_json::from_str::<serde_json::Value>(result.trim()) {
+        Ok(value) => {
+            if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+                set_status(&status, &format!("Failed: {}", err));
+            } else if value.get("status").and_then(|s| s.as_str()) == Some("downgraded") {
+                set_status(&status, "downgraded");
+            } else {
+                set_status(&status, "done");
+            }
+        }
+        // No parseable result line: fall back on the exit status we already waited on.
+        Err(_) => set_status(&status, "downgraded"),
+    }
+}
+
+/// Print the resolved launch-script directory (`aurelia scripts dir --json`).
+pub fn scripts_dir() -> Result<String, STError> {
+    let value = run_json(&["scripts", "dir"])?;
+    Ok(value
+        .get("script_dir")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string())
+}
+
+/// List app ids that have a launch script and their resolved paths
+/// (`aurelia scripts list --json`). The CLI wraps the list under a `scripts` key;
+/// accept a bare array too. An empty/null result yields an empty `Vec`.
+pub fn scripts_list() -> Result<Vec<ScriptEntryJson>, STError> {
+    let value = run_json(&["scripts", "list"])?;
+    let list = match value.get("scripts") {
+        Some(scripts) => scripts.clone(),
+        None => value,
+    };
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
+}
+
+/// Show a game's resolved launch-script path and contents
+/// (`aurelia scripts show <id> --json`).
+pub fn scripts_show(app_id: i32) -> Result<ScriptShowJson, STError> {
+    let value = run_json(&["scripts", "show", &app_id.to_string()])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Scaffold a launch script for a game (`aurelia scripts new <id> [--force]
+/// --json`), returning the created script's path.
+pub fn scripts_new(app_id: i32, force: bool) -> Result<String, STError> {
+    let id = app_id.to_string();
+    let mut args: Vec<&str> = vec!["scripts", "new", &id];
+    if force {
+        args.push("--force");
+    }
+    let value = run_json(&args)?;
+    Ok(value
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string())
+}
+
+/// Delete the dir-based launch script for a game (`aurelia scripts remove <id>
+/// --json`). The result is ignored beyond error detection.
+pub fn scripts_remove(app_id: i32) -> Result<(), STError> {
+    run_json(&["scripts", "remove", &app_id.to_string()])?;
+    Ok(())
+}
+
+/// List all library collections (`aurelia collections list --json`). The CLI
+/// wraps the list under a `collections` key (alongside `namespace_version`);
+/// accept a bare array too. An empty/null result yields an empty `Vec`.
+pub fn collections_list() -> Result<Vec<CollectionJson>, STError> {
+    let value = run_json(&["collections", "list"])?;
+    let list = match value.get("collections") {
+        Some(collections) => collections.clone(),
+        None => value,
+    };
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    Ok(serde_json::from_value(list)?)
+}
+
+/// Show a single collection's games (`aurelia collections show <name> --json`).
+/// Accepts a collection name or id.
+pub fn collection_show(name: &str) -> Result<CollectionJson, STError> {
+    let value = run_json(&["collections", "show", name])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Create a new static collection (`aurelia collections create <name> --json`).
+pub fn collection_create(name: &str) -> Result<(), STError> {
+    run_json(&["collections", "create", name])?;
+    Ok(())
+}
+
+/// Mark a collection for deletion (`aurelia collections delete <name> --json`).
+pub fn collection_delete(name: &str) -> Result<(), STError> {
+    run_json(&["collections", "delete", name])?;
+    Ok(())
+}
+
+/// Rename a collection (`aurelia collections rename <name> <new_name> --json`).
+pub fn collection_rename(name: &str, new_name: &str) -> Result<(), STError> {
+    run_json(&["collections", "rename", name, new_name])?;
+    Ok(())
+}
+
+/// Add app ids to a collection (`aurelia collections add <name> <ids...> --json`).
+pub fn collection_add(name: &str, app_ids: &[i32]) -> Result<(), STError> {
+    let ids: Vec<String> = app_ids.iter().map(|id| id.to_string()).collect();
+    let mut args: Vec<&str> = vec!["collections", "add", name];
+    for id in &ids {
+        args.push(id);
+    }
+    run_json(&args)?;
+    Ok(())
+}
+
+/// Remove app ids from a collection
+/// (`aurelia collections remove <name> <ids...> --json`).
+pub fn collection_remove(name: &str, app_ids: &[i32]) -> Result<(), STError> {
+    let ids: Vec<String> = app_ids.iter().map(|id| id.to_string()).collect();
+    let mut args: Vec<&str> = vec!["collections", "remove", name];
+    for id in &ids {
+        args.push(id);
+    }
+    run_json(&args)?;
+    Ok(())
+}
+
+/// Download Steam's collections and merge them locally
+/// (`aurelia collections pull --json`). Needs a login.
+pub fn collections_pull() -> Result<(), STError> {
+    run_json(&["collections", "pull"])?;
+    Ok(())
+}
+
+/// Upload local collections to Steam (`aurelia collections push --yes --json`).
+/// `--yes` is passed because `--json` mode requires the confirmation to be
+/// skipped explicitly. This mutates the Steam account.
+pub fn collection_push() -> Result<(), STError> {
+    run_json(&["collections", "push", "--yes"])?;
+    Ok(())
+}
+
+/// Reconcile local and Steam collections — pull then push
+/// (`aurelia collections sync --yes --json`). `--yes` is passed because `--json`
+/// mode requires the confirmation to be skipped explicitly. Mutates the account.
+pub fn collection_sync() -> Result<(), STError> {
+    run_json(&["collections", "sync", "--yes"])?;
+    Ok(())
+}
+
+/// Report the umu-launcher plugin status (`aurelia umu status --json`).
+pub fn umu_status() -> Result<PluginStatusJson, STError> {
+    let value = run_json(&["umu", "status"])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Enable the umu-launcher plugin master toggle (`aurelia umu enable --json`).
+pub fn umu_enable() -> Result<(), STError> {
+    run_json(&["umu", "enable"])?;
+    Ok(())
+}
+
+/// Disable the umu-launcher plugin master toggle (`aurelia umu disable --json`).
+pub fn umu_disable() -> Result<(), STError> {
+    run_json(&["umu", "disable"])?;
+    Ok(())
+}
+
+/// Download/refresh the umu-launcher payload (`aurelia umu install --json`).
+/// Blocks until the download completes (no progress stream in `--json` mode);
+/// run on a dedicated thread. The result is ignored beyond error detection.
+pub fn umu_install() -> Result<(), STError> {
+    run_json(&["umu", "install"])?;
+    Ok(())
+}
+
+/// Re-fetch the latest umu-launcher payload (`aurelia umu update --json`). Blocks
+/// until done (no progress stream in `--json` mode); run on a dedicated thread.
+pub fn umu_update() -> Result<(), STError> {
+    run_json(&["umu", "update"])?;
+    Ok(())
+}
+
+/// Remove the downloaded umu-launcher payload (`aurelia umu uninstall --json`).
+pub fn umu_uninstall() -> Result<(), STError> {
+    run_json(&["umu", "uninstall"])?;
+    Ok(())
+}
+
+/// Report the luxtorpeda plugin status (`aurelia luxtorpeda status --json`).
+pub fn lux_status() -> Result<PluginStatusJson, STError> {
+    let value = run_json(&["luxtorpeda", "status"])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Enable the luxtorpeda plugin master toggle
+/// (`aurelia luxtorpeda enable --json`).
+pub fn lux_enable() -> Result<(), STError> {
+    run_json(&["luxtorpeda", "enable"])?;
+    Ok(())
+}
+
+/// Disable the luxtorpeda plugin master toggle
+/// (`aurelia luxtorpeda disable --json`).
+pub fn lux_disable() -> Result<(), STError> {
+    run_json(&["luxtorpeda", "disable"])?;
+    Ok(())
+}
+
+/// Download/refresh the luxtorpeda payload (`aurelia luxtorpeda install --json`).
+/// Blocks until done (no progress stream in `--json` mode); run on a thread.
+pub fn lux_install() -> Result<(), STError> {
+    run_json(&["luxtorpeda", "install"])?;
+    Ok(())
+}
+
+/// Re-fetch the latest luxtorpeda payload (`aurelia luxtorpeda update --json`).
+/// Blocks until done (no progress stream in `--json` mode); run on a thread.
+pub fn lux_update() -> Result<(), STError> {
+    run_json(&["luxtorpeda", "update"])?;
+    Ok(())
+}
+
+/// Remove the downloaded luxtorpeda payload
+/// (`aurelia luxtorpeda uninstall --json`).
+pub fn lux_uninstall() -> Result<(), STError> {
+    run_json(&["luxtorpeda", "uninstall"])?;
+    Ok(())
+}
+
+/// Report the master Windows Steam runtime prefix status
+/// (`aurelia steam-runtime status --json`).
+pub fn steam_runtime_status() -> Result<SteamRuntimeStatusJson, STError> {
+    let value = run_json(&["steam-runtime", "status"])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Install Steam into the master Windows prefix
+/// (`aurelia steam-runtime install --json`). Blocks until the install finishes
+/// (no progress stream in `--json` mode); run on a dedicated thread. Requires a
+/// configured `steam_runtime_runner`.
+pub fn steam_runtime_install() -> Result<(), STError> {
+    run_json(&["steam-runtime", "install"])?;
+    Ok(())
+}
+
+/// Back up the master prefix and reinstall Steam into it
+/// (`aurelia steam-runtime repair --json`). Blocks until done (no progress stream
+/// in `--json` mode); run on a dedicated thread.
+pub fn steam_runtime_repair() -> Result<(), STError> {
+    run_json(&["steam-runtime", "repair"])?;
+    Ok(())
+}
+
+/// Show a game's per-game launch settings (`aurelia config game <id> --json`).
+/// Called with no mutating flags, it just prints the current config.
+pub fn config_game_show(app_id: i32) -> Result<GameConfigJson, STError> {
+    let value = run_json(&["config", "game", &app_id.to_string()])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Set a game's forced Proton/Wine version
+/// (`aurelia config game <id> --proton <v> --json`).
+pub fn config_game_set_proton(app_id: i32, version: &str) -> Result<(), STError> {
+    run_json(&["config", "game", &app_id.to_string(), "--proton", version])?;
+    Ok(())
+}
+
+/// Clear a game's forced Proton/Wine version, reverting to the global default
+/// (`aurelia config game <id> --clear-proton --json`).
+pub fn config_game_clear_proton(app_id: i32) -> Result<(), STError> {
+    run_json(&["config", "game", &app_id.to_string(), "--clear-proton"])?;
+    Ok(())
+}
+
+/// Set a game's platform target, `"windows"` or `"linux"`
+/// (`aurelia config game <id> --platform <p> --json`).
+pub fn config_game_set_platform(app_id: i32, platform: &str) -> Result<(), STError> {
+    run_json(&[
+        "config",
+        "game",
+        &app_id.to_string(),
+        "--platform",
+        platform,
+    ])?;
+    Ok(())
+}
+
+/// Route a game through the luxtorpeda native-engine plugin, or clear that
+/// routing (`aurelia config game <id> --native-engine|--no-native-engine --json`).
+pub fn config_game_set_native_engine(app_id: i32, on: bool) -> Result<(), STError> {
+    let flag = if on {
+        "--native-engine"
+    } else {
+        "--no-native-engine"
+    };
+    run_json(&["config", "game", &app_id.to_string(), flag])?;
+    Ok(())
+}
+
+/// Route a game through the umu-launcher plugin, or clear that routing
+/// (`aurelia config game <id> --umu|--no-umu --json`).
+pub fn config_game_set_umu(app_id: i32, on: bool) -> Result<(), STError> {
+    let flag = if on { "--umu" } else { "--no-umu" };
+    run_json(&["config", "game", &app_id.to_string(), flag])?;
+    Ok(())
+}
+
+/// Set a game's per-game launch script
+/// (`aurelia config game <id> --launch-script <path> --json`).
+pub fn config_game_set_launch_script(app_id: i32, path: &str) -> Result<(), STError> {
+    run_json(&[
+        "config",
+        "game",
+        &app_id.to_string(),
+        "--launch-script",
+        path,
+    ])?;
+    Ok(())
+}
+
+/// Clear a game's per-game launch script, falling back to the auto-detected one
+/// (`aurelia config game <id> --no-launch-script --json`).
+pub fn config_game_clear_launch_script(app_id: i32) -> Result<(), STError> {
+    run_json(&[
+        "config",
+        "game",
+        &app_id.to_string(),
+        "--no-launch-script",
+    ])?;
+    Ok(())
+}
+
+/// Launch a game with extra options (`aurelia play <id> [flags] --json`),
+/// mirroring [`play`] but appending the flags set in `opts`. Intended to be run
+/// on a dedicated thread.
+pub fn play_with(id: i32, opts: PlayOpts, status: Arc<Mutex<Option<GameStatus>>>) {
+    set_status(&status, "launching...");
+
+    let id_str = id.to_string();
+    let mut args: Vec<&str> = vec!["play", &id_str];
+    if let Some(p) = &opts.proton {
+        args.push("--proton");
+        args.push(p);
+    }
+    if opts.windows {
+        args.push("--windows");
+    }
+    if opts.native_engine {
+        args.push("--native-engine");
+    }
+    if opts.umu {
+        args.push("--umu");
+    }
+    if let Some(s) = &opts.script {
+        args.push("--script");
+        args.push(s);
+    }
+    if opts.no_script {
+        args.push("--no-script");
+    }
+    if opts.steam {
+        args.push("--steam");
+    }
+    if opts.noupdate {
+        args.push("--noupdate");
+    }
+    args.push("--json");
+
+    let output = process::Command::new(bin())
+        .args(&args)
+        .stdin(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .output();
+
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            match serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+                Ok(value) => {
+                    if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+                        set_status(&status, &format!("Failed: {}", err));
+                    } else {
+                        set_status(&status, "ran (finished)");
+                    }
+                }
+                Err(_) => {
+                    if output.status.success() {
+                        set_status(&status, "ran (finished)");
+                    } else {
+                        set_status(&status, "Failed to launch");
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            set_status(&status, &format!("failed to launch: {}", err));
+            log!("Failed to spawn aurelia play", id, err);
+        }
+    }
+}

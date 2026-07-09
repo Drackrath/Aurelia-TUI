@@ -2,14 +2,18 @@
 //! [`crate::browse::Browser`] state plus the shared [`crate::theme`], so the
 //! event loop only has to lay them out.
 
+pub mod actions;
 pub mod chat;
 pub mod cloud;
 pub mod achievements;
 pub mod account;
 pub mod branches;
+pub mod collections;
 pub mod config;
 pub mod confirm;
 pub mod depots;
+pub mod engine;
+pub mod game_config;
 pub mod install_picker;
 pub mod detail;
 pub mod dlc;
@@ -28,6 +32,7 @@ pub mod relink;
 pub mod running;
 pub mod status;
 pub mod tabs;
+pub mod versions;
 pub mod wallet;
 pub mod workshop;
 

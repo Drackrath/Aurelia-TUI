@@ -81,7 +81,7 @@ pub fn status_bar(browser: &Browser, account: Option<&str>) -> Paragraph<'static
         ("[/]", " filter  "),
         ("[Tab]", " view  "),
         ("[s]", " sort  "),
-        ("[Enter]", " play  "),
+        ("[Enter]", " actions  "),
         ("[d]", " install  "),
         ("[f]", " fav  "),
         ("[r]", " refresh  "),

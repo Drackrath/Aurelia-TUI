@@ -464,6 +464,132 @@ pub struct Browser {
     /// status bar until the next keypress. Keeps a failed backend call from
     /// having to crash the whole TUI to report itself.
     pub notice: Option<String>,
+
+    // --- Actions menu (per-game command palette) ---
+    /// Whether the per-game Actions menu is open. This is the primary way to
+    /// reach the many per-game actions without memorising 40 hotkeys; the base
+    /// keymap keeps single-key accelerators for power users.
+    pub show_actions: bool,
+    /// The highlighted row within the *filtered* Actions menu.
+    pub actions_index: usize,
+    /// The live filter query typed into the Actions menu (empty = show all).
+    pub actions_filter: String,
+    /// The app id the Actions menu was opened for.
+    actions_app_id: i32,
+
+    // --- Versions & pinning overlay ---
+    /// Whether the versions/pinning overlay is open.
+    pub show_versions: bool,
+    /// Per-depot current manifest ids for the game (from `aurelia manifests`).
+    pub versions_manifests: Vec<aurelia::DepotManifestInfo>,
+    /// Install + pin state for the game (from `aurelia available`): the pin flag
+    /// and the pinned depot→manifest map.
+    pub versions_available: Option<aurelia::AvailableJson>,
+    /// The highlighted depot row within the versions overlay.
+    pub versions_index: usize,
+    /// The app id the versions overlay is showing.
+    versions_app_id: i32,
+    /// A transient status line for the versions overlay (pin/unpin/downgrade).
+    pub versions_status: String,
+    /// When `Some`, the overlay is prompting for a manifest id to downgrade the
+    /// highlighted depot to (older ids come from SteamDB); the buffer is what the
+    /// user has typed so far.
+    pub versions_input: Option<String>,
+    /// Shared status cell for an in-flight downgrade, streamed from the backend
+    /// worker thread (mirrors a game's install status).
+    pub versions_busy: Arc<Mutex<Option<GameStatus>>>,
+
+    // --- Game settings overlay (per-game config overrides + launch script) ---
+    /// Whether the per-game settings overlay is open.
+    pub show_game_config: bool,
+    /// The game's current config overrides (from `aurelia config game`).
+    pub game_config: Option<aurelia::GameConfigJson>,
+    /// The game's launch-script state (from `aurelia scripts show`).
+    pub game_script: Option<aurelia::ScriptShowJson>,
+    /// Installed Proton runtime names, for cycling the per-game forced runtime.
+    pub game_config_protons: Vec<String>,
+    /// The highlighted settings row.
+    pub game_config_index: usize,
+    /// The app id the settings overlay is showing.
+    game_config_app_id: i32,
+    /// A transient status line for the settings overlay.
+    pub game_config_status: String,
+
+    // --- Collections overlay ---
+    /// Whether the collections overlay is open.
+    pub show_collections: bool,
+    /// The account's Steam library collections (from `aurelia collections list`).
+    pub collections: Vec<aurelia::CollectionJson>,
+    /// The highlighted collection row.
+    pub collections_index: usize,
+    /// A transient status line for the collections overlay.
+    pub collections_status: String,
+    /// The game the overlay adds to / removes from the highlighted collection.
+    collections_app_id: i32,
+    /// The inline text-entry buffer for creating a collection (None = not
+    /// prompting).
+    pub collections_input: Option<String>,
+
+    // --- Runtime plugins overlay (umu / luxtorpeda / steam-runtime) ---
+    /// Whether the runtime-plugins overlay is open.
+    pub show_engine: bool,
+    /// umu-launcher plugin status.
+    pub engine_umu: Option<aurelia::PluginStatusJson>,
+    /// luxtorpeda plugin status.
+    pub engine_lux: Option<aurelia::PluginStatusJson>,
+    /// Steam Linux Runtime status.
+    pub engine_steam_runtime: Option<aurelia::SteamRuntimeStatusJson>,
+    /// The highlighted plugin row (0 = umu, 1 = luxtorpeda, 2 = steam-runtime).
+    pub engine_index: usize,
+    /// A transient status line for the plugins overlay.
+    pub engine_status: String,
+    /// Shared cell for an in-flight plugin install/update/repair, run on a worker
+    /// thread so the long network download doesn't freeze the TUI (mirrors
+    /// `proton_status` / `versions_busy`). Holds `"working…"` while running, then
+    /// a terminal `"Done."`/`"Failed: …"` that [`Browser::poll_engine`] adopts.
+    pub engine_busy: Arc<Mutex<Option<GameStatus>>>,
+}
+
+/// A single entry in the per-game Actions menu. Selecting one runs the same
+/// code path as its base-keymap accelerator (see the `Mode::Browse` dispatch in
+/// `main.rs`), so the menu and the hotkeys never drift apart.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
+    Play,
+    Install,
+    PauseResume,
+    CancelInstall,
+    Update,
+    Verify,
+    Uninstall,
+    Versions,
+    Branches,
+    GameSettings,
+    Proton,
+    Engine,
+    LaunchOptions,
+    Dlc,
+    Workshop,
+    Cloud,
+    Achievements,
+    Depots,
+    Inventory,
+    Move,
+    Relink,
+    Import,
+    Collections,
+    Favourite,
+    Hide,
+}
+
+/// One rendered row of the Actions menu: the action, the category header it
+/// sits under, its human label, and the base-keymap key that also triggers it
+/// (shown as a hint; empty when the action is reachable only from the menu).
+pub struct ActionRow {
+    pub action: Action,
+    pub category: &'static str,
+    pub label: &'static str,
+    pub key: &'static str,
 }
 
 impl Browser {
@@ -593,6 +719,38 @@ impl Browser {
             install_picker_index: 0,
             game_refresh_slot: Arc::new(Mutex::new(Vec::new())),
             notice: None,
+            show_actions: false,
+            actions_index: 0,
+            actions_filter: String::new(),
+            actions_app_id: 0,
+            show_versions: false,
+            versions_manifests: Vec::new(),
+            versions_available: None,
+            versions_index: 0,
+            versions_app_id: 0,
+            versions_status: String::new(),
+            versions_input: None,
+            versions_busy: Arc::new(Mutex::new(None)),
+            show_game_config: false,
+            game_config: None,
+            game_script: None,
+            game_config_protons: Vec::new(),
+            game_config_index: 0,
+            game_config_app_id: 0,
+            game_config_status: String::new(),
+            show_collections: false,
+            collections: Vec::new(),
+            collections_index: 0,
+            collections_status: String::new(),
+            collections_app_id: 0,
+            collections_input: None,
+            show_engine: false,
+            engine_umu: None,
+            engine_lux: None,
+            engine_steam_runtime: None,
+            engine_index: 0,
+            engine_status: String::new(),
+            engine_busy: Arc::new(Mutex::new(None)),
         };
         browser.reset_selection();
         browser
@@ -2635,6 +2793,689 @@ impl Browser {
     pub fn clear_query(&mut self) {
         self.query.clear();
         self.reset_selection();
+    }
+
+    // --- Actions menu (per-game command palette) ---
+
+    /// The full set of actions applicable to the currently selected game, before
+    /// the live filter is applied. Rows are grouped by `category` in display
+    /// order; only actions that make sense for the game's state are included
+    /// (e.g. `Update`/`Uninstall` only when installed, `Install` only when not).
+    pub fn action_candidates(&self) -> Vec<ActionRow> {
+        let mut rows: Vec<ActionRow> = Vec::new();
+        let Some(game) = self.selected() else {
+            return rows;
+        };
+        let installed = game.installed;
+        let installing = self.install_phase(&game) != InstallPhase::Idle;
+
+        const PLAY: &str = "Play & Install";
+        if installing {
+            rows.push(ActionRow { action: Action::PauseResume, category: PLAY, label: "Pause / resume install", key: "Space" });
+            rows.push(ActionRow { action: Action::CancelInstall, category: PLAY, label: "Cancel install", key: "c" });
+        }
+        if installed {
+            rows.push(ActionRow { action: Action::Play, category: PLAY, label: "Play", key: "" });
+            rows.push(ActionRow { action: Action::Update, category: PLAY, label: "Update", key: "U" });
+            rows.push(ActionRow { action: Action::Verify, category: PLAY, label: "Verify files", key: "v" });
+            rows.push(ActionRow { action: Action::Uninstall, category: PLAY, label: "Uninstall", key: "x" });
+        } else if !installing {
+            rows.push(ActionRow { action: Action::Install, category: PLAY, label: "Install", key: "d" });
+        }
+
+        const VERS: &str = "Versions";
+        rows.push(ActionRow { action: Action::Versions, category: VERS, label: "Versions & pinning", key: "V" });
+        rows.push(ActionRow { action: Action::Branches, category: VERS, label: "Beta branches", key: "b" });
+
+        const RT: &str = "Runtimes & config";
+        rows.push(ActionRow { action: Action::GameSettings, category: RT, label: "Game settings", key: "" });
+        rows.push(ActionRow { action: Action::Proton, category: RT, label: "Proton runtimes", key: "P" });
+        rows.push(ActionRow { action: Action::Engine, category: RT, label: "Runtime plugins (umu / lux)", key: "E" });
+        rows.push(ActionRow { action: Action::LaunchOptions, category: RT, label: "Launch options", key: "L" });
+
+        const CONTENT: &str = "Content";
+        rows.push(ActionRow { action: Action::Dlc, category: CONTENT, label: "DLC", key: "D" });
+        rows.push(ActionRow { action: Action::Workshop, category: CONTENT, label: "Workshop", key: "W" });
+        rows.push(ActionRow { action: Action::Cloud, category: CONTENT, label: "Cloud saves", key: "C" });
+        rows.push(ActionRow { action: Action::Achievements, category: CONTENT, label: "Achievements", key: "a" });
+        rows.push(ActionRow { action: Action::Depots, category: CONTENT, label: "Depots", key: "o" });
+        rows.push(ActionRow { action: Action::Inventory, category: CONTENT, label: "Inventory", key: "I" });
+
+        const LIB: &str = "Library";
+        if installed {
+            rows.push(ActionRow { action: Action::Move, category: LIB, label: "Move install", key: "M" });
+            rows.push(ActionRow { action: Action::Relink, category: LIB, label: "Relink install", key: "K" });
+        }
+        rows.push(ActionRow { action: Action::Import, category: LIB, label: "Import install", key: "N" });
+        rows.push(ActionRow { action: Action::Collections, category: LIB, label: "Collections", key: "O" });
+        rows.push(ActionRow { action: Action::Favourite, category: LIB, label: "Toggle favourite", key: "f" });
+        rows.push(ActionRow { action: Action::Hide, category: LIB, label: "Hide game", key: "H" });
+
+        rows
+    }
+
+    /// The Actions menu rows after applying the live `actions_filter` (a
+    /// case-insensitive substring match on the label). This is what the menu
+    /// widget renders and what the selection indexes into.
+    pub fn filtered_actions(&self) -> Vec<ActionRow> {
+        let needle = self.actions_filter.to_lowercase();
+        self.action_candidates()
+            .into_iter()
+            .filter(|r| needle.is_empty() || r.label.to_lowercase().contains(&needle))
+            .collect()
+    }
+
+    /// Open the Actions menu for the selected game.
+    pub fn open_actions(&mut self) {
+        if let Some(game) = self.selected() {
+            self.actions_app_id = game.id;
+            self.actions_index = 0;
+            self.actions_filter.clear();
+            self.show_actions = true;
+        }
+    }
+
+    /// Close the Actions menu.
+    pub fn close_actions(&mut self) {
+        self.show_actions = false;
+        self.actions_filter.clear();
+        self.actions_index = 0;
+    }
+
+    pub fn actions_next(&mut self) {
+        let n = self.filtered_actions().len();
+        if n == 0 {
+            self.actions_index = 0;
+            return;
+        }
+        self.actions_index = (self.actions_index + 1) % n;
+    }
+
+    pub fn actions_previous(&mut self) {
+        let n = self.filtered_actions().len();
+        if n == 0 {
+            self.actions_index = 0;
+            return;
+        }
+        self.actions_index = if self.actions_index == 0 {
+            n - 1
+        } else {
+            self.actions_index - 1
+        };
+    }
+
+    /// The action currently highlighted in the (filtered) menu.
+    pub fn selected_action(&self) -> Option<Action> {
+        self.filtered_actions().get(self.actions_index).map(|r| r.action)
+    }
+
+    /// Append to the Actions menu filter (typing narrows the list).
+    pub fn actions_filter_push(&mut self, c: char) {
+        self.actions_filter.push(c);
+        self.actions_index = 0;
+    }
+
+    /// Backspace the Actions menu filter.
+    pub fn actions_filter_pop(&mut self) {
+        self.actions_filter.pop();
+        self.actions_index = 0;
+    }
+
+    // --- Versions & pinning overlay ---
+
+    /// Fetch the game's per-depot current manifests and pin/install state and
+    /// open the overlay. A fetch error simply opens an empty overlay.
+    pub fn open_versions(&mut self, app_id: i32) {
+        self.versions_manifests = aurelia::manifests(app_id, None).unwrap_or_default();
+        self.versions_available = aurelia::available(app_id).ok();
+        self.versions_index = 0;
+        self.versions_app_id = app_id;
+        self.versions_status.clear();
+        self.versions_input = None;
+        self.show_versions = true;
+    }
+
+    /// Close the versions overlay and drop its contents.
+    pub fn close_versions(&mut self) {
+        self.show_versions = false;
+        self.versions_manifests.clear();
+        self.versions_available = None;
+        self.versions_index = 0;
+        self.versions_input = None;
+    }
+
+    pub fn versions_app_id(&self) -> i32 {
+        self.versions_app_id
+    }
+
+    pub fn selected_manifest(&self) -> Option<&aurelia::DepotManifestInfo> {
+        self.versions_manifests.get(self.versions_index)
+    }
+
+    pub fn versions_next(&mut self) {
+        if self.versions_manifests.is_empty() {
+            self.versions_index = 0;
+            return;
+        }
+        self.versions_index = (self.versions_index + 1) % self.versions_manifests.len();
+    }
+
+    pub fn versions_previous(&mut self) {
+        if self.versions_manifests.is_empty() {
+            self.versions_index = 0;
+            return;
+        }
+        self.versions_index = if self.versions_index == 0 {
+            self.versions_manifests.len() - 1
+        } else {
+            self.versions_index - 1
+        };
+    }
+
+    fn refresh_available(&mut self) {
+        self.versions_available = aurelia::available(self.versions_app_id).ok();
+    }
+
+    /// Whether the game is currently pinned (so its updates are held).
+    pub fn is_pinned(&self) -> bool {
+        self.versions_available.as_ref().map(|a| a.pinned).unwrap_or(false)
+    }
+
+    /// Pin the game at its currently-installed depot versions (`aurelia pin`).
+    pub fn pin_current(&mut self) {
+        self.versions_status = match aurelia::pin(self.versions_app_id) {
+            Ok(p) => format!("Pinned {} depot(s) at the installed version.", p.manifests.len()),
+            Err(e) => format!("Pin failed: {e}"),
+        };
+        self.refresh_available();
+    }
+
+    /// Clear the game's pin so it updates normally again (`aurelia unpin`).
+    pub fn unpin_current(&mut self) {
+        self.versions_status = match aurelia::unpin(self.versions_app_id) {
+            Ok(true) => "Unpinned — updates re-enabled.".to_string(),
+            Ok(false) => "Was not pinned.".to_string(),
+            Err(e) => format!("Unpin failed: {e}"),
+        };
+        self.refresh_available();
+    }
+
+    /// Start prompting for a manifest id to downgrade the highlighted depot to.
+    pub fn begin_downgrade_input(&mut self) {
+        if self.selected_manifest().is_some() {
+            self.versions_input = Some(String::new());
+        }
+    }
+
+    pub fn versions_input_push(&mut self, c: char) {
+        if c.is_ascii_digit() {
+            if let Some(s) = self.versions_input.as_mut() {
+                s.push(c);
+            }
+        }
+    }
+
+    pub fn versions_input_pop(&mut self) {
+        if let Some(s) = self.versions_input.as_mut() {
+            s.pop();
+        }
+    }
+
+    pub fn cancel_downgrade_input(&mut self) {
+        self.versions_input = None;
+    }
+
+    /// Kick off a downgrade of the highlighted depot to the typed manifest id on
+    /// a worker thread. Progress streams into `versions_busy` (shown in the
+    /// overlay); the download runs off the UI thread so the TUI stays responsive.
+    pub fn start_downgrade(&mut self) {
+        let Some(depot) = self.selected_manifest().map(|m| m.depot_id) else {
+            return;
+        };
+        let Some(text) = self.versions_input.take() else {
+            return;
+        };
+        let Ok(manifest) = text.trim().parse::<u64>() else {
+            self.versions_status = "Invalid manifest id.".to_string();
+            return;
+        };
+        let app_id = self.versions_app_id;
+        let busy = Arc::clone(&self.versions_busy);
+        self.versions_status = format!("Downgrading depot {depot} → manifest {manifest}…");
+        thread::spawn(move || {
+            aurelia::downgrade(app_id, &[(depot, manifest)], None, false, false, busy);
+        });
+    }
+
+    /// The current downgrade worker status, if one is in flight (or just finished).
+    pub fn downgrade_busy_text(&self) -> Option<String> {
+        self.versions_busy
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.state.clone())
+    }
+
+    // --- Game settings overlay (per-game config overrides + launch script) ---
+
+    /// Number of editable rows in the game-settings overlay: Runner, Forced
+    /// Proton, Platform, Launch script.
+    pub const GAME_CONFIG_ROWS: usize = 4;
+
+    /// Fetch the game's per-game config, launch-script state, and the installed
+    /// Proton list (for cycling the forced runtime) and open the overlay.
+    pub fn open_game_config(&mut self, app_id: i32) {
+        self.game_config = aurelia::config_game_show(app_id).ok();
+        self.game_script = aurelia::scripts_show(app_id).ok();
+        self.game_config_protons = aurelia::proton_list()
+            .map(|v| v.into_iter().filter(|p| p.installed).map(|p| p.name).collect())
+            .unwrap_or_default();
+        self.game_config_app_id = app_id;
+        self.game_config_index = 0;
+        self.game_config_status.clear();
+        self.show_game_config = true;
+    }
+
+    pub fn close_game_config(&mut self) {
+        self.show_game_config = false;
+        self.game_config = None;
+        self.game_script = None;
+        self.game_config_protons.clear();
+        self.game_config_index = 0;
+    }
+
+    pub fn game_config_next(&mut self) {
+        self.game_config_index = (self.game_config_index + 1) % Self::GAME_CONFIG_ROWS;
+    }
+
+    pub fn game_config_previous(&mut self) {
+        self.game_config_index = if self.game_config_index == 0 {
+            Self::GAME_CONFIG_ROWS - 1
+        } else {
+            self.game_config_index - 1
+        };
+    }
+
+    fn refresh_game_config(&mut self) {
+        let id = self.game_config_app_id;
+        self.game_config = aurelia::config_game_show(id).ok();
+        self.game_script = aurelia::scripts_show(id).ok();
+    }
+
+    /// Activate (Enter) the highlighted settings row, cycling its value.
+    pub fn game_config_activate(&mut self) {
+        let id = self.game_config_app_id;
+        match self.game_config_index {
+            // Runner: auto → umu → luxtorpeda → auto.
+            0 => {
+                let cur = self
+                    .game_config
+                    .as_ref()
+                    .map(|c| c.runner.as_str())
+                    .unwrap_or("auto");
+                let res = match cur {
+                    "umu" => {
+                        let _ = aurelia::config_game_set_umu(id, false);
+                        aurelia::config_game_set_native_engine(id, true)
+                    }
+                    "luxtorpeda" => aurelia::config_game_set_native_engine(id, false),
+                    _ => aurelia::config_game_set_umu(id, true),
+                };
+                self.game_config_status = match res {
+                    Ok(()) => "Runner updated.".to_string(),
+                    Err(e) => format!("Failed: {e}"),
+                };
+            }
+            // Forced Proton: cycle installed runtimes, then wrap to cleared.
+            1 => {
+                let cur = self
+                    .game_config
+                    .as_ref()
+                    .and_then(|c| c.forced_proton_version.clone());
+                let res = if self.game_config_protons.is_empty() {
+                    aurelia::config_game_clear_proton(id)
+                } else {
+                    let next = match cur.as_deref() {
+                        None => Some(0),
+                        Some(v) => match self.game_config_protons.iter().position(|p| p == v) {
+                            Some(i) if i + 1 < self.game_config_protons.len() => Some(i + 1),
+                            _ => None,
+                        },
+                    };
+                    match next {
+                        Some(i) => aurelia::config_game_set_proton(id, &self.game_config_protons[i]),
+                        None => aurelia::config_game_clear_proton(id),
+                    }
+                };
+                self.game_config_status = match res {
+                    Ok(()) => "Forced Proton updated.".to_string(),
+                    Err(e) => format!("Failed: {e}"),
+                };
+            }
+            // Platform: toggle windows ↔ linux.
+            2 => {
+                let cur = self
+                    .game_config
+                    .as_ref()
+                    .and_then(|c| c.platform_preference.clone());
+                let next = match cur.as_deref() {
+                    Some("windows") => "linux",
+                    _ => "windows",
+                };
+                self.game_config_status = match aurelia::config_game_set_platform(id, next) {
+                    Ok(()) => format!("Platform set to {next}."),
+                    Err(e) => format!("Failed: {e}"),
+                };
+            }
+            // Launch script: create one if none, else clear the per-game override.
+            _ => {
+                let has_script = self.game_script.as_ref().map(|s| s.exists).unwrap_or(false);
+                let res = if has_script {
+                    aurelia::config_game_clear_launch_script(id)
+                } else {
+                    aurelia::scripts_new(id, false).map(|_| ())
+                };
+                self.game_config_status = match res {
+                    Ok(()) if has_script => "Launch-script override cleared.".to_string(),
+                    Ok(()) => "Launch script created.".to_string(),
+                    Err(e) => format!("Failed: {e}"),
+                };
+            }
+        }
+        self.refresh_game_config();
+    }
+
+    /// Delete the game's launch-script file (`aurelia scripts remove`).
+    pub fn game_config_remove_script(&mut self) {
+        let id = self.game_config_app_id;
+        self.game_config_status = match aurelia::scripts_remove(id) {
+            Ok(()) => "Launch script removed.".to_string(),
+            Err(e) => format!("Failed: {e}"),
+        };
+        self.refresh_game_config();
+    }
+
+    // --- Collections overlay ---
+
+    /// Fetch the account's collections and open the overlay for `app_id` (the
+    /// game that add/remove will act on).
+    pub fn open_collections(&mut self, app_id: i32) {
+        self.collections = aurelia::collections_list().unwrap_or_default();
+        self.collections_app_id = app_id;
+        self.collections_index = 0;
+        self.collections_status.clear();
+        self.collections_input = None;
+        self.show_collections = true;
+    }
+
+    pub fn close_collections(&mut self) {
+        self.show_collections = false;
+        self.collections.clear();
+        self.collections_index = 0;
+        self.collections_input = None;
+    }
+
+    pub fn selected_collection(&self) -> Option<&aurelia::CollectionJson> {
+        self.collections.get(self.collections_index)
+    }
+
+    pub fn collections_next(&mut self) {
+        if self.collections.is_empty() {
+            self.collections_index = 0;
+            return;
+        }
+        self.collections_index = (self.collections_index + 1) % self.collections.len();
+    }
+
+    pub fn collections_previous(&mut self) {
+        if self.collections.is_empty() {
+            self.collections_index = 0;
+            return;
+        }
+        self.collections_index = if self.collections_index == 0 {
+            self.collections.len() - 1
+        } else {
+            self.collections_index - 1
+        };
+    }
+
+    fn refresh_collections(&mut self) {
+        self.collections = aurelia::collections_list().unwrap_or_default();
+        if self.collections_index >= self.collections.len() {
+            self.collections_index = self.collections.len().saturating_sub(1);
+        }
+    }
+
+    pub fn add_game_to_selected_collection(&mut self) {
+        let app = self.collections_app_id;
+        let Some(name) = self.selected_collection().map(|c| c.name.clone()) else {
+            return;
+        };
+        self.collections_status = match aurelia::collection_add(&name, &[app]) {
+            Ok(()) => format!("Added to \"{name}\"."),
+            Err(e) => format!("Failed: {e}"),
+        };
+        self.refresh_collections();
+    }
+
+    pub fn remove_game_from_selected_collection(&mut self) {
+        let app = self.collections_app_id;
+        let Some(name) = self.selected_collection().map(|c| c.name.clone()) else {
+            return;
+        };
+        self.collections_status = match aurelia::collection_remove(&name, &[app]) {
+            Ok(()) => format!("Removed from \"{name}\"."),
+            Err(e) => format!("Failed: {e}"),
+        };
+        self.refresh_collections();
+    }
+
+    pub fn delete_selected_collection(&mut self) {
+        let Some(name) = self.selected_collection().map(|c| c.name.clone()) else {
+            return;
+        };
+        self.collections_status = match aurelia::collection_delete(&name) {
+            Ok(()) => format!("Deleted \"{name}\"."),
+            Err(e) => format!("Failed: {e}"),
+        };
+        self.refresh_collections();
+    }
+
+    pub fn collections_pull(&mut self) {
+        self.collections_status = match aurelia::collections_pull() {
+            Ok(()) => "Pulled collections from Steam Cloud.".to_string(),
+            Err(e) => format!("Failed: {e}"),
+        };
+        self.refresh_collections();
+    }
+
+    pub fn collections_push(&mut self) {
+        self.collections_status = match aurelia::collection_push() {
+            Ok(()) => "Pushed collections to Steam Cloud.".to_string(),
+            Err(e) => format!("Failed: {e}"),
+        };
+    }
+
+    pub fn collections_sync(&mut self) {
+        self.collections_status = match aurelia::collection_sync() {
+            Ok(()) => "Synced collections with Steam Cloud.".to_string(),
+            Err(e) => format!("Failed: {e}"),
+        };
+        self.refresh_collections();
+    }
+
+    /// Start the inline "new collection" prompt.
+    pub fn begin_collection_create(&mut self) {
+        self.collections_input = Some(String::new());
+    }
+
+    pub fn collections_input_push(&mut self, c: char) {
+        if let Some(s) = self.collections_input.as_mut() {
+            s.push(c);
+        }
+    }
+
+    pub fn collections_input_pop(&mut self) {
+        if let Some(s) = self.collections_input.as_mut() {
+            s.pop();
+        }
+    }
+
+    pub fn cancel_collection_create(&mut self) {
+        self.collections_input = None;
+    }
+
+    pub fn commit_collection_create(&mut self) {
+        let Some(name) = self.collections_input.take() else {
+            return;
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        self.collections_status = match aurelia::collection_create(&name) {
+            Ok(()) => format!("Created \"{name}\"."),
+            Err(e) => format!("Failed: {e}"),
+        };
+        self.refresh_collections();
+    }
+
+    // --- Runtime plugins overlay (umu / luxtorpeda / steam-runtime) ---
+
+    /// Number of plugin rows: umu, luxtorpeda, steam-runtime.
+    pub const ENGINE_ROWS: usize = 3;
+
+    /// Fetch the status of all three runtime plugins and open the overlay.
+    pub fn open_engine(&mut self) {
+        self.engine_umu = aurelia::umu_status().ok();
+        self.engine_lux = aurelia::lux_status().ok();
+        self.engine_steam_runtime = aurelia::steam_runtime_status().ok();
+        self.engine_index = 0;
+        self.engine_status.clear();
+        self.show_engine = true;
+    }
+
+    pub fn close_engine(&mut self) {
+        self.show_engine = false;
+        self.engine_umu = None;
+        self.engine_lux = None;
+        self.engine_steam_runtime = None;
+        self.engine_index = 0;
+    }
+
+    pub fn engine_next(&mut self) {
+        self.engine_index = (self.engine_index + 1) % Self::ENGINE_ROWS;
+    }
+
+    pub fn engine_previous(&mut self) {
+        self.engine_index = if self.engine_index == 0 {
+            Self::ENGINE_ROWS - 1
+        } else {
+            self.engine_index - 1
+        };
+    }
+
+    fn refresh_engine(&mut self) {
+        self.engine_umu = aurelia::umu_status().ok();
+        self.engine_lux = aurelia::lux_status().ok();
+        self.engine_steam_runtime = aurelia::steam_runtime_status().ok();
+    }
+
+    /// Run a plugin action on the highlighted row. `key` is the in-overlay key
+    /// pressed: e enable, d disable, i install, U update, x uninstall (umu/lux);
+    /// i install, r repair (steam-runtime). Unsupported combos are ignored.
+    ///
+    /// Enable/disable/uninstall are instant config/fs writes, done synchronously.
+    /// Install/update/repair download payloads over the network, so they run on a
+    /// worker thread (streaming into `engine_busy`, adopted by [`poll_engine`]) —
+    /// the overlay shows `working…` and the TUI stays responsive. A second action
+    /// is ignored while one is in flight.
+    pub fn engine_action(&mut self, key: char) {
+        if self.engine_busy.lock().unwrap().is_some() {
+            return;
+        }
+
+        // Instant, synchronous verbs.
+        let sync_res: Option<Result<(), STError>> = match (self.engine_index, key) {
+            (0, 'e') => Some(aurelia::umu_enable()),
+            (0, 'd') => Some(aurelia::umu_disable()),
+            (0, 'x') => Some(aurelia::umu_uninstall()),
+            (1, 'e') => Some(aurelia::lux_enable()),
+            (1, 'd') => Some(aurelia::lux_disable()),
+            (1, 'x') => Some(aurelia::lux_uninstall()),
+            _ => None,
+        };
+        if let Some(r) = sync_res {
+            self.engine_status = match r {
+                Ok(()) => "Done.".to_string(),
+                Err(e) => format!("Failed: {e}"),
+            };
+            self.refresh_engine();
+            return;
+        }
+
+        // Long, network-bound verbs: run off the UI thread.
+        type Op = fn() -> Result<(), STError>;
+        let op: Option<Op> = match (self.engine_index, key) {
+            (0, 'i') => Some(aurelia::umu_install),
+            (0, 'U') => Some(aurelia::umu_update),
+            (1, 'i') => Some(aurelia::lux_install),
+            (1, 'U') => Some(aurelia::lux_update),
+            (2, 'i') => Some(aurelia::steam_runtime_install),
+            (2, 'r') => Some(aurelia::steam_runtime_repair),
+            _ => None,
+        };
+        if let Some(op) = op {
+            let busy = Arc::clone(&self.engine_busy);
+            *busy.lock().unwrap() = Some(GameStatus {
+                state: "working…".to_string(),
+                installdir: String::new(),
+                size: 0.0,
+            });
+            self.engine_status.clear();
+            thread::spawn(move || {
+                let state = match op() {
+                    Ok(()) => "Done.".to_string(),
+                    Err(e) => format!("Failed: {e}"),
+                };
+                *busy.lock().unwrap() = Some(GameStatus {
+                    state,
+                    installdir: String::new(),
+                    size: 0.0,
+                });
+            });
+        }
+    }
+
+    /// The in-flight plugin-worker status (`working…`), if one is running.
+    pub fn engine_busy_text(&self) -> Option<String> {
+        self.engine_busy
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|s| s.state == "working…")
+            .map(|s| s.state.clone())
+    }
+
+    /// Adopt a finished plugin worker's result: once `engine_busy` holds a
+    /// terminal status (not `working…`), move it to `engine_status`, clear the
+    /// cell, and re-fetch the plugin statuses. Called once per event loop.
+    pub fn poll_engine(&mut self) {
+        if !self.show_engine {
+            return;
+        }
+        let terminal = {
+            let guard = self.engine_busy.lock().unwrap();
+            match guard.as_ref() {
+                Some(s) if s.state != "working…" => Some(s.state.clone()),
+                _ => None,
+            }
+        };
+        if let Some(state) = terminal {
+            self.engine_status = state;
+            *self.engine_busy.lock().unwrap() = None;
+            self.refresh_engine();
+        }
     }
 }
 

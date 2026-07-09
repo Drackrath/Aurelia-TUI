@@ -13,7 +13,7 @@ use tui::{backend::CrosstermBackend, Terminal};
 
 use tui_image_rgba_updated::{ColorMode, Image};
 
-use aurelia_tui::browse::{Browser, Filter, InstallPhase, View};
+use aurelia_tui::browse::{Action, Browser, Filter, InstallPhase, View};
 use aurelia_tui::theme;
 use aurelia_tui::ui;
 use aurelia_tui::util::event::{Event, Events};
@@ -416,6 +416,41 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::wallet::wallet(&browser), area);
                 }
 
+                // Per-game Actions menu (command palette) floats above the library.
+                if browser.show_actions {
+                    let area = ui::centered_rect(60, 78, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::actions::actions(&browser), area);
+                }
+
+                // Versions & pinning overlay floats above everything.
+                if browser.show_versions {
+                    let area = ui::centered_rect(72, 78, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::versions::versions(&browser), area);
+                }
+
+                // Per-game settings overlay floats above everything.
+                if browser.show_game_config {
+                    let area = ui::centered_rect(58, 45, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::game_config::game_config(&browser), area);
+                }
+
+                // Collections overlay floats above everything.
+                if browser.show_collections {
+                    let area = ui::centered_rect(58, 62, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::collections::collections(&browser), area);
+                }
+
+                // Runtime plugins overlay floats above everything.
+                if browser.show_engine {
+                    let area = ui::centered_rect(62, 45, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::engine::engine(&browser), area);
+                }
+
                 // "Not installed — install now?" prompt floats above the library.
                 if browser.confirm_install {
                     if let Some(game) = browser.selected() {
@@ -615,7 +650,193 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     // Any keypress dismisses a transient notice from the prior
                     // action (it is set again below if this action also fails).
                     browser.notice = None;
-                    if browser.show_cloud {
+                    if browser.show_actions {
+                        // Per-game Actions menu (command palette): arrows move,
+                        // typing filters, Enter runs the highlighted action via
+                        // the SAME code path as its base-keymap accelerator.
+                        match input {
+                            KeyCode::Esc => browser.close_actions(),
+                            KeyCode::Down => browser.actions_next(),
+                            KeyCode::Up => browser.actions_previous(),
+                            KeyCode::Backspace => browser.actions_filter_pop(),
+                            KeyCode::Char('\n') | KeyCode::Enter => {
+                                if let Some(action) = browser.selected_action() {
+                                    browser.close_actions();
+                                    if let Some(game) = browser.selected() {
+                                        match action {
+                                            Action::Play => {
+                                                if game.installed {
+                                                    client.run(&game)?;
+                                                } else {
+                                                    browser.confirm_install = true;
+                                                }
+                                            }
+                                            Action::Install => {
+                                                if !browser.open_install_picker(game.id) {
+                                                    let control =
+                                                        browser.begin_install(game.id, None);
+                                                    client.install(&game, control, None)?;
+                                                }
+                                            }
+                                            Action::PauseResume => {
+                                                match browser.install_phase(&game) {
+                                                    InstallPhase::Active => {
+                                                        browser.pause_install(game.id)
+                                                    }
+                                                    InstallPhase::Paused => {
+                                                        let library =
+                                                            browser.install_library_for(game.id);
+                                                        let control = browser
+                                                            .begin_install(game.id, library.clone());
+                                                        client.install(&game, control, library)?;
+                                                    }
+                                                    InstallPhase::Idle => {}
+                                                }
+                                            }
+                                            Action::CancelInstall => {
+                                                if browser.install_phase(&game) != InstallPhase::Idle
+                                                {
+                                                    browser.stop_install(game.id);
+                                                }
+                                            }
+                                            Action::Update => client.update(&game)?,
+                                            Action::Verify => client.verify(&game)?,
+                                            Action::Uninstall => {
+                                                if game.installed {
+                                                    browser.confirm_uninstall = true;
+                                                }
+                                            }
+                                            Action::Versions => browser.open_versions(game.id),
+                                            Action::Branches => {
+                                                let _ = browser.open_branches(game.id);
+                                            }
+                                            Action::GameSettings => {
+                                                browser.open_game_config(game.id)
+                                            }
+                                            Action::Proton => {
+                                                let _ = browser.open_proton();
+                                            }
+                                            Action::Engine => browser.open_engine(),
+                                            Action::LaunchOptions => browser.open_launch(game.id),
+                                            Action::Dlc => {
+                                                let _ = browser.open_dlc(game.id);
+                                            }
+                                            Action::Workshop => browser.open_workshop(game.id),
+                                            Action::Cloud => browser.open_cloud(game.id),
+                                            Action::Achievements => browser.open_achievements(),
+                                            Action::Depots => browser.open_depots(game.id),
+                                            Action::Inventory => browser.open_inventory(game.id),
+                                            Action::Move => {
+                                                if game.installed {
+                                                    browser.open_move(game.id);
+                                                }
+                                            }
+                                            Action::Relink => {
+                                                if game.installed {
+                                                    browser.open_relink(game.id);
+                                                }
+                                            }
+                                            Action::Import => browser.open_import(game.id),
+                                            Action::Collections => {
+                                                browser.open_collections(game.id)
+                                            }
+                                            Action::Favourite => {
+                                                if config.favorite_games.contains(&game.id) {
+                                                    config
+                                                        .favorite_games
+                                                        .retain(|&x| x != game.id);
+                                                } else {
+                                                    config.favorite_games.push(game.id);
+                                                }
+                                                Config::save(&config)?;
+                                                browser.refresh();
+                                            }
+                                            Action::Hide => {
+                                                config.hidden_games.push(game.id);
+                                                Config::save(&config)?;
+                                                browser.refresh();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Char(c) => browser.actions_filter_push(c),
+                            _ => {}
+                        }
+                    } else if browser.show_versions {
+                        // Versions & pinning overlay. When prompting for a
+                        // downgrade manifest id, keys edit that input instead.
+                        if browser.versions_input.is_some() {
+                            match input {
+                                KeyCode::Esc => browser.cancel_downgrade_input(),
+                                KeyCode::Char('\n') | KeyCode::Enter => browser.start_downgrade(),
+                                KeyCode::Backspace => browser.versions_input_pop(),
+                                KeyCode::Char(c) => browser.versions_input_push(c),
+                                _ => {}
+                            }
+                        } else {
+                            match input {
+                                KeyCode::Esc | KeyCode::Char('q') => browser.close_versions(),
+                                KeyCode::Down | KeyCode::Char('j') => browser.versions_next(),
+                                KeyCode::Up | KeyCode::Char('k') => browser.versions_previous(),
+                                KeyCode::Char('p') => browser.pin_current(),
+                                KeyCode::Char('u') => browser.unpin_current(),
+                                KeyCode::Char('d') => browser.begin_downgrade_input(),
+                                _ => {}
+                            }
+                        }
+                    } else if browser.show_game_config {
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_game_config(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.game_config_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.game_config_previous(),
+                            KeyCode::Char('\n') | KeyCode::Enter => browser.game_config_activate(),
+                            KeyCode::Char('x') => browser.game_config_remove_script(),
+                            _ => {}
+                        }
+                    } else if browser.show_collections {
+                        // Collections overlay. In create mode, keys edit the name.
+                        if browser.collections_input.is_some() {
+                            match input {
+                                KeyCode::Esc => browser.cancel_collection_create(),
+                                KeyCode::Char('\n') | KeyCode::Enter => {
+                                    browser.commit_collection_create()
+                                }
+                                KeyCode::Backspace => browser.collections_input_pop(),
+                                KeyCode::Char(c) => browser.collections_input_push(c),
+                                _ => {}
+                            }
+                        } else {
+                            match input {
+                                KeyCode::Esc | KeyCode::Char('q') => browser.close_collections(),
+                                KeyCode::Down | KeyCode::Char('j') => browser.collections_next(),
+                                KeyCode::Up | KeyCode::Char('k') => browser.collections_previous(),
+                                KeyCode::Char('a') => browser.add_game_to_selected_collection(),
+                                KeyCode::Char('r') => {
+                                    browser.remove_game_from_selected_collection()
+                                }
+                                KeyCode::Char('n') => browser.begin_collection_create(),
+                                KeyCode::Char('x') => browser.delete_selected_collection(),
+                                KeyCode::Char('P') => browser.collections_pull(),
+                                KeyCode::Char('U') => browser.collections_push(),
+                                KeyCode::Char('S') => browser.collections_sync(),
+                                _ => {}
+                            }
+                        }
+                    } else if browser.show_engine {
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_engine(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.engine_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.engine_previous(),
+                            KeyCode::Char('e') => browser.engine_action('e'),
+                            KeyCode::Char('d') => browser.engine_action('d'),
+                            KeyCode::Char('i') => browser.engine_action('i'),
+                            KeyCode::Char('U') => browser.engine_action('U'),
+                            KeyCode::Char('x') => browser.engine_action('x'),
+                            KeyCode::Char('r') => browser.engine_action('r'),
+                            _ => {}
+                        }
+                    } else if browser.show_cloud {
                         // Steam Cloud overlay: Esc/q close, s syncs both ways,
                         // d downloads only, u uploads only; each re-fetches.
                         match input {
@@ -1136,16 +1357,23 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::PageDown => browser.page_down(10),
                             KeyCode::PageUp => browser.page_up(10),
                             KeyCode::Char('\n') | KeyCode::Enter => {
+                                // Open the per-game Actions menu (command palette).
+                                // Power users keep the direct accelerators below;
+                                // the menu is the discoverable path to all of them
+                                // (Play is the default-highlighted row).
+                                browser.open_actions();
+                            }
+                            KeyCode::Char('V') => {
                                 if let Some(game) = browser.selected() {
-                                    if game.installed {
-                                        client.run(&game)?;
-                                    } else {
-                                        // Not installed — offer to install it
-                                        // instead of launching nothing.
-                                        browser.confirm_install = true;
-                                    }
+                                    browser.open_versions(game.id);
                                 }
                             }
+                            KeyCode::Char('O') => {
+                                if let Some(game) = browser.selected() {
+                                    browser.open_collections(game.id);
+                                }
+                            }
+                            KeyCode::Char('E') => browser.open_engine(),
                             KeyCode::Char('d') => {
                                 if let Some(game) = browser.selected() {
                                     // Choose the install location first; fall back
@@ -1478,8 +1706,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // download), and `poll` adopts a completed download.
         // Adopt any completed market search / price result published off-thread.
         browser.poll_market();
+        // Adopt a finished runtime-plugin worker (install/update/repair).
+        browser.poll_engine();
 
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install && !browser.show_actions && !browser.show_versions && !browser.show_game_config && !browser.show_collections && !browser.show_engine {
             let selected = browser.selected();
             let cur_sel = selected.as_ref().map(|g| g.id);
             if cur_sel != artwork_sel_id {
