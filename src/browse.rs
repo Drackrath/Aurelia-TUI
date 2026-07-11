@@ -196,6 +196,12 @@ pub struct Browser {
     pub show_config: bool,
     /// The fetched launcher configuration, shown by the config overlay.
     pub config_info: Option<ConfigJson>,
+    /// The fetched network proxy setting (`aurelia config proxy`, v0.1.18), shown
+    /// in the config overlay. Fetched alongside `config_info` when it opens.
+    pub config_proxy: Option<aurelia::ProxyJson>,
+    /// The inline proxy-URL edit buffer in the config overlay (None = not
+    /// editing; Some = the URL the user is typing, empty to clear).
+    pub config_proxy_input: Option<String>,
     /// Whether the Steam Wallet overlay is open.
     pub show_wallet: bool,
     /// The fetched wallet balance, shown by the wallet overlay.
@@ -610,6 +616,8 @@ impl Browser {
             account_info: None,
             show_config: false,
             config_info: None,
+            config_proxy: None,
+            config_proxy_input: None,
             show_wallet: false,
             wallet_info: None,
             expand_description: false,
@@ -2315,6 +2323,8 @@ impl Browser {
     /// config overlay. Blocking; returns the backend error if the call fails.
     pub fn open_config(&mut self) -> Result<(), STError> {
         self.config_info = Some(aurelia::config_show()?);
+        // Best-effort: a missing/failed proxy read just leaves the row blank.
+        self.config_proxy = aurelia::config_proxy_show().ok();
         self.show_config = true;
         Ok(())
     }
@@ -2323,6 +2333,60 @@ impl Browser {
     pub fn close_config(&mut self) {
         self.show_config = false;
         self.config_info = None;
+        self.config_proxy = None;
+        self.config_proxy_input = None;
+    }
+
+    /// Re-fetch just the proxy setting (after an edit/clear), keeping the overlay
+    /// open.
+    fn refresh_proxy(&mut self) {
+        self.config_proxy = aurelia::config_proxy_show().ok();
+    }
+
+    /// Start editing the proxy URL, prefilling the current value.
+    pub fn begin_proxy_edit(&mut self) {
+        let current = self
+            .config_proxy
+            .as_ref()
+            .and_then(|p| p.url.clone())
+            .unwrap_or_default();
+        self.config_proxy_input = Some(current);
+    }
+
+    pub fn proxy_input_push(&mut self, c: char) {
+        if let Some(s) = self.config_proxy_input.as_mut() {
+            s.push(c);
+        }
+    }
+
+    pub fn proxy_input_pop(&mut self) {
+        if let Some(s) = self.config_proxy_input.as_mut() {
+            s.pop();
+        }
+    }
+
+    pub fn cancel_proxy_edit(&mut self) {
+        self.config_proxy_input = None;
+    }
+
+    /// Commit the typed proxy URL (`aurelia config proxy <url>`); an empty value
+    /// clears the proxy. A backend/validation error surfaces as a status notice.
+    pub fn commit_proxy_edit(&mut self) {
+        let Some(url) = self.config_proxy_input.take() else {
+            return;
+        };
+        if let Err(e) = aurelia::config_proxy_set(url.trim()) {
+            self.notice = Some(format!("Proxy: {e}"));
+        }
+        self.refresh_proxy();
+    }
+
+    /// Clear the configured proxy (`aurelia config proxy --clear`).
+    pub fn clear_proxy(&mut self) {
+        if let Err(e) = aurelia::config_proxy_clear() {
+            self.notice = Some(format!("Proxy: {e}"));
+        }
+        self.refresh_proxy();
     }
 
     /// Fetch the Steam Wallet balance (`aurelia wallet`) and open the overlay.

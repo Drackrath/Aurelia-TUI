@@ -29,6 +29,18 @@ fn yes_no(value: bool) -> String {
     if value { "on" } else { "off" }.to_string()
 }
 
+/// The Proxy row value: while editing, the typed URL with a caret; otherwise the
+/// configured URL (or a direct-connection placeholder).
+fn proxy_value(browser: &Browser) -> String {
+    if let Some(input) = &browser.config_proxy_input {
+        return format!("{input}_");
+    }
+    match browser.config_proxy.as_ref().and_then(|p| p.url.as_ref()) {
+        Some(url) if !url.is_empty() => url.clone(),
+        _ => "— (direct)".to_string(),
+    }
+}
+
 /// Build the settings overlay content from the fetched launcher configuration.
 pub fn config(browser: &Browser) -> Table<'static> {
     let rows = match &browser.config_info {
@@ -42,6 +54,11 @@ pub fn config(browser: &Browser) -> Table<'static> {
             row("Shared compat data", yes_no(info.use_shared_compat_data)),
             row("Windows discovery", yes_no(info.windows_steam_discovery_enabled)),
             row("Luxtorpeda", yes_no(info.luxtorpeda_enabled)),
+            row("Proxy", proxy_value(browser)),
+            row(
+                "Proxy bypass",
+                opt(&browser.config_proxy.as_ref().and_then(|p| p.no_proxy.clone())),
+            ),
         ],
         None => vec![Row::new(vec![Cell::from(Span::styled(
             "No configuration",
@@ -49,8 +66,14 @@ pub fn config(browser: &Browser) -> Table<'static> {
         ))])],
     };
 
+    let title = if browser.config_proxy_input.is_some() {
+        "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
+    } else {
+        "Settings ([o] presence · [e] edit proxy · [c] clear proxy)".to_string()
+    };
+
     Table::new(rows)
-        .block(theme::panel("Settings ([o] toggle presence)".to_string()))
+        .block(theme::panel(title))
         .style(theme::base())
         .widths(&[Constraint::Percentage(32), Constraint::Percentage(68)])
         .column_spacing(1)

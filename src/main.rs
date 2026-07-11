@@ -1262,21 +1262,37 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             _ => browser.show_account = false,
                         }
                     } else if browser.show_config {
-                        // Settings overlay: dismiss, or toggle presence in place.
-                        match input {
-                            KeyCode::Esc | KeyCode::Char('q') => browser.close_config(),
-                            KeyCode::Char('o') => {
-                                // Flip whatever the config currently shows (default
-                                // offline when unknown), then re-fetch to confirm.
-                                let online = browser
-                                    .config_info
-                                    .as_ref()
-                                    .map(|c| c.is_online())
-                                    .unwrap_or(false);
-                                let _ = aurelia::set_presence(!online);
-                                let _ = browser.open_config();
+                        // Settings overlay. While editing the proxy URL, keys edit
+                        // that input; otherwise dismiss / toggle presence / edit or
+                        // clear the proxy in place.
+                        if browser.config_proxy_input.is_some() {
+                            match input {
+                                KeyCode::Esc => browser.cancel_proxy_edit(),
+                                KeyCode::Char('\n') | KeyCode::Enter => {
+                                    browser.commit_proxy_edit()
+                                }
+                                KeyCode::Backspace => browser.proxy_input_pop(),
+                                KeyCode::Char(c) => browser.proxy_input_push(c),
+                                _ => {}
                             }
-                            _ => {}
+                        } else {
+                            match input {
+                                KeyCode::Esc | KeyCode::Char('q') => browser.close_config(),
+                                KeyCode::Char('o') => {
+                                    // Flip whatever the config currently shows
+                                    // (default offline when unknown), then re-fetch.
+                                    let online = browser
+                                        .config_info
+                                        .as_ref()
+                                        .map(|c| c.is_online())
+                                        .unwrap_or(false);
+                                    let _ = aurelia::set_presence(!online);
+                                    let _ = browser.open_config();
+                                }
+                                KeyCode::Char('e') => browser.begin_proxy_edit(),
+                                KeyCode::Char('c') => browser.clear_proxy(),
+                                _ => {}
+                            }
                         }
                     } else if browser.show_wallet {
                         // Any key dismisses the wallet overlay.

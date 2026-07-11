@@ -6,8 +6,8 @@
 
 use aurelia_tui::browse::{Action, Browser};
 use aurelia_tui::interface::aurelia::{
-    AvailableJson, CollectionJson, DepotManifestInfo, GameConfigJson, LibraryGameJson,
-    PluginStatusJson,
+    AvailableJson, CollectionJson, ConfigJson, DepotManifestInfo, GameConfigJson, LibraryGameJson,
+    PluginStatusJson, ProxyJson,
 };
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::ui;
@@ -210,4 +210,32 @@ fn engine_overlay_renders_plugin_status() {
     assert!(text.contains("luxtorpeda"), "luxtorpeda row renders");
     assert!(text.contains("Steam Linux Runtime"), "steam runtime row renders");
     assert!(text.contains("enabled"), "umu enabled status renders");
+}
+
+#[test]
+fn settings_overlay_renders_proxy() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(1, "Alpha", true)]);
+    browser.show_config = true;
+    // All ConfigJson fields default, so an empty object yields a valid config.
+    let info: ConfigJson = serde_json::from_value(serde_json::json!({})).unwrap();
+    browser.config_info = Some(info);
+    browser.config_proxy = Some(ProxyJson {
+        url: Some("http://host:8080".to_string()),
+        no_proxy: Some("localhost".to_string()),
+    });
+    let text = render(80, 18, |f| {
+        f.render_widget(ui::config::config(&browser), Rect::new(0, 0, 80, 18));
+    });
+    assert!(text.contains("Proxy"), "proxy row renders");
+    assert!(text.contains("http://host:8080"), "proxy url renders");
+    assert!(text.contains("localhost"), "proxy bypass renders");
+
+    // Editing shows the typed URL plus the edit-mode title hint.
+    browser.config_proxy_input = Some("http://new:1".to_string());
+    let text = render(80, 18, |f| {
+        f.render_widget(ui::config::config(&browser), Rect::new(0, 0, 80, 18));
+    });
+    assert!(text.contains("http://new:1"), "typed url shown while editing");
+    assert!(text.contains("save"), "edit-mode title hint shown");
 }

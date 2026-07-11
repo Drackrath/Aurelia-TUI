@@ -1207,6 +1207,47 @@ pub fn set_presence(online: bool) -> Result<(), STError> {
     Ok(())
 }
 
+/// The network proxy used for all HTTP(S) communication (Steam web endpoints,
+/// depot downloads, Proton/plugin lookups), from `aurelia config proxy --json`
+/// (v0.1.18). The Steam CM connection is not proxied.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ProxyJson {
+    /// The proxy URL (e.g. `http://host:8080`, `socks5://host:1080`), or `None`
+    /// for a direct connection.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Comma-separated hosts/domains that bypass the proxy (`NO_PROXY`).
+    #[serde(default)]
+    pub no_proxy: Option<String>,
+}
+
+/// Show the configured HTTP(S) proxy (`aurelia config proxy --json`). With no
+/// arguments the CLI prints — but does not change — the current setting.
+pub fn config_proxy_show() -> Result<ProxyJson, STError> {
+    let value = run_json(&["config", "proxy"])?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Set the proxy URL (`aurelia config proxy <url>`). The CLI validates the URL;
+/// an empty string reverts to a direct connection.
+pub fn config_proxy_set(url: &str) -> Result<(), STError> {
+    run_json(&["config", "proxy", url])?;
+    Ok(())
+}
+
+/// Set the proxy bypass list (`aurelia config proxy --no-proxy <list>`).
+pub fn config_proxy_set_no_proxy(list: &str) -> Result<(), STError> {
+    run_json(&["config", "proxy", "--no-proxy", list])?;
+    Ok(())
+}
+
+/// Clear the configured proxy, reverting to a direct connection
+/// (`aurelia config proxy --clear`).
+pub fn config_proxy_clear() -> Result<(), STError> {
+    run_json(&["config", "proxy", "--clear"])?;
+    Ok(())
+}
+
 /// Log out of the current Steam session (`aurelia logout --json`). The returned
 /// value (`{"logged_out":true}`) is ignored; only errors are propagated.
 pub fn logout() -> Result<(), STError> {
