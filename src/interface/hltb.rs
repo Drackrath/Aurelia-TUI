@@ -655,24 +655,17 @@ impl Provider {
         let html = self.text(&format!("/game/{id}"), deadline)?;
         let data = html_data(&html)?;
         let result = verified_game(&data["props"]["pageProps"], steam_id, id)?;
-        // Discovery is an untrusted URL path segment, not an arbitrary URL.
-        self.build_id = data["buildId"]
-            .as_str()
-            .filter(|id| {
-                !id.is_empty()
-                    && id.len() <= 128
-                    && id
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-            })
-            .map(str::to_owned);
+        self.build_id = build_id(&data);
         Ok(result)
     }
 
     /// HLTB changes route names and chunk hashes. Discover the POST route from
     /// the currently served homepage instead of pinning either in the binary.
-    fn discover(&self, deadline: Instant) -> FetchResult<String> {
+    fn discover(&mut self, deadline: Instant) -> FetchResult<String> {
         let html = self.text("/", deadline)?;
+        // Reuse the homepage already needed for search so its first match can
+        // use JSON too. Missing build metadata must not prevent title search.
+        self.build_id = html_data(&html).ok().and_then(|data| build_id(&data));
         let mut paths: Vec<_> = SCRIPTS
             .captures_iter(&html)
             .map(|c| c[1].to_owned())
@@ -927,6 +920,20 @@ fn seconds(game: &Value, key: &str) -> Result<Option<u64>, String> {
             .map(|n| (n > 0).then_some(n))
             .ok_or_else(|| format!("HLTB {key}: invalid completion time")),
     }
+}
+
+fn build_id(data: &Value) -> Option<String> {
+    // Discovery is an untrusted URL path segment, not an arbitrary URL.
+    data["buildId"]
+        .as_str()
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+        .map(str::to_owned)
 }
 
 fn html_data(html: &str) -> Result<Value, String> {

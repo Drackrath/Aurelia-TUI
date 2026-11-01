@@ -356,6 +356,46 @@ fn results(ids: &[u64]) -> String {
 }
 
 #[test]
+fn search_discovery_learns_the_build_id_before_fetching_its_first_match() {
+    let mut steps = discovery();
+    steps[0].body.push_str(&format!(
+        r#"<script id="__NEXT_DATA__">{}</script>"#,
+        json!({"buildId": "homepage-build"})
+    ));
+    steps.extend([
+        auth(),
+        Step::post(results(&[7230])),
+        Step::get("/_next/data/homepage-build/game/7230.json", json_page(game())),
+    ]);
+    let server = Server::start(steps);
+    let mut provider = Provider::new(&server.base, None).unwrap();
+    assert_eq!(provider.fetch(400, "Portal", None).unwrap(), Some(data()));
+    assert_eq!(provider.build_id.as_deref(), Some("homepage-build"));
+    assert_eq!(server.finish().len(), 5);
+}
+
+#[test]
+fn unusable_homepage_build_metadata_keeps_html_search_results_available() {
+    for metadata in ["", "not JSON", r#"{}"#, r#"{"buildId":"../outside"}"#] {
+        let mut steps = discovery();
+        steps[0].body.push_str(&format!(
+            r#"<script id="__NEXT_DATA__">{metadata}</script>"#
+        ));
+        steps.extend([
+            auth(),
+            Step::post(results(&[7230])),
+            Step::get("/game/7230", page_with_build(game(), "game-build")),
+        ]);
+        let server = Server::start(steps);
+        let mut provider = Provider::new(&server.base, None).unwrap();
+        provider.build_id = Some("previous-build".into());
+        assert_eq!(provider.fetch(400, "Portal", None).unwrap(), Some(data()));
+        assert_eq!(provider.build_id.as_deref(), Some("game-build"));
+        assert_eq!(server.finish().len(), 5);
+    }
+}
+
+#[test]
 fn game_pages_teach_the_build_id_without_a_homepage_request_then_use_json() {
     let mut updated = game();
     updated["comp_main"] = json!(12345);

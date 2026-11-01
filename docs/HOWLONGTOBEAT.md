@@ -86,8 +86,10 @@ pages or changed associations fall through to mapping/search; transport/schema
 failures preserve stale data without starting another search. Fresh positive
 and negative estimate cache hits contact neither service.
 
-The first HLTB game-page response supplies a Next.js build ID. Later game-page
-requests use the smaller JSON route, with the same Steam ID and HLTB ID checks.
+The first HLTB game-page response supplies a Next.js build ID. Fallback search
+also learns it from the homepage already fetched for endpoint discovery, so its
+first match can use JSON immediately. Once known, game-page requests use the
+smaller JSON route, with the same Steam ID and HLTB ID checks.
 The build ID stays in memory; there is no extra homepage request to discover it.
 A missing/rejected JSON route or unexpected response format falls back to HTML
 within the original deadline and relearns the build ID. This can add one request
