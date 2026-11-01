@@ -159,6 +159,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => Browser::new(Vec::new()),
     };
+    let mut hltb_chord: Option<&str> = None;
 
     // Wall-clock anchor for the list-name marquee. Deriving the scroll step from
     // elapsed time (rather than a per-frame counter) keeps it advancing at a
@@ -653,6 +654,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
         if let Event::Input(input) = events.next()? {
+            // Only the plain library handler advances the chord. Any unrelated
+            // key, overlay, or text-entry input consumes a pending prefix.
+            let hltb_prefix = hltb_chord.take();
             // Mark input activity so artwork/details hold off until scrolling
             // (or any keypress burst) settles.
             last_input_at = Instant::now();
@@ -1360,6 +1364,15 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     } else {
                         match input {
+                            KeyCode::Char(',') => {
+                                hltb_chord = Some(",");
+                                browser.notice = Some("Completion time: press c, then t (Esc cancels)".into());
+                            }
+                            KeyCode::Char('c') if hltb_prefix == Some(",") => {
+                                hltb_chord = Some(",c");
+                                browser.notice = Some("Completion time: press t (Esc cancels)".into());
+                            }
+                            KeyCode::Char('t') if hltb_prefix == Some(",c") => browser.open_hltb(),
                             KeyCode::Char('q') => break,
                             KeyCode::Char('?') => {
                                 browser.help_scroll = 0;
@@ -1413,7 +1426,6 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             KeyCode::Char('i') => browser.toggle_description(),
-                            KeyCode::Char('t') => browser.open_hltb(),
                             KeyCode::Down | KeyCode::Char('j') => browser.next(),
                             KeyCode::Up | KeyCode::Char('k') => browser.previous(),
                             KeyCode::Char('g') => browser.home(),

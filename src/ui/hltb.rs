@@ -60,7 +60,7 @@ pub(super) fn lines(state: &HltbState, width: usize) -> Vec<String> {
         HltbState::Pending => "Waiting for selection…",
         HltbState::Loading => "Loading…",
         HltbState::NotFound => "No verified match",
-        HltbState::Unavailable(_) => "No Data",
+        HltbState::Unavailable(_) => "Fetch Failed",
     };
     super::detail::wrap(text, width.max(1))
 }

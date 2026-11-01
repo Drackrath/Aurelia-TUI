@@ -109,7 +109,7 @@ impl HltbData {
 }
 
 /// Per-game lookup lifecycle, shared by cloned `Game`s. Terminal results remain
-/// stable for this library load; `t` retries failures and `r` rebuilds the games.
+/// stable for this library load; `,ct` retries failures and `r` rebuilds the games.
 #[derive(Debug, Clone, Default)]
 pub enum HltbState {
     /// No worker has been reserved, including while another game owns it.

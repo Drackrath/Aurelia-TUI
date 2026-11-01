@@ -193,7 +193,7 @@ impl Game {
     }
 
     /// Rendering reads only the shared snapshot; cache and network I/O stay on
-    /// the worker. Failed lookups can be retried with `t` or a library reload.
+    /// the worker. Failed lookups can be retried with `,ct` or a library reload.
     pub fn get_hltb(&self) -> HltbState {
         self.hltb
             .lock()
@@ -417,7 +417,7 @@ mod hltb_tests {
             (0..80)
                 .map(|x| buffer.get(x, y).symbol.as_str())
                 .collect::<String>()
-                .contains("No Data")
+                .contains("Fetch Failed")
         }));
 
         browser.select_index(0);

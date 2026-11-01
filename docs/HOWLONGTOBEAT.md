@@ -5,10 +5,16 @@ store metadata. Main + Extras is the total for that play style, not extra time
 added to Main Story. Times are rounded to the nearest minute; a positive time
 shorter than a minute displays as `1m`. A dash means no submitted time.
 
-`t` and **Actions → HowLongToBeat page** open the same verified game page using
-your platform's default browser. The full URL is available through this action
-rather than taking another row in the detail pane. On Linux this requires
+`,ct` (comma, then `c`, then `t`) and **Actions → HowLongToBeat page** open the
+same verified game page using your platform's default browser. The full URL is
+available through this action rather than taking another row in the detail
+pane. On Linux this requires
 `xdg-open`; macOS uses `open`, and Windows uses `start`.
+
+The chord is active only during library navigation. `Esc` cancels an unfinished
+sequence; an unrelated key cancels the sequence and keeps its normal action.
+Text fields still accept these characters normally. Plain `t` no longer invokes
+HLTB; `c` still cancels an install and `C` still opens Cloud Saves.
 
 ## Enabling and disabling
 
@@ -24,7 +30,7 @@ while runtime-plugin settings are owned by the separate Aurelia launcher.
 The local switch remains accessible if reading launcher settings fails.
 
 When off, no new lookup through PCGamingWiki or HLTB is scheduled, its detail content and Actions menu
-entry are hidden, and `t` displays a disabled notice rather than opening a
+entry are hidden, and `,ct` displays a disabled notice rather than opening a
 browser. A lookup or browser launch already running can finish; disabling
 does not cancel an HTTP request or close an existing browser. Completed lookup
 data may remain cached but stays hidden until re-enabled. Existing cache files
@@ -50,8 +56,8 @@ page contains the selected Steam app ID in
 **No verified match** can mean HLTB's Steam association is missing or the match
 was outside the checked candidates. There is no title-only fallback.
 
-**No Data** means the lookup failed, not that the game has no entry.
-Press `t` (or choose the HLTB action) to retry without reloading the Steam
+**Fetch Failed** means the lookup failed, not that the game has no entry.
+Press `,ct` (or choose the HLTB action) to retry without reloading the Steam
 library or restarting the app. Failure details go to the diagnostic logger.
 **Cached** means a previously verified result is displayed because its refresh
 failed; it does not necessarily mean your network is offline. HTTP,
@@ -159,10 +165,13 @@ Browser launching belongs to `util::browser`, with off-thread results handled
 by the browse model; completion-time formatting belongs to `ui::hltb`. The
 provider does not render UI or launch processes. Native TLS remains unchanged.
 
-On Linux, a terminal smoke test covers `t` and the Actions menu with both
+On Linux, a terminal smoke test covers `,ct` and the Actions menu with both
 successful and failing browser launchers, plus the Settings toggle and a
 startup with HLTB disabled. An offline scenario checks failure rendering,
 retry, and library navigation through a refused local proxy connection.
+Chord checks cover Escape cancellation, modal transitions, literal filter text,
+and the removal of plain `t`. A cached-miss scenario verifies that **No verified
+match** remains distinct from **Fetch Failed**.
 The toggle scenario also verifies proxy typing and
 that a later favourite save retains the preference. It uses a fake Steam backend, a
 seeded HLTB cache, and an `xdg-open` stub; it does not open your real browser.

@@ -53,7 +53,7 @@ fn hltb_switch_preserves_config_and_controls_queries_rendering_and_actions() {
             browser.actions_filter_push(character);
         }
         assert_eq!(browser.selected_action(), Some(Action::Hltb));
-        assert_eq!(browser.filtered_actions()[0].key, "t");
+        assert_eq!(browser.filtered_actions()[0].key, ",ct");
         browser.open_hltb();
         assert!(browser.notice.as_deref().unwrap().contains("waiting"));
     }

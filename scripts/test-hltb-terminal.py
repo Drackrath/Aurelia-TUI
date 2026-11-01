@@ -5,6 +5,7 @@ Usage: python3 scripts/test-hltb-terminal.py target/release/aurelia-tui
 Needs no Steam login and uses a seeded HLTB cache. The existing ProtonDB lookup
 may still make a background request; no real browser or game is launched.
 """
+import codecs
 import fcntl
 import json
 import os
@@ -19,6 +20,70 @@ import sys
 import tempfile
 import termios
 import time
+
+
+class Screen:
+    """Apply the cursor/erase commands used by the TUI's incremental redraws."""
+
+    def __init__(self, width=120, height=32):
+        self.width, self.height = width, height
+        self.rows = [[" "] * width for _ in range(height)]
+        self.x = self.y = 0
+        self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self.pending = ""
+
+    def feed(self, data):
+        self.pending += self.decoder.decode(data)
+        while self.pending:
+            if self.pending.startswith("\x1b"):
+                match = re.match(r"\x1b\[([0-?]*)([ -/]*)([@-~])", self.pending)
+                if match is None:
+                    # Reads can split an escape sequence between its bytes.
+                    return
+                self.pending = self.pending[match.end():]
+                parameters, _, command = match.groups()
+                if command not in "HfABCDEFGdJK":
+                    continue  # Colours, styles and cursor visibility.
+                values = [int(value or 0) for value in parameters.split(";")]
+                count = values[0] or 1
+                if command in "Hf":
+                    self.y = (values[0] or 1) - 1
+                    self.x = ((values[1] or 1) if len(values) > 1 else 1) - 1
+                elif command == "A":
+                    self.y -= count
+                elif command == "B":
+                    self.y += count
+                elif command == "C":
+                    self.x += count
+                elif command == "D":
+                    self.x -= count
+                elif command in "EF":
+                    self.y += count if command == "E" else -count
+                    self.x = 0
+                elif command == "G":
+                    self.x = count - 1
+                elif command == "d":
+                    self.y = count - 1
+                elif command == "J" and values[0] in (2, 3):
+                    self.rows = [[" "] * self.width for _ in range(self.height)]
+                elif command == "K":
+                    start = 0 if values[0] in (1, 2) else self.x
+                    end = self.x + 1 if values[0] == 1 else self.width
+                    self.rows[self.y][start:end] = [" "] * (end - start)
+                self.x = min(max(self.x, 0), self.width - 1)
+                self.y = min(max(self.y, 0), self.height - 1)
+                continue
+            character, self.pending = self.pending[0], self.pending[1:]
+            if character == "\r":
+                self.x = 0
+            elif character == "\n":
+                self.y = min(self.y + 1, self.height - 1)
+            elif character >= " ":
+                self.rows[self.y][self.x] = character
+                self.x = min(self.x + 1, self.width - 1)
+
+    def text(self):
+        return "\n".join("".join(row) for row in self.rows).replace(" ", "").encode()
 
 
 def run(binary, action, fail_launcher):
@@ -46,6 +111,10 @@ def run(binary, action, fail_launcher):
             "data": {"game_id": 7230, "game_name": "Portal", "main": 11230,
                      "extra": 18943, "completionist": 37927},
         }))
+        if action == "no-match":
+            entry = json.loads((root / "hltb/400.json").read_text())
+            entry["data"] = None
+            (root / "hltb/400.json").write_text(json.dumps(entry))
         # A bound, non-listening socket refuses connections without contacting
         # HLTB or depending on the machine's actual network connectivity.
         offline_proxy = None
@@ -91,18 +160,19 @@ else:
             os.execve(binary, [binary], environment)
         fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 120, 0, 0))
         output = bytearray()
+        screen = Screen()
 
         def read_until(predicate):
             deadline = time.monotonic() + 8
             while time.monotonic() < deadline:
                 if select.select([terminal], [], [], 0.1)[0]:
                     try:
-                        output.extend(os.read(terminal, 65536))
+                        data = os.read(terminal, 65536)
+                        output.extend(data)
+                        screen.feed(data)
                     except OSError:
                         break
-                text = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", output)
-                text = text.replace(b" ", b"")
-                if predicate(text):
+                if predicate(screen.text()):
                     return
             raise AssertionError(f"terminal check failed: {bytes(output[-1500:])!r}")
 
@@ -120,19 +190,26 @@ else:
             time.sleep(0.1)
 
         try:
+            if action == "no-match":
+                read_until(lambda text: b"Noverifiedmatch" in text and b"Aperture" in text)
+                os.write(terminal, b",ct")
+                read_until(lambda text: b"HLTB:noverifiedSteammatch" in text)
+                assert not (root / "opened-url").exists()
+                print("PASS: verified miss stays distinct from Fetch Failed")
+                return
             if action == "offline":
-                read_until(lambda text: b"NoData" in text and b"Aperture" in text)
-                os.write(terminal, b"t")
+                read_until(lambda text: b"FetchFailed" in text and b"Aperture" in text)
+                os.write(terminal, b",ct")
                 read_until(lambda text: b"retryrequested" in text)
                 os.write(terminal, b"jf")
                 read_until(lambda _: 620 in config_data().get("favorite_games", []))
                 assert not (root / "hltb/400.json").exists()
                 assert not (root / "opened-url").exists()
-                print("PASS: offline failure, No Data, retry and library navigation")
+                print("PASS: offline failure, Fetch Failed, retry and library navigation")
                 return
             if action == "disabled":
                 read_until(lambda text: b"Aperture" in text)
-                os.write(terminal, b"t")
+                os.write(terminal, b",ct")
                 read_until(lambda text: b"HLTBisdisabled" in text)
                 assert not (root / "opened-url").exists()
                 assert config_data().get("hltb_enabled") is False
@@ -140,7 +217,29 @@ else:
                 return
             read_until(lambda text: all(value in text for value in
                                        [b"3h7m", b"5h16m", b"10h32m", b"Aperture"]))
-            if action == "toggle":
+            if action == "chord":
+                # Bare t and incomplete chords must not open a browser. A
+                # favourite save confirms subsequent keys were processed.
+                os.write(terminal, b"tf")
+                read_until(lambda _: 400 in config_data().get("favorite_games", []))
+                assert not (root / "opened-url").exists()
+                os.write(terminal, b",c")
+                read_until(lambda text: b"Completiontime:presst" in text)
+                escape()
+                os.write(terminal, b"tf")
+                read_until(lambda _: 400 not in config_data().get("favorite_games", []))
+                assert not (root / "opened-url").exists()
+                # Opening a modal consumes the pending prefix, and filtering
+                # treats the entire chord as ordinary text.
+                os.write(terminal, b",cp")
+                read_until(lambda text: b"Launchersettingsunavailable" in text)
+                escape()
+                os.write(terminal, b"t/,ct")
+                read_until(lambda text: b"/,ct" in text)
+                assert not (root / "opened-url").exists()
+                escape()
+                os.write(terminal, b",ct")
+            elif action == "toggle":
                 # Local settings must work even though the fake launcher fails
                 # config reads. While editing a proxy, h remains ordinary text.
                 os.write(terminal, b"p")
@@ -152,7 +251,7 @@ else:
                 os.write(terminal, b"h")
                 read_until(lambda _: config_data().get("hltb_enabled") is False)
                 escape()
-                os.write(terminal, b"t")
+                os.write(terminal, b",ct")
                 read_until(lambda text: b"HLTBisdisabled" in text)
                 assert not (root / "opened-url").exists()
                 # Other settings writes must retain the switch's new value;
@@ -163,13 +262,13 @@ else:
                 os.write(terminal, b"ph")
                 read_until(lambda _: config_data().get("hltb_enabled") is True)
                 escape()
-                os.write(terminal, b"t")
+                os.write(terminal, b",ct")
             elif action == "menu":
                 os.write(terminal, b"\r")
                 read_until(lambda text: b"HowLongToBeatpage" in text)
                 os.write(terminal, b"howlongtobeat\r")
             else:
-                os.write(terminal, b"t")
+                os.write(terminal, b",ct")
             read_until(lambda _: (root / "opened-url").exists())
             assert (root / "opened-url").read_text() == "https://howlongtobeat.com/game/7230"
             if fail_launcher:
@@ -211,3 +310,5 @@ if __name__ == "__main__":
     run(executable, "toggle", False)
     run(executable, "disabled", False)
     run(executable, "offline", False)
+    run(executable, "chord", False)
+    run(executable, "no-match", False)

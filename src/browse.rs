@@ -2887,7 +2887,7 @@ impl Browser {
         self.reset_selection();
     }
 
-    /// Shared by the Actions menu and `t`; only a verified HLTB page is opened.
+    /// Shared by the Actions menu and `,ct`; only a verified HLTB page is opened.
     pub fn open_hltb(&mut self) {
         use crate::interface::hltb::HltbState;
         // The shortcut must obey the same preference as the hidden menu entry.
@@ -2910,7 +2910,7 @@ impl Browser {
             }
             HltbState::Unavailable(_) => {
                 game.retry_hltb();
-                self.notice = Some("HLTB: No Data; retry requested".into());
+                self.notice = Some("HLTB: Fetch Failed; retry requested".into());
             }
             HltbState::NotFound => self.notice = Some("HLTB: no verified Steam match".into()),
             HltbState::Pending | HltbState::Loading => {
@@ -2973,7 +2973,7 @@ impl Browser {
 
         const CONTENT: &str = "Content";
         if Config::cached().hltb_enabled {
-            rows.push(ActionRow { action: Action::Hltb, category: CONTENT, label: "HowLongToBeat page", key: "t" });
+            rows.push(ActionRow { action: Action::Hltb, category: CONTENT, label: "HowLongToBeat page", key: ",ct" });
         }
         rows.push(ActionRow { action: Action::Dlc, category: CONTENT, label: "DLC", key: "D" });
         rows.push(ActionRow { action: Action::Workshop, category: CONTENT, label: "Workshop", key: "W" });
