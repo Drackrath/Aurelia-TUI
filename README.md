@@ -136,8 +136,9 @@ pane shows Main Story, Main + Extras, and Completionist times; `—` means no
 submitted time for that style. PCGamingWiki maps Steam IDs to HLTB pages, with
 HLTB title search as fallback; matches are verified against HLTB's Steam IDs.
 Press `,ct` (or choose **HowLongToBeat page** in
-Actions) to open the verified match. `Cached` marks an older result retained
-after a failed refresh. Failed lookups show `Fetch Failed`; press `,ct` to retry.
+Actions) to open the verified match. The row stays hidden until a result is
+available. `Cached` marks older estimates shown during refresh or retained after
+a failed refresh. Failed lookups show `Fetch Failed`; press `,ct` to retry.
 See [HowLongToBeat](docs/HOWLONGTOBEAT.md) for matching,
 cache, and troubleshooting details. To disable HLTB lookups and hide its
 content, press `p`, then `h`; the setting is saved locally.

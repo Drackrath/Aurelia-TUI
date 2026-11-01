@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::interface::aurelia::{self, InfoJson, LibraryGameJson};
 use crate::interface::game_status::GameStatus;
-use crate::interface::hltb::{self, HltbState};
+use crate::interface::hltb::{self, HltbData, HltbState};
 use crate::interface::proton_data;
 use crate::util::{error::STError, stateful::Named};
 
@@ -148,7 +148,10 @@ impl Game {
         self.query_hltb_with(hltb::lookup);
     }
 
-    fn query_hltb_with(&self, lookup: impl FnOnce(i32, &str) -> HltbState + Send + 'static) {
+    fn query_hltb_with(
+        &self,
+        lookup: impl FnOnce(i32, &str, &mut dyn FnMut(HltbData)) -> HltbState + Send + 'static,
+    ) {
         // Guard here as well as in the idle dispatcher so callers cannot start
         // HLTB work while disabled, even when a cached result already exists.
         if !Config::cached().hltb_enabled {
@@ -172,7 +175,11 @@ impl Game {
             // A toggle can change after scheduling but before this thread runs.
             // Leave the game retryable if it was disabled in that interval.
             let result = if Config::cached().hltb_enabled {
-                lookup(id, &name)
+                lookup(id, &name, &mut |data| {
+                    if let Ok(mut state) = reference.lock() {
+                        *state = HltbState::Ready { data, stale: true };
+                    }
+                })
             } else {
                 HltbState::Pending
             };
@@ -369,13 +376,13 @@ mod hltb_tests {
         other.name = "Portal 2".into();
         let mut browser = crate::browse::Browser::new(vec![game.clone(), other.clone()]);
         let (release, blocked) = std::sync::mpsc::channel();
-        game.query_hltb_with(move |_, _| {
+        game.query_hltb_with(move |_, _, _| {
             // A bounded gate keeps a blocking regression from hanging the suite.
             let _ = blocked.recv_timeout(std::time::Duration::from_secs(2));
             HltbState::Unavailable("connection lost".into())
         });
         assert!(matches!(game.get_hltb(), HltbState::Loading));
-        other.query_hltb_with(|_, _| panic!("a busy worker must not queue another lookup"));
+        other.query_hltb_with(|_, _, _| panic!("a busy worker must not queue another lookup"));
         assert!(matches!(other.get_hltb(), HltbState::Pending));
         browser.select_index(1);
         assert_eq!(browser.selected().unwrap().id, 620);
@@ -394,6 +401,14 @@ mod hltb_tests {
                 )
             })
             .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = (0..24)
+            .flat_map(|y| (0..80).map(move |x| buffer.get(x, y).symbol.as_str()))
+            .collect::<String>();
+        assert!(
+            !text.contains("HLTB"),
+            "a first lookup should not add a loading row"
+        );
         release.send(()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while matches!(game.get_hltb(), HltbState::Loading) {
@@ -437,7 +452,7 @@ mod hltb_tests {
                 std::time::Instant::now() < deadline,
                 "failed worker retained its permit"
             );
-            game.query_hltb_with(|_, _| HltbState::NotFound);
+            game.query_hltb_with(|_, _, _| HltbState::NotFound);
             thread::sleep(std::time::Duration::from_millis(5));
         }
         while matches!(game.get_hltb(), HltbState::Loading) {
@@ -452,6 +467,89 @@ mod hltb_tests {
         );
         // Publishing the snapshot precedes the worker's final permit drop.
         // Wait for that drop before another test exercises the global permit.
+        loop {
+            if let Some(permit) = hltb::reserve() {
+                drop(permit);
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn expired_estimates_remain_visible_until_the_worker_publishes_fresh_times() {
+        let _serial = hltb::WORKER_TEST_LOCK.lock().unwrap();
+        let game = portal();
+        let previous = HltbData {
+            game_id: 7230,
+            game_name: "Portal".into(),
+            main: Some(11230),
+            extra: Some(18943),
+            completionist: Some(37927),
+        };
+        let fresh = HltbData {
+            main: Some(14400),
+            ..previous.clone()
+        };
+        let expected = fresh.clone();
+        let (published, started) = std::sync::mpsc::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        game.query_hltb_with(move |_, _, publish| {
+            publish(previous);
+            published.send(()).unwrap();
+            blocked
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            HltbState::Ready {
+                data: fresh,
+                stale: false,
+            }
+        });
+        started
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let clone = game.clone();
+        assert!(matches!(
+            clone.get_hltb(),
+            HltbState::Ready {
+                data: HltbData {
+                    main: Some(11230),
+                    ..
+                },
+                stale: true
+            }
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|f| {
+                f.render_widget(
+                    crate::ui::detail::detail(Some(&game), false, 60, 22),
+                    f.size(),
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = (0..24)
+            .flat_map(|y| (0..80).map(move |x| buffer.get(x, y).symbol.as_str()))
+            .collect::<String>();
+        assert!(text.contains("Cached"));
+        assert!(text.contains("3h 7m"));
+        assert!(!text.contains("Loading"));
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if let HltbState::Ready { data, stale: false } = clone.get_hltb() {
+                assert_eq!(data, expected);
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+        game.query_hltb_with(|_, _, _| {
+            panic!("completed estimates must not be fetched every frame")
+        });
+        // Do not let the next test race the worker's final permit drop.
         loop {
             if let Some(permit) = hltb::reserve() {
                 drop(permit);

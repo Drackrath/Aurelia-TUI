@@ -59,8 +59,9 @@ was outside the checked candidates. There is no title-only fallback.
 **Fetch Failed** means the lookup failed, not that the game has no entry.
 Press `,ct` (or choose the HLTB action) to retry without reloading the Steam
 library or restarting the app. Failure details go to the diagnostic logger.
-**Cached** means a previously verified result is displayed because its refresh
-failed; it does not necessarily mean your network is offline. HTTP,
+The row stays hidden during a first lookup. **Cached** means previously verified
+estimates are displayed while refreshing or after a failed refresh; it does
+not necessarily mean your network is offline. HTTP,
 response-format, and cache write errors also go through the project's
 diagnostic logger (stderr when redirected).
 
@@ -85,6 +86,14 @@ pages or changed associations fall through to mapping/search; transport/schema
 failures preserve stale data without starting another search. Fresh positive
 and negative estimate cache hits contact neither service.
 
+The first HLTB game-page response supplies a Next.js build ID. Later game-page
+requests use the smaller JSON route, with the same Steam ID and HLTB ID checks.
+The build ID stays in memory; there is no extra homepage request to discover it.
+A missing/rejected JSON route or unexpected response format falls back to HTML
+within the original deadline and relearns the build ID. This can add one request
+after a site deployment. Network errors, rate limits, and server errors do not
+trigger an additional HTML request.
+
 Fallback title search normally needs five HLTB requests with a newly discovered
 endpoint: homepage, index script, token initialization, search, and game page.
 Later title searches normally need two because the endpoint and token are
@@ -102,8 +111,9 @@ Entries live at `~/.cache/aurelia-tui/hltb/<steam-app-id>.json`, beneath
 `AURELIA_TUI_CACHE_DIR` when overridden. Positive matches are reused for seven
 days and negative matches for one day, checked when the next lookup starts.
 Successful in-memory results remain unchanged until the library is reloaded.
-Failed requests are never stored as negative matches. Expired positive results remain
-available if a refresh fails; their timestamps are not extended.
+Failed requests are never stored as negative matches. Expired positive results
+are shown before their background refresh starts and remain available if it
+fails; their timestamps are not extended.
 
 PCGamingWiki mappings live in `hltb/pcgamingwiki/<steam-app-id>.json`, under
 the same cache directory. Mappings last seven days and successful missing
@@ -152,8 +162,9 @@ cargo test --locked
 ```
 
 Opt-in live checks cover Portal, Lost Ruins, and Graveyard Keeper. The wiki
-check asserts that mappings work without discovering an HLTB search endpoint;
-the other check exercises fallback search, token reuse, and direct refresh.
+check exercises mappings and direct JSON refreshes without discovering an HLTB
+search endpoint; the other check exercises fallback search, token reuse, and
+direct refresh.
 They need internet access but no Steam login:
 
 ```bash
@@ -172,6 +183,8 @@ retry, and library navigation through a refused local proxy connection.
 Chord checks cover Escape cancellation, modal transitions, literal filter text,
 and the removal of plain `t`. A cached-miss scenario verifies that **No verified
 match** remains distinct from **Fetch Failed**.
+Two further scenarios hold a first lookup open to check the hidden loading row
+and navigation, and verify that stale estimates survive an offline refresh.
 The toggle scenario also verifies proxy typing and
 that a later favourite save retains the preference. It uses a fake Steam backend, a
 seeded HLTB cache, and an `xdg-open` stub; it does not open your real browser.

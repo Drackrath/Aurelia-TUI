@@ -129,11 +129,12 @@ fn build_content(
 
             // Check the preference at render time too: an in-flight lookup may
             // finish after disabling, but its result must stay hidden.
-            if crate::config::Config::cached().hltb_enabled {
+            if crate::config::Config::cached().hltb_enabled
+                && let Some(hltb_lines) = super::hltb::lines(&g.get_hltb(), width as usize)
+            {
                 // Keep times inside one wrapping table row, rather than adding a
                 // separate fixed row for each style, title, and source URL. The
                 // source remains accessible through the existing Actions menu.
-                let hltb_lines = super::hltb::lines(&g.get_hltb(), width as usize);
                 let hltb_height = hltb_lines.len() as u16;
                 push(
                     Row::new(vec![

@@ -96,7 +96,7 @@ def run(binary, action, fail_launcher):
             "install_dir": "/games/Portal", "update_available": False, "size": 0,
         }
         games = [game]
-        if action == "offline":
+        if action in ("offline", "cold"):
             games.append(dict(game, id=620, name="Portal 2"))
         (root / "games.json").write_text(json.dumps(games))
         if action == "disabled":
@@ -115,13 +115,21 @@ def run(binary, action, fail_launcher):
             entry = json.loads((root / "hltb/400.json").read_text())
             entry["data"] = None
             (root / "hltb/400.json").write_text(json.dumps(entry))
-        # A bound, non-listening socket refuses connections without contacting
+        if action == "stale":
+            entry = json.loads((root / "hltb/400.json").read_text())
+            entry["fetched_at"] -= 8 * 86400
+            (root / "hltb/400.json").write_text(json.dumps(entry))
+        # A local proxy either refuses or holds connections, without contacting
         # HLTB or depending on the machine's actual network connectivity.
         offline_proxy = None
-        if action == "offline":
-            (root / "hltb/400.json").unlink()
+        if action in ("offline", "cold", "stale"):
+            if action != "stale":
+                (root / "hltb/400.json").unlink()
             offline_proxy = socket.socket()
             offline_proxy.bind(("127.0.0.1", 0))
+            if action == "cold":
+                # Hold the proxy handshake open while checking the initial UI.
+                offline_proxy.listen(2)
         backend = root / "fake-aurelia"
         backend.write_text(f"#!{sys.executable}\n" + '''
 import json, sys
@@ -190,6 +198,15 @@ else:
             time.sleep(0.1)
 
         try:
+            if action == "cold":
+                read_until(lambda text: b"Aperture" in text)
+                assert b"HLTB" not in screen.text()
+                assert b"Loading" not in screen.text()
+                os.write(terminal, b"jf")
+                read_until(lambda _: 620 in config_data().get("favorite_games", []))
+                assert not (root / "opened-url").exists()
+                print("PASS: first lookup has no loading row; navigation stays available")
+                return
             if action == "no-match":
                 read_until(lambda text: b"Noverifiedmatch" in text and b"Aperture" in text)
                 os.write(terminal, b",ct")
@@ -217,7 +234,12 @@ else:
                 return
             read_until(lambda text: all(value in text for value in
                                        [b"3h7m", b"5h16m", b"10h32m", b"Aperture"]))
-            if action == "chord":
+            if action == "stale":
+                read_until(lambda text: b"Cached" in text)
+                assert b"FetchFailed" not in screen.text()
+                assert json.loads((root / "hltb/400.json").read_text())["fetched_at"] == entry["fetched_at"]
+                os.write(terminal, b",ct")
+            elif action == "chord":
                 # Bare t and incomplete chords must not open a browser. A
                 # favourite save confirms subsequent keys were processed.
                 os.write(terminal, b"tf")
@@ -312,3 +334,5 @@ if __name__ == "__main__":
     run(executable, "offline", False)
     run(executable, "chord", False)
     run(executable, "no-match", False)
+    run(executable, "cold", False)
+    run(executable, "stale", False)

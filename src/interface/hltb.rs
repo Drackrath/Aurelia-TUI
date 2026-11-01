@@ -118,7 +118,7 @@ pub enum HltbState {
     Loading,
     Ready {
         data: HltbData,
-        /// A refresh failed; retain the previous match without extending its TTL.
+        /// Expired data is refreshing or its refresh failed; do not extend its TTL.
         stale: bool,
     },
     /// Search/verification completed without finding a matching Steam app ID.
@@ -189,11 +189,11 @@ fn write_cache(path: &Path, cached: &impl Serialize) -> Result<(), STError> {
 
 /// Run on the metadata worker, not the draw path: even a fresh cache read does
 /// filesystem I/O. Construct the provider lazily only if the cache needs a fetch.
-pub(crate) fn lookup(steam_id: i32, name: &str) -> HltbState {
+pub(crate) fn lookup(steam_id: i32, name: &str, publish: &mut dyn FnMut(HltbData)) -> HltbState {
     let path = cache_directory()
         .ok()
         .map(|p| p.join("hltb").join(format!("{steam_id}.json")));
-    lookup_cached(path.as_deref(), steam_id, now(), |game_id| {
+    lookup_cached(path.as_deref(), steam_id, now(), publish, |game_id| {
         let mut provider = PROVIDER.lock().map_err(|e| e.to_string())?;
         if provider.is_none() {
             let wiki = PcGamingWiki::new(
@@ -220,6 +220,7 @@ fn lookup_cached(
     path: Option<&Path>,
     steam_id: i32,
     timestamp: u64,
+    mut publish: impl FnMut(HltbData),
     fetch: impl FnOnce(Option<u64>) -> Result<Option<HltbData>, String>,
 ) -> HltbState {
     let cached = path.and_then(|p| read_cache(p, steam_id));
@@ -236,10 +237,12 @@ fn lookup_cached(
     }
     // An expired positive still identifies a page worth checking first. It is
     // only a hint: the provider must verify the Steam association again.
-    let game_id = cached
-        .as_ref()
-        .and_then(|c| c.data.as_ref())
-        .map(|d| d.game_id);
+    let game_id = cached.as_ref().and_then(|c| c.data.as_ref()).map(|data| {
+        // Publish on the worker before network I/O. Rendering can retain
+        // verified times while the same lookup refreshes them in place.
+        publish(data.clone());
+        data.game_id
+    });
     match fetch(game_id) {
         Ok(data) => {
             if let Some(path) = path {
@@ -530,6 +533,8 @@ struct Provider {
     endpoint: Option<String>,
     // Reuse only in this process; rejected tokens are renewed before discovery.
     token: Option<String>,
+    // Learned from an HTML page already needed by a lookup; never persisted.
+    build_id: Option<String>,
     retry_after: Option<Instant>,
     wiki: Option<PcGamingWiki>,
 }
@@ -558,6 +563,7 @@ impl Provider {
             base: base.into(),
             endpoint: None,
             token: None,
+            build_id: None,
             retry_after: None,
             wiki,
         })
@@ -606,6 +612,61 @@ impl Provider {
 
     fn text(&self, path: &str, deadline: Instant) -> FetchResult<String> {
         Self::body(self.request(path, deadline)?.send(), "HLTB page request")
+    }
+
+    /// Prefer the smaller Next.js response once a page has taught us its build
+    /// ID. Only route/format failures warrant HTML fallback; an outage or rate
+    /// limit must not double traffic. Both paths share the original deadline.
+    fn game(&mut self, steam_id: i32, id: u64, deadline: Instant) -> FetchResult<Option<HltbData>> {
+        if let Some(build) = self.build_id.clone() {
+            match self.text(&format!("/_next/data/{build}/game/{id}.json"), deadline) {
+                Ok(body) => {
+                    let result = serde_json::from_str::<Value>(&body)
+                        .map_err(|e| format!("HLTB game JSON: {e}"))
+                        .and_then(|data| verified_game(&data["pageProps"], steam_id, id));
+                    match result {
+                        Ok(data) => return Ok(data),
+                        Err(error) => {
+                            log!("HLTB game JSON invalid; falling back to HTML", id, error)
+                        }
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.status,
+                        Some(
+                            StatusCode::UNAUTHORIZED
+                                | StatusCode::FORBIDDEN
+                                | StatusCode::NOT_FOUND
+                                | StatusCode::GONE
+                        )
+                    ) =>
+                {
+                    log!(
+                        "HLTB JSON route unavailable; falling back to HTML",
+                        id,
+                        error
+                    )
+                }
+                Err(error) => return Err(error),
+            }
+            self.build_id = None;
+        }
+        let html = self.text(&format!("/game/{id}"), deadline)?;
+        let data = html_data(&html)?;
+        let result = verified_game(&data["props"]["pageProps"], steam_id, id)?;
+        // Discovery is an untrusted URL path segment, not an arbitrary URL.
+        self.build_id = data["buildId"]
+            .as_str()
+            .filter(|id| {
+                !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            })
+            .map(str::to_owned);
+        Ok(result)
     }
 
     /// HLTB changes route names and chunk hashes. Discover the POST route from
@@ -722,12 +783,9 @@ impl Provider {
             // Refresh a known page without search discovery or authentication.
             // A removed page/association can still be recovered by title search;
             // transport/schema failures retain stale data without extra traffic.
-            match self.text(&format!("/game/{id}"), deadline) {
-                Ok(html) => {
-                    if let Some(data) = verified_game(&html, steam_id, id)? {
-                        return Ok(Some(data));
-                    }
-                }
+            match self.game(steam_id, id, deadline) {
+                Ok(Some(data)) => return Ok(Some(data)),
+                Ok(None) => {}
                 Err(e) if e.status == Some(StatusCode::NOT_FOUND) => {}
                 Err(e) => return Err(e),
             }
@@ -735,17 +793,12 @@ impl Provider {
         let mut wiki_error = None;
         if let Some(wiki) = self.wiki.as_mut() {
             match wiki.lookup(steam_id, deadline) {
-                Ok(Some(id)) if Some(id) != game_id => {
-                    match self.text(&format!("/game/{id}"), deadline) {
-                        Ok(html) => {
-                            if let Some(data) = verified_game(&html, steam_id, id)? {
-                                return Ok(Some(data));
-                            }
-                        }
-                        Err(e) if e.status == Some(StatusCode::NOT_FOUND) => {}
-                        Err(e) => return Err(e),
-                    }
-                }
+                Ok(Some(id)) if Some(id) != game_id => match self.game(steam_id, id, deadline) {
+                    Ok(Some(data)) => return Ok(Some(data)),
+                    Ok(None) => {}
+                    Err(e) if e.status == Some(StatusCode::NOT_FOUND) => {}
+                    Err(e) => return Err(e),
+                },
                 Ok(_) => {}
                 Err(error) => {
                     log!(
@@ -832,8 +885,7 @@ impl Provider {
                 let id = number(&game["game_id"])
                     .filter(|id| *id > 0)
                     .ok_or("HLTB result ID missing")?;
-                let html = self.text(&format!("/game/{id}"), deadline)?;
-                verified_game(&html, steam_id, id).map_err(FetchError::from)
+                self.game(steam_id, id, deadline)
             })();
             match candidate {
                 Ok(Some(data)) => return Ok(Some(data)),
@@ -877,18 +929,21 @@ fn seconds(game: &Value, key: &str) -> Result<Option<u64>, String> {
     }
 }
 
-/// Search results omit Steam IDs, so verify the embedded game-page data before
+fn html_data(html: &str) -> Result<Value, String> {
+    let data = PAGE_DATA.captures(html).ok_or("HLTB page data missing")?;
+    serde_json::from_str(&data[1]).map_err(|e| format!("HLTB page data: {e}"))
+}
+
+/// Search results omit Steam IDs, so verify the HTML or JSON game-page data before
 /// publishing a result. Both the selected Steam ID and requested HLTB page ID
 /// must agree; a similarly named game or unexpected page is insufficient.
-fn verified_game(html: &str, steam_id: i32, expected_id: u64) -> Result<Option<HltbData>, String> {
+fn verified_game(props: &Value, steam_id: i32, expected_id: u64) -> Result<Option<HltbData>, String> {
     let steam_id = u64::try_from(steam_id)
         .ok()
         .filter(|id| *id > 0)
         .ok_or("Invalid Steam app ID")?;
-    let data = PAGE_DATA.captures(html).ok_or("HLTB page data missing")?;
-    let data: Value = serde_json::from_str(&data[1]).map_err(|e| format!("HLTB page data: {e}"))?;
-    let games = data
-        .pointer("/props/pageProps/game/data/game")
+    let games = props
+        .pointer("/game/data/game")
         .and_then(Value::as_array)
         .ok_or("HLTB game data missing")?;
     for game in games {

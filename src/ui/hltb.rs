@@ -18,7 +18,7 @@ fn duration(seconds: Option<u64>) -> String {
 /// Pack complete play-style/time groups before wrapping individual words. The
 /// detail pane reserves one table row of this height, so keeping the groups
 /// compact leaves room for existing installation and description content.
-pub(super) fn lines(state: &HltbState, width: usize) -> Vec<String> {
+pub(super) fn lines(state: &HltbState, width: usize) -> Option<Vec<String>> {
     let text: &str = match state {
         HltbState::Ready { data, stale } => {
             let mut parts = vec![
@@ -26,8 +26,8 @@ pub(super) fn lines(state: &HltbState, width: usize) -> Vec<String> {
                 format!("Main + Extras {}", duration(data.extra)),
                 format!("Completionist {}", duration(data.completionist)),
             ];
-            // Stale means refresh failed, not necessarily that the user is
-            // offline (a site-format change can fail just as well).
+            // Expired estimates stay visible during refresh and after failure;
+            // neither state implies that the user is offline.
             if *stale {
                 parts.insert(0, "Cached".into());
             }
@@ -55,14 +55,13 @@ pub(super) fn lines(state: &HltbState, width: usize) -> Vec<String> {
             if !line.is_empty() {
                 lines.push(line);
             }
-            return lines;
+            return Some(lines);
         }
-        HltbState::Pending => "Waiting for selection…",
-        HltbState::Loading => "Loading…",
+        HltbState::Pending | HltbState::Loading => return None,
         HltbState::NotFound => "No verified match",
         HltbState::Unavailable(_) => "Fetch Failed",
     };
-    super::detail::wrap(text, width.max(1))
+    Some(super::detail::wrap(text, width.max(1)))
 }
 
 #[cfg(test)]

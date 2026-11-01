@@ -17,32 +17,45 @@ fn page(game: Value) -> String {
         json!({"props":{"pageProps":{"game":{"data":{"game":[game]}}}}})
     )
 }
+fn page_with_build(game: Value, build: &str) -> String {
+    format!(
+        r#"<script id="__NEXT_DATA__">{}</script>"#,
+        json!({"buildId": build, "props": {"pageProps": {"game": {"data": {"game": [game]}}}}})
+    )
+}
+fn json_page(game: Value) -> String {
+    json!({"pageProps": {"game": {"data": {"game": [game]}}}}).to_string()
+}
+fn verified_html(html: &str, steam_id: i32, expected_id: u64) -> Result<Option<HltbData>, String> {
+    let data = html_data(html)?;
+    verified_game(&data["props"]["pageProps"], steam_id, expected_id)
+}
 fn data() -> HltbData {
-    verified_game(&page(game()), 400, 7230).unwrap().unwrap()
+    verified_html(&page(game()), 400, 7230).unwrap().unwrap()
 }
 
 #[test]
 fn verification_rejects_wrong_steam_and_page_ids_and_invalid_times() {
     assert_eq!(data().main, Some(11230));
     assert!(
-        verified_game(&page(game()), 2012840, 7230)
+        verified_html(&page(game()), 2012840, 7230)
             .unwrap()
             .is_some()
     );
-    assert!(verified_game(&page(game()), 620, 7230).unwrap().is_none());
-    assert!(verified_game(&page(game()), -1, 7230).is_err());
-    assert!(verified_game(&page(game()), 0, 7230).is_err());
-    assert!(verified_game(&page(game()), 400, 999).is_err());
-    assert!(verified_game("<html>challenge</html>", 400, 7230).is_err());
+    assert!(verified_html(&page(game()), 620, 7230).unwrap().is_none());
+    assert!(verified_html(&page(game()), -1, 7230).is_err());
+    assert!(verified_html(&page(game()), 0, 7230).is_err());
+    assert!(verified_html(&page(game()), 400, 999).is_err());
+    assert!(verified_html("<html>challenge</html>", 400, 7230).is_err());
     let mut g = game();
     g["profile_steam"] = json!("400");
     g["comp_main"] = json!(0);
     g["comp_plus"] = Value::Null;
     g.as_object_mut().unwrap().remove("comp_100");
-    let d = verified_game(&page(g.clone()), 400, 7230).unwrap().unwrap();
+    let d = verified_html(&page(g.clone()), 400, 7230).unwrap().unwrap();
     assert_eq!((d.main, d.extra, d.completionist), (None, None, None));
     g["comp_main"] = json!("broken");
-    assert!(verified_game(&page(g), 400, 7230).is_err());
+    assert!(verified_html(&page(g), 400, 7230).is_err());
 }
 
 #[test]
@@ -60,16 +73,26 @@ fn versioned_cache_handles_expiry_corruption_and_failed_refreshes() {
     assert!(!cached.fresh(DAY - 1));
     write_cache(&path, &cached).unwrap();
     assert!(matches!(
-        lookup_cached(Some(&path), 400, DAY, |_| panic!(
-            "fresh data must skip network"
-        )),
+        lookup_cached(
+            Some(&path),
+            400,
+            DAY,
+            |_| {},
+            |_| panic!("fresh data must skip network")
+        ),
         HltbState::Ready { stale: false, .. }
     ));
     assert!(matches!(
-        lookup_cached(Some(&path), 400, 9 * DAY, |game_id| {
-            assert_eq!(game_id, Some(7230));
-            Err("schema changed".into())
-        }),
+        lookup_cached(
+            Some(&path),
+            400,
+            9 * DAY,
+            |_| {},
+            |game_id| {
+                assert_eq!(game_id, Some(7230));
+                Err("schema changed".into())
+            }
+        ),
         HltbState::Ready { stale: true, .. }
     ));
     assert_eq!(read_cache(&path, 400).unwrap().fetched_at, DAY);
@@ -79,9 +102,13 @@ fn versioned_cache_handles_expiry_corruption_and_failed_refreshes() {
     assert!(!cached.fresh(2 * DAY));
     write_cache(&path, &cached).unwrap();
     assert!(matches!(
-        lookup_cached(Some(&path), 400, DAY, |_| panic!(
-            "fresh miss must skip network"
-        )),
+        lookup_cached(
+            Some(&path),
+            400,
+            DAY,
+            |_| {},
+            |_| panic!("fresh miss must skip network")
+        ),
         HltbState::NotFound
     ));
     cached.version = 0;
@@ -91,14 +118,14 @@ fn versioned_cache_handles_expiry_corruption_and_failed_refreshes() {
     assert!(read_cache(&path, 400).is_none());
     fs::remove_file(&path).unwrap();
     assert!(
-        matches!(lookup_cached(Some(&path), 400, DAY, |_| Err("HTTP 429".into())), HltbState::Unavailable(e) if e == "HTTP 429")
+        matches!(lookup_cached(Some(&path), 400, DAY, |_| {}, |_| Err("HTTP 429".into())), HltbState::Unavailable(e) if e == "HTTP 429")
     );
     assert!(
         !path.exists(),
         "errors must never become negative cache entries"
     );
     assert!(matches!(
-        lookup_cached(Some(&path), 400, now(), |_| Ok(None)),
+        lookup_cached(Some(&path), 400, now(), |_| {}, |_| Ok(None)),
         HltbState::NotFound
     ));
     assert!(read_cache(&path, 400).unwrap().fresh(now()));
@@ -110,21 +137,25 @@ fn successful_lookups_persist_and_cache_write_failures_keep_the_result() {
     let dir = std::env::temp_dir().join(format!("aurelia-hltb-persist-{}", std::process::id()));
     let path = dir.join("400.json");
     assert!(matches!(
-        lookup_cached(Some(&path), 400, now(), |_| Ok(Some(data()))),
+        lookup_cached(Some(&path), 400, now(), |_| {}, |_| Ok(Some(data()))),
         HltbState::Ready { stale: false, .. }
     ));
     assert_eq!(read_cache(&path, 400).unwrap().data, Some(data()));
     // A new lookup reads the persisted file, with no in-memory result to reuse.
     assert!(matches!(
-        lookup_cached(Some(&path), 400, now(), |_| panic!(
-            "persisted hit must skip network"
-        )),
+        lookup_cached(
+            Some(&path),
+            400,
+            now(),
+            |_| {},
+            |_| panic!("persisted hit must skip network")
+        ),
         HltbState::Ready { stale: false, .. }
     ));
     let unwritable = dir.join("directory-instead-of-file.json");
     fs::create_dir(&unwritable).unwrap();
     assert!(matches!(
-        lookup_cached(Some(&unwritable), 400, now(), |_| Ok(Some(data()))),
+        lookup_cached(Some(&unwritable), 400, now(), |_| {}, |_| Ok(Some(data()))),
         HltbState::Ready { stale: false, .. }
     ));
     fs::remove_dir_all(dir).unwrap();
@@ -137,6 +168,46 @@ fn only_one_background_worker_can_be_reserved_and_it_is_released() {
     assert!(reserve().is_none());
     drop(first);
     assert!(reserve().is_some());
+}
+
+#[test]
+fn expired_estimates_are_published_before_refresh_and_replaced_only_after_success() {
+    let dir = std::env::temp_dir().join(format!("aurelia-hltb-publish-{}", std::process::id()));
+    let path = dir.join("400.json");
+    write_cache(
+        &path,
+        &Cached {
+            version: CACHE_VERSION,
+            steam_id: 400,
+            fetched_at: DAY,
+            data: Some(data()),
+        },
+    )
+    .unwrap();
+    let published = std::cell::RefCell::new(None);
+    let mut updated = data();
+    updated.main = Some(12345);
+    let result = lookup_cached(
+        Some(&path),
+        400,
+        9 * DAY,
+        |data| {
+            *published.borrow_mut() = Some(data);
+        },
+        |id| {
+            assert_eq!(id, Some(7230));
+            assert_eq!(
+                published.borrow().as_ref(),
+                Some(&data()),
+                "cached estimates must precede network work"
+            );
+            assert_eq!(read_cache(&path, 400).unwrap().fetched_at, DAY);
+            Ok(Some(updated.clone()))
+        },
+    );
+    assert!(matches!(result, HltbState::Ready { data, stale: false } if data == updated));
+    assert_eq!(read_cache(&path, 400).unwrap().data, Some(updated));
+    fs::remove_dir_all(dir).unwrap();
 }
 
 // A path prefix permits the init route's changing timestamp without weakening
@@ -282,6 +353,162 @@ fn auth() -> Step {
 }
 fn results(ids: &[u64]) -> String {
     json!({"data":ids.iter().map(|id| json!({"game_id":id,"game_name":"Portal"})).collect::<Vec<_>>()} ).to_string()
+}
+
+#[test]
+fn game_pages_teach_the_build_id_without_a_homepage_request_then_use_json() {
+    let mut updated = game();
+    updated["comp_main"] = json!(12345);
+    let server = Server::start(vec![
+        Step::get("/game/7230", page_with_build(game(), "fixture-build")),
+        Step::get(
+            "/_next/data/fixture-build/game/7230.json",
+            json_page(updated),
+        ),
+    ]);
+    let mut provider = Provider::new(&server.base, None).unwrap();
+    assert_eq!(
+        provider.fetch(400, "Portal", Some(7230)).unwrap(),
+        Some(data())
+    );
+    let refreshed = provider.fetch(400, "Portal", Some(7230)).unwrap().unwrap();
+    assert_eq!(refreshed.main, Some(12345));
+    assert_eq!(provider.build_id.as_deref(), Some("fixture-build"));
+    assert!(provider.endpoint.is_none());
+    assert!(provider.token.is_none());
+    assert_eq!(server.finish().len(), 2);
+}
+
+#[test]
+fn a_rotated_json_build_falls_back_to_html_and_learns_the_new_build() {
+    let server = Server::start(vec![
+        Step::get("/game/7230", page_with_build(game(), "old-build")),
+        Step::get("/_next/data/old-build/game/7230.json", "old deployment").status(404),
+        Step::get("/game/7230", page_with_build(game(), "new-build")),
+        Step::get("/_next/data/new-build/game/7230.json", json_page(game())),
+    ]);
+    let mut provider = Provider::new(&server.base, None).unwrap();
+    for _ in 0..3 {
+        assert_eq!(
+            provider.fetch(400, "Portal", Some(7230)).unwrap(),
+            Some(data())
+        );
+    }
+    assert_eq!(provider.build_id.as_deref(), Some("new-build"));
+    assert!(provider.endpoint.is_none());
+    assert_eq!(server.finish().len(), 4);
+}
+
+#[test]
+fn unusable_json_routes_and_formats_fall_back_to_verified_html() {
+    let mut invalid_time = game();
+    invalid_time["comp_main"] = json!("broken");
+    for (body, status) in [
+        ("not JSON".into(), 200),
+        ("{}".into(), 200),
+        (json_page(invalid_time), 200),
+        ("unauthorized".into(), 401),
+        ("forbidden".into(), 403),
+        ("gone".into(), 410),
+    ] {
+        let server = Server::start(vec![
+            Step::get("/_next/data/fixture-build/game/7230.json", body).status(status),
+            Step::get("/game/7230", page_with_build(game(), "new-build")),
+        ]);
+        let mut provider = Provider::new(&server.base, None).unwrap();
+        provider.build_id = Some("fixture-build".into());
+        assert_eq!(
+            provider.fetch(400, "Portal", Some(7230)).unwrap(),
+            Some(data())
+        );
+        assert_eq!(provider.build_id.as_deref(), Some("new-build"));
+        assert_eq!(server.finish().len(), 2);
+    }
+}
+
+#[test]
+fn json_and_html_both_require_verified_steam_and_game_ids() {
+    let mut wrong_steam = game();
+    wrong_steam["profile_steam"] = json!(620);
+    wrong_steam["profile_steam_alt"] = json!(0);
+    let server = Server::start(vec![Step::get(
+        "/_next/data/fixture-build/game/7230.json",
+        json_page(wrong_steam),
+    )]);
+    let mut provider = Provider::new(&server.base, None).unwrap();
+    provider.build_id = Some("fixture-build".into());
+    assert!(
+        provider
+            .game(400, 7230, Instant::now() + Duration::from_secs(2))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(server.finish().len(), 1);
+
+    let mut wrong_id = game();
+    wrong_id["game_id"] = json!(999);
+    let server = Server::start(vec![
+        Step::get(
+            "/_next/data/fixture-build/game/7230.json",
+            json_page(wrong_id.clone()),
+        ),
+        Step::get("/game/7230", page_with_build(wrong_id, "new-build")),
+    ]);
+    let mut provider = Provider::new(&server.base, None).unwrap();
+    provider.build_id = Some("fixture-build".into());
+    assert!(
+        provider
+            .game(400, 7230, Instant::now() + Duration::from_secs(2))
+            .unwrap_err()
+            .to_string()
+            .contains("different game page")
+    );
+    assert_eq!(server.finish().len(), 2);
+}
+
+#[test]
+fn json_outages_and_rate_limits_do_not_trigger_html_retries() {
+    for status in [0, 429, 503] {
+        let server = Server::start(vec![
+            Step::get("/_next/data/fixture-build/game/7230.json", "unavailable").status(status),
+        ]);
+        let mut provider = Provider::new(&server.base, None).unwrap();
+        provider.build_id = Some("fixture-build".into());
+        let error = provider.fetch(400, "Portal", Some(7230)).unwrap_err();
+        if status != 0 {
+            assert_eq!(error.status, Some(StatusCode::from_u16(status).unwrap()));
+        }
+        assert_eq!(provider.build_id.as_deref(), Some("fixture-build"));
+        if status == 429 {
+            assert!(
+                provider
+                    .fetch(620, "Portal 2", None)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("wait a minute")
+            );
+        }
+        assert_eq!(server.finish().len(), 1);
+    }
+}
+
+#[test]
+fn invalid_build_ids_leave_html_fetching_available() {
+    for build in ["", "../outside", "https://example.com"] {
+        let server = Server::start(vec![
+            Step::get("/game/7230", page_with_build(game(), build)),
+            Step::get("/game/7230", page_with_build(game(), build)),
+        ]);
+        let mut provider = Provider::new(&server.base, None).unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                provider.fetch(400, "Portal", Some(7230)).unwrap(),
+                Some(data())
+            );
+            assert!(provider.build_id.is_none());
+        }
+        assert_eq!(server.finish().len(), 2);
+    }
 }
 
 fn wiki_lookup_response(title: &str) -> String {
@@ -511,9 +738,13 @@ fn wiki_outages_and_empty_hltb_searches_are_not_cached_as_missing_games() {
     let hltb_server = Server::start(steps);
     let wiki = PcGamingWiki::new(&wiki_server.base, None).unwrap();
     let mut provider = Provider::new(&hltb_server.base, Some(wiki)).unwrap();
-    let state = lookup_cached(Some(&path), 400, now(), |id| {
-        provider.fetch(400, "Portal", id).map_err(|e| e.to_string())
-    });
+    let state = lookup_cached(
+        Some(&path),
+        400,
+        now(),
+        |_| {},
+        |id| provider.fetch(400, "Portal", id).map_err(|e| e.to_string()),
+    );
     assert!(matches!(state, HltbState::Unavailable(_)));
     assert!(!path.exists());
     assert_eq!(wiki_server.finish().len(), 1);
@@ -559,6 +790,28 @@ fn live_pcgamingwiki_matches() {
             "{name}: primary wiki route fell back to search"
         );
         assert!(provider.token.is_none());
+        assert!(
+            provider.build_id.is_some(),
+            "{name}: HTML did not expose a usable build ID"
+        );
+        // Check the JSON route directly so HTML fallback cannot hide a broken
+        // live endpoint. Mocked tests cover the provider's fallback decisions.
+        let body = provider
+            .text(
+                &format!(
+                    "/_next/data/{}/game/{}.json",
+                    provider.build_id.as_ref().unwrap(),
+                    data.game_id
+                ),
+                Instant::now() + Duration::from_secs(30),
+            )
+            .unwrap();
+        let json: Value = serde_json::from_str(&body).unwrap();
+        let refreshed = verified_game(&json["pageProps"], id, data.game_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(refreshed.game_id, data.game_id);
+        assert!(refreshed.main.is_some());
         println!("PCGamingWiki → {name}: {}", data.url());
     }
 }
@@ -670,11 +923,17 @@ fn expired_matches_refresh_and_reverify_with_one_page_request() {
     updated["comp_main"] = json!(12345);
     let server = Server::start(vec![Step::get("/game/7230", page(updated))]);
     let mut provider = Provider::new(&server.base, None).unwrap();
-    let state = lookup_cached(Some(&path), 400, 9 * DAY, |game_id| {
-        provider
-            .fetch(400, "Portal", game_id)
-            .map_err(|e| e.to_string())
-    });
+    let state = lookup_cached(
+        Some(&path),
+        400,
+        9 * DAY,
+        |_| {},
+        |game_id| {
+            provider
+                .fetch(400, "Portal", game_id)
+                .map_err(|e| e.to_string())
+        },
+    );
     assert!(matches!(
         state,
         HltbState::Ready {
@@ -738,11 +997,17 @@ fn failed_direct_refreshes_keep_stale_data_without_search_requests() {
     for status in [200, 429, 503] {
         let server = Server::start(vec![Step::get("/game/7230", "broken page").status(status)]);
         let mut provider = Provider::new(&server.base, None).unwrap();
-        let state = lookup_cached(Some(&path), 400, 9 * DAY, |game_id| {
-            provider
-                .fetch(400, "Portal", game_id)
-                .map_err(|e| e.to_string())
-        });
+        let state = lookup_cached(
+            Some(&path),
+            400,
+            9 * DAY,
+            |_| {},
+            |game_id| {
+                provider
+                    .fetch(400, "Portal", game_id)
+                    .map_err(|e| e.to_string())
+            },
+        );
         assert!(matches!(state, HltbState::Ready { stale: true, .. }));
         assert_eq!(read_cache(&path, 400).unwrap().fetched_at, DAY);
         if status == 429 {
