@@ -12,12 +12,12 @@ use crate::theme;
 use crate::util::stateful::Named;
 
 /// How many wrapped lines of the description to show while collapsed. Pressing
-/// `[i]` expands the row to the full text.
+/// `[i]` removes this cap; the available panel height still bounds the row.
 const DESC_COLLAPSED_LINES: usize = 6;
 
 /// Word-wrap `text` to `width` columns, preserving explicit newlines. Words
 /// longer than `width` simply overflow their line.
-fn wrap(text: &str, width: usize) -> Vec<String> {
+pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![text.to_string()];
     }
@@ -68,12 +68,21 @@ fn blank() -> Row<'static> {
 /// Build the detail content rows for `game` and their total height. Does *not*
 /// trigger the lazy metadata fetches — the caller does that only when the
 /// selection has settled (so scrolling doesn't fire a fetch per game).
-fn build_content(game: Option<&Game>, expand: bool, width: u16) -> (Vec<Row<'static>>, u16) {
+/// `None` measures the natural height for cover-art placement; `Some(height)`
+/// builds for the actual panel, limiting the description to its remaining rows.
+/// This is private bookkeeping: `detail` already receives the panel height.
+fn build_content(
+    game: Option<&Game>,
+    expand: bool,
+    width: u16,
+    height: Option<u16>,
+) -> (Vec<Row<'static>>, u16) {
     let mut content: Vec<Row> = Vec::new();
-    let mut content_h: u16 = 0;
+    let mut content_h = 0u16;
     let mut push = |row: Row<'static>, h: u16| {
         content.push(row);
         content_h += h;
+        content_h
     };
 
     match game {
@@ -118,6 +127,30 @@ fn build_content(game: Option<&Game>, expand: bool, width: u16) -> (Vec<Row<'sta
                 );
             }
 
+            // Check the preference at render time too: an in-flight lookup may
+            // finish after disabling, but its result must stay hidden.
+            if crate::config::Config::cached().hltb_enabled
+                && let Some(hltb_lines) = super::hltb::lines(&g.get_hltb(), width as usize)
+            {
+                // Keep times inside one wrapping table row, rather than adding a
+                // separate fixed row for each style, title, and source URL. The
+                // source remains accessible through the existing Actions menu.
+                let hltb_height = hltb_lines.len() as u16;
+                push(
+                    Row::new(vec![
+                        Cell::from(Span::styled("HLTB", theme::label())),
+                        Cell::from(Text::from(
+                            hltb_lines
+                                .into_iter()
+                                .map(|line| Spans::from(Span::styled(line, theme::value())))
+                                .collect::<Vec<_>>(),
+                        )),
+                    ])
+                    .height(hltb_height),
+                    hltb_height,
+                );
+            }
+
             if let Some(status) = g.get_status() {
                 push(blank(), 1);
                 let size = convert(status.size);
@@ -139,11 +172,25 @@ fn build_content(game: Option<&Game>, expand: bool, width: u16) -> (Vec<Row<'sta
             // Description, listed as its own (wrapping) row.
             let description = g.get_description();
             if !description.is_empty() {
-                push(blank(), 1);
+                // Table fits whole rows: a six-line description that exceeds
+                // the remaining space can disappear entirely. Use the existing
+                // panel budget to show the lines that fit alongside HLTB.
+                let description_start = push(blank(), 1);
                 let mut lines = wrap(&description, width.max(1) as usize);
-                if !expand && lines.len() > DESC_COLLAPSED_LINES {
-                    lines.truncate(DESC_COLLAPSED_LINES);
+                let available = height
+                    .map(|h| h.saturating_sub(description_start) as usize)
+                    .unwrap_or(usize::MAX);
+                let limit = if expand {
+                    available
+                } else {
+                    available.min(DESC_COLLAPSED_LINES)
+                };
+                if lines.len() > limit {
+                    lines.truncate(limit);
                     if let Some(last) = lines.last_mut() {
+                        while last.chars().count() >= width.max(1) as usize {
+                            last.pop();
+                        }
                         last.push('…');
                     }
                 }
@@ -169,13 +216,15 @@ fn build_content(game: Option<&Game>, expand: bool, width: u16) -> (Vec<Row<'sta
                 );
             }
         }
-        None => push(
-            Row::new(vec![Cell::from(Span::styled(
-                "No game selected",
-                theme::value(),
-            ))]),
-            1,
-        ),
+        None => {
+            push(
+                Row::new(vec![Cell::from(Span::styled(
+                    "No game selected",
+                    theme::value(),
+                ))]),
+                1,
+            );
+        }
     }
 
     (content, content_h)
@@ -185,17 +234,17 @@ fn build_content(game: Option<&Game>, expand: bool, width: u16) -> (Vec<Row<'sta
 /// region from the `ID | Name` head down to the bottom of the panel. The caller
 /// uses this to size the cover art into the empty space above it.
 pub fn content_height(game: Option<&Game>, expand: bool, width: u16) -> u16 {
-    build_content(game, expand, width).1
+    build_content(game, expand, width, None).1
 }
 
 /// Build the detail table for the selected game (or an empty-state table). The
 /// description is listed as its own row; `expand` controls whether it is capped
-/// at [`DESC_COLLAPSED_LINES`] or shown in full, and `width` is the value
+/// at [`DESC_COLLAPSED_LINES`] or may use the remaining height; `width` is the value
 /// column width used to wrap it. `height` is the panel's inner height: the rows
 /// are bottom-aligned within it (padded from the top) so the cover art fills the
 /// empty space above the `ID | Name` head.
 pub fn detail(game: Option<&Game>, expand: bool, width: u16, height: u16) -> Table<'static> {
-    let (content, content_h) = build_content(game, expand, width);
+    let (content, content_h) = build_content(game, expand, width, Some(height));
 
     // Bottom-align: pad the top with empty rows so the content sits against the
     // panel's lower edge, leaving the top free for the cover art.

@@ -159,6 +159,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => Browser::new(Vec::new()),
     };
+    let mut hltb_chord: Option<&str> = None;
 
     // Wall-clock anchor for the list-name marquee. Deriving the scroll step from
     // elapsed time (rather than a per-frame counter) keeps it advancing at a
@@ -176,6 +177,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Adopt any async friend-management results (resolved search previews and
         // roster refreshes after an add/remove) before drawing this frame.
         browser.poll_friends_ops();
+        browser.poll_hltb();
 
         // Drain any finished off-thread Workshop browse/search/subscribe worker
         // before rendering, so its result lands on the next frame. Runs on every
@@ -652,6 +654,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
         if let Event::Input(input) = events.next()? {
+            // Only the plain library handler advances the chord. Any unrelated
+            // key, overlay, or text-entry input consumes a pending prefix.
+            let hltb_prefix = hltb_chord.take();
             // Mark input activity so artwork/details hold off until scrolling
             // (or any keypress burst) settles.
             last_input_at = Instant::now();
@@ -744,6 +749,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                             Action::Achievements => browser.open_achievements(),
                                             Action::Depots => browser.open_depots(game.id),
                                             Action::Inventory => browser.open_inventory(game.id),
+                                            Action::Hltb => browser.open_hltb(),
                                             Action::Move => {
                                                 if game.installed {
                                                     browser.open_move(game.id);
@@ -1297,7 +1303,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     } else if browser.show_config {
                         // Settings overlay. While editing the proxy URL, keys edit
                         // that input; otherwise dismiss / toggle presence / edit or
-                        // clear the proxy in place.
+                        // clear the proxy, or toggle TUI-owned HLTB lookups in place.
                         if browser.config_proxy_input.is_some() {
                             match input {
                                 KeyCode::Esc => browser.cancel_proxy_edit(),
@@ -1321,6 +1327,18 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                         .unwrap_or(false);
                                     let _ = aurelia::set_presence(!online);
                                     let _ = browser.open_config();
+                                }
+                                KeyCode::Char('h') => {
+                                    // Keep the live copy and persisted/cache copy in
+                                    // sync; a failed save leaves the old preference.
+                                    let mut updated = config.clone();
+                                    updated.hltb_enabled = !updated.hltb_enabled;
+                                    match updated.save() {
+                                        Ok(()) => config = updated,
+                                        Err(error) => {
+                                            browser.notice = Some(format!("HLTB setting: {error}"));
+                                        }
+                                    }
                                 }
                                 KeyCode::Char('e') => browser.begin_proxy_edit(),
                                 KeyCode::Char('c') => browser.clear_proxy(),
@@ -1346,6 +1364,15 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     } else {
                         match input {
+                            KeyCode::Char(',') => {
+                                hltb_chord = Some(",");
+                                browser.notice = Some("Completion time: press c, then t (Esc cancels)".into());
+                            }
+                            KeyCode::Char('c') if hltb_prefix == Some(",") => {
+                                hltb_chord = Some(",c");
+                                browser.notice = Some("Completion time: press t (Esc cancels)".into());
+                            }
+                            KeyCode::Char('t') if hltb_prefix == Some(",c") => browser.open_hltb(),
                             KeyCode::Char('q') => break,
                             KeyCode::Char('?') => {
                                 browser.help_scroll = 0;
@@ -1796,6 +1823,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(g) = selected.as_ref() {
                     g.query_proton();
                     g.query_info();
+                    if config.hltb_enabled {
+                        g.query_hltb();
+                    }
                 }
             }
         }

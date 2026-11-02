@@ -20,6 +20,7 @@ pub mod dlc;
 pub mod friend_add;
 pub mod friends;
 pub mod help;
+mod hltb;
 pub mod import;
 pub mod inventory;
 pub mod launch;

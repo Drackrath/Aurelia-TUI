@@ -1,3 +1,4 @@
+pub mod browser;
 pub mod error;
 pub mod event;
 pub mod image;

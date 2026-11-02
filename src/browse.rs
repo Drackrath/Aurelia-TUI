@@ -470,6 +470,8 @@ pub struct Browser {
     /// status bar until the next keypress. Keeps a failed backend call from
     /// having to crash the whole TUI to report itself.
     pub notice: Option<String>,
+    /// Browser-launch results arrive off-thread so opening a page cannot stall input.
+    hltb_open_pending: Arc<Mutex<Option<Result<(), String>>>>,
 
     // --- Actions menu (per-game command palette) ---
     /// Whether the per-game Actions menu is open. This is the primary way to
@@ -591,6 +593,7 @@ pub enum Action {
     Achievements,
     Depots,
     Inventory,
+    Hltb,
     Move,
     Relink,
     Import,
@@ -738,6 +741,7 @@ impl Browser {
             install_picker_index: 0,
             game_refresh_slot: Arc::new(Mutex::new(Vec::new())),
             notice: None,
+            hltb_open_pending: Arc::new(Mutex::new(None)),
             show_actions: false,
             actions_index: 0,
             actions_filter: String::new(),
@@ -2334,13 +2338,22 @@ impl Browser {
         Ok(())
     }
 
-    /// Fetch the launcher configuration (`aurelia config show`) and open the
-    /// config overlay. Blocking; returns the backend error if the call fails.
+    /// Open local preferences even if the launcher's settings cannot be read.
+    /// Launcher fetches remain blocking, matching this overlay's existing path;
+    /// a failure is reported but cannot make the local HLTB switch unreachable.
     pub fn open_config(&mut self) -> Result<(), STError> {
-        self.config_info = Some(aurelia::config_show()?);
+        self.show_config = true;
+        self.config_info = None;
+        self.config_proxy = None;
+        match aurelia::config_show() {
+            Ok(info) => self.config_info = Some(info),
+            Err(error) => {
+                self.notice = Some(format!("Launcher settings unavailable: {error}"));
+                return Err(error);
+            }
+        }
         // Best-effort: a missing/failed proxy read just leaves the row blank.
         self.config_proxy = aurelia::config_proxy_show().ok();
-        self.show_config = true;
         Ok(())
     }
 
@@ -2874,6 +2887,51 @@ impl Browser {
         self.reset_selection();
     }
 
+    /// Shared by the Actions menu and `,ct`; only a verified HLTB page is opened.
+    pub fn open_hltb(&mut self) {
+        use crate::interface::hltb::HltbState;
+        // The shortcut must obey the same preference as the hidden menu entry.
+        if !Config::cached().hltb_enabled {
+            self.notice = Some("HLTB is disabled; enable it in Settings (p, then h)".into());
+            return;
+        }
+        let Some(game) = self.selected() else {
+            return;
+        };
+        match game.get_hltb() {
+            HltbState::Ready { data, .. } => {
+                let pending = self.hltb_open_pending.clone();
+                thread::spawn(move || {
+                    let result = crate::util::browser::open(&data.url()).map_err(|e| e.to_string());
+                    if let Ok(mut slot) = pending.lock() {
+                        *slot = Some(result);
+                    }
+                });
+            }
+            HltbState::Unavailable(_) => {
+                game.retry_hltb();
+                self.notice = Some("HLTB: Fetch Failed; retry requested".into());
+            }
+            HltbState::NotFound => self.notice = Some("HLTB: no verified Steam match".into()),
+            HltbState::Pending | HltbState::Loading => {
+                self.notice = Some("HLTB: waiting for game details".into())
+            }
+        }
+    }
+
+    pub fn poll_hltb(&mut self) {
+        if let Ok(mut slot) = self.hltb_open_pending.lock() {
+            // Drain even while disabled: an opener already running when the
+            // switch changed must not surface a late result after re-enabling.
+            let result = slot.take();
+            if Config::cached().hltb_enabled
+                && let Some(Err(error)) = result
+            {
+                self.notice = Some(format!("HLTB: {error}"));
+            }
+        }
+    }
+
     // --- Actions menu (per-game command palette) ---
 
     /// The full set of actions applicable to the currently selected game, before
@@ -2914,6 +2972,9 @@ impl Browser {
         rows.push(ActionRow { action: Action::LaunchOptions, category: RT, label: "Launch options", key: "L" });
 
         const CONTENT: &str = "Content";
+        if Config::cached().hltb_enabled {
+            rows.push(ActionRow { action: Action::Hltb, category: CONTENT, label: "HowLongToBeat page", key: ",ct" });
+        }
         rows.push(ActionRow { action: Action::Dlc, category: CONTENT, label: "DLC", key: "D" });
         rows.push(ActionRow { action: Action::Workshop, category: CONTENT, label: "Workshop", key: "W" });
         rows.push(ActionRow { action: Action::Cloud, category: CONTENT, label: "Cloud saves", key: "C" });

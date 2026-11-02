@@ -1,11 +1,12 @@
 //! The settings overlay (modal popup) showing the launcher configuration, with
-//! a key to toggle the friends/chat presence online/offline.
+//! keys for friends/chat presence, proxy editing, and TUI-owned HLTB metadata.
 
 use tui::layout::Constraint;
 use tui::text::Span;
 use tui::widgets::{Cell, Row, Table};
 
 use crate::browse::Browser;
+use crate::config::Config;
 use crate::theme;
 
 /// One key-value row in the settings table.
@@ -43,7 +44,13 @@ fn proxy_value(browser: &Browser) -> String {
 
 /// Build the settings overlay content from the fetched launcher configuration.
 pub fn config(browser: &Browser) -> Table<'static> {
-    let rows = match &browser.config_info {
+    // Local preferences must remain visible without a working launcher. Keep
+    // the switch first so it is also reachable in shorter settings panels.
+    let mut rows = vec![row(
+        "HowLongToBeat",
+        yes_no(Config::cached().hltb_enabled),
+    )];
+    rows.extend(match &browser.config_info {
         Some(info) => vec![
             row("Presence", opt(&info.chat_presence)),
             row("Proton", opt(&info.proton_version)),
@@ -52,24 +59,32 @@ pub fn config(browser: &Browser) -> Table<'static> {
             row("Language", opt(&info.language)),
             row("Cloud sync", yes_no(info.enable_cloud_sync)),
             row("Shared compat data", yes_no(info.use_shared_compat_data)),
-            row("Windows discovery", yes_no(info.windows_steam_discovery_enabled)),
+            row(
+                "Windows discovery",
+                yes_no(info.windows_steam_discovery_enabled),
+            ),
             row("Luxtorpeda", yes_no(info.luxtorpeda_enabled)),
             row("Proxy", proxy_value(browser)),
             row(
                 "Proxy bypass",
-                opt(&browser.config_proxy.as_ref().and_then(|p| p.no_proxy.clone())),
+                opt(&browser
+                    .config_proxy
+                    .as_ref()
+                    .and_then(|p| p.no_proxy.clone())),
             ),
         ],
-        None => vec![Row::new(vec![Cell::from(Span::styled(
-            "No configuration",
-            theme::value(),
-        ))])],
-    };
+        None => vec![row("Launcher", "Unavailable".into())],
+    });
+    // Keep the inline editor visible if the launcher read failed. Otherwise its
+    // title would invite typing while the edited URL itself was hidden.
+    if browser.config_info.is_none() && browser.config_proxy_input.is_some() {
+        rows.push(row("Proxy", proxy_value(browser)));
+    }
 
     let title = if browser.config_proxy_input.is_some() {
         "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
     } else {
-        "Settings ([o] presence · [e] edit proxy · [c] clear proxy)".to_string()
+        "Settings ([h] HLTB · [o] presence · [e] edit proxy · [c] clear proxy)".to_string()
     };
 
     Table::new(rows)

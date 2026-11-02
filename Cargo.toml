@@ -20,6 +20,7 @@ crossterm = { version = "0.25"}
 tui = { version = "0.18", default-features = false, features = ['crossterm', 'serde'] }
 
 fuzzy-matcher = "0.3.7"
+regex = "1"
 
 # Render the Steam login QR challenge as terminal blocks on the login page.
 qrcode = { version = "0.14", default-features = false }
