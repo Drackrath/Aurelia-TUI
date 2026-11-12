@@ -1608,11 +1608,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 Mode::LoginQr => match input {
                     KeyCode::Char('q') => {
+                        client.cancel_qr()?;
                         break;
                     }
                     KeyCode::Esc => {
-                        // Abandon this attempt; the backend login times out on
-                        // its own.
+                        client.cancel_qr()?;
                         app.mode = Mode::Login;
                     }
                     _ => {}

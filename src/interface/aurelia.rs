@@ -1841,23 +1841,23 @@ pub fn stop(app_id: i32) -> Result<(), STError> {
     Ok(())
 }
 
-/// Log in by QR code (`aurelia login --qr --json`), publishing each challenge
-/// URL into `qr_cell` so the UI can render it. Blocks until the login resolves;
-/// returns `Ok(())` once authenticated, `Err` on failure/timeout. Intended to
-/// be run on a dedicated thread.
-///
-/// Forced to run standalone (`AURELIA_NO_DAEMON`) so it authenticates in this
-/// process and writes `session.json`; any running daemon then reloads that
-/// session by mtime on its next forwarded command.
-pub fn login_qr(qr_cell: &Arc<Mutex<Option<String>>>) -> Result<(), STError> {
+/// QR login via `aurelia login --qr --json`.
+pub fn login_qr(
+    on_stdin: impl FnOnce(process::ChildStdin),
+    mut on_challenge: impl FnMut(String),
+) -> Result<(), STError> {
     let spawned = process::Command::new(bin())
         .args(["login", "--qr", "--json"])
         .env("AURELIA_NO_DAEMON", "1")
-        .stdin(process::Stdio::null())
+        .stdin(process::Stdio::piped())
         .stdout(process::Stdio::piped())
         .stderr(process::Stdio::piped())
         .spawn();
     let mut child = spawned.map_err(STError::Process)?;
+    // EOF on stdin aborts the login.
+    if let Some(stdin) = child.stdin.take() {
+        on_stdin(stdin);
+    }
 
     // The terminal result object is the single line on stdout; drain it on a
     // helper thread while we consume the challenge events on stderr.
@@ -1879,9 +1879,7 @@ pub fn login_qr(qr_cell: &Arc<Mutex<Option<String>>>) -> Result<(), STError> {
             if let Ok(event) = serde_json::from_str::<QrEvent>(line) {
                 if event.event.as_deref() == Some("qr_challenge") {
                     if let Some(url) = event.url {
-                        if let Ok(mut slot) = qr_cell.lock() {
-                            *slot = Some(url);
-                        }
+                        on_challenge(url);
                     }
                 }
             }
