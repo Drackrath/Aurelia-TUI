@@ -206,6 +206,8 @@ pub struct Browser {
     pub cloud_files: Vec<aurelia::CloudFileJson>,
     /// A short status line for the cloud overlay (errors, sync progress).
     pub cloud_status: String,
+    /// Cloud overlay cursor and confirm.
+    pub cloud_view: crate::browse_cloud::CloudView,
     /// Whether the account overlay is open.
     pub show_account: bool,
     /// The fetched account details, shown by the account overlay.
@@ -694,6 +696,7 @@ impl Browser {
             show_cloud: false,
             cloud_files: Vec::new(),
             cloud_status: String::new(),
+            cloud_view: Default::default(),
             show_account: false,
             account_info: None,
             show_config: false,
@@ -1288,6 +1291,7 @@ impl Browser {
     /// overlay. On failure the overlay still opens, showing the error.
     pub fn open_cloud(&mut self, app_id: i32) {
         self.show_cloud = true;
+        self.cloud_view = Default::default();
         self.refresh_cloud(app_id);
     }
 

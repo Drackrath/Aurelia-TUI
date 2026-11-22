@@ -263,9 +263,7 @@ fn full_browse_frame_renders() {
     );
 }
 
-/// The Steam Cloud overlay advertises the sync directions in its title so the
-/// directional keys (`d` down-only, `u` up-only) are discoverable next to the
-/// plain `s` sync.
+/// Cloud overlay footer lists the directions.
 #[test]
 fn cloud_overlay_shows_directional_hints() {
     isolate_config();
@@ -274,20 +272,18 @@ fn cloud_overlay_shows_directional_hints() {
     let mut terminal = Terminal::new(backend).unwrap();
 
     terminal
-        .draw(|f| {
-            f.render_widget(ui::cloud::cloud(&browser), Rect::new(0, 0, 80, 12));
-        })
+        .draw(|f| ui::cloud::draw(f, &browser, Rect::new(0, 0, 80, 12)))
         .unwrap();
 
-    let title: String = (0..80)
-        .map(|x| terminal.backend().buffer().get(x, 0).symbol.clone())
+    let footer: String = (0..80)
+        .map(|x| terminal.backend().buffer().get(x, 10).symbol.clone())
         .collect();
+    assert!(footer.contains("[s] sync"), "footer keeps the sync hint");
     assert!(
-        title.contains("[s] sync"),
-        "title keeps the both-ways sync hint"
+        footer.contains("[d] down"),
+        "footer advertises download-only"
     );
-    assert!(title.contains("[d] down"), "title advertises download-only");
-    assert!(title.contains("[u] up"), "title advertises upload-only");
+    assert!(footer.contains("[u] up"), "footer advertises upload-only");
 }
 
 /// The cover panel and the detail panel must occupy separate, ordered rows so

@@ -412,8 +412,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 // Steam Cloud overlay floats above everything.
                 if browser.show_cloud {
                     let area = ui::centered_rect(70, 80, frame.size());
-                    frame.render_widget(Clear, area);
-                    frame.render_widget(ui::cloud::cloud(&browser), area);
+                    ui::cloud::draw(frame, &browser, area);
                 }
 
                 // Launch-options overlay floats above everything.
@@ -1030,27 +1029,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             _ => {}
                         }
                     } else if browser.show_cloud {
-                        // Steam Cloud overlay: Esc/q close, s syncs both ways,
-                        // d downloads only, u uploads only; each re-fetches.
-                        match input {
-                            KeyCode::Esc | KeyCode::Char('q') => browser.close_cloud(),
-                            KeyCode::Char('s') => {
-                                if let Some(game) = browser.selected() {
-                                    browser.sync_cloud(game.id, aurelia::CloudDirection::Both);
-                                }
-                            }
-                            KeyCode::Char('d') => {
-                                if let Some(game) = browser.selected() {
-                                    browser.sync_cloud(game.id, aurelia::CloudDirection::Down);
-                                }
-                            }
-                            KeyCode::Char('u') => {
-                                if let Some(game) = browser.selected() {
-                                    browser.sync_cloud(game.id, aurelia::CloudDirection::Up);
-                                }
-                            }
-                            _ => {}
-                        }
+                        browser.cloud_key(input);
                     } else if browser.show_achievements {
                         // Achievements overlay: Esc/q close, j/k scroll.
                         match input {

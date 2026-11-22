@@ -115,7 +115,10 @@ pub fn around_play(
         set_status(status, "syncing cloud saves (down)...");
         auto_sync(app_id, CloudDirection::Down);
     } else if plan == AutoSync::GameOff {
-        set_status(status, "cloud sync off for this game, skipping");
+        set_status(
+            status,
+            "Aurelia Steam Cloud sync off for this game, skipping",
+        );
     }
 
     let outcome = launch();
@@ -132,7 +135,10 @@ pub fn around_play(
             set_status(status, &format!("{state} · cloud {note}"));
         }
         AutoSync::GameOff => {
-            set_status(status, &format!("{state} · cloud sync off for this game"));
+            set_status(
+                status,
+                &format!("{state} · Aurelia Steam Cloud sync off for this game"),
+            );
         }
         AutoSync::TuiOff => {}
     }
