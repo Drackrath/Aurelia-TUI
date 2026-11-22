@@ -224,7 +224,7 @@ pub fn toggle_dlc(browser: &mut Browser, enable: bool) {
 /// Push; offer `--force` on refusal.
 pub fn collections_push(browser: &mut Browser) {
     browser.collections_status = match steam_restart::collections_push(false) {
-        Ok(done) => format!("Pushed {} collection(s) to Steam Cloud.", done.count),
+        Ok(done) => format!("Pushed {} to Steam Cloud.", collections(done.count)),
         Err(err) => {
             let msg = err.to_string();
             if steam_restart::is_never_pulled_error(&msg) {
@@ -292,6 +292,10 @@ pub fn open_files(browser: &mut Browser) {
     browser.restart_depots.files = Some(files);
 }
 
+fn collections(n: u64) -> String {
+    crate::ui::restart_depots::plural(n as usize, "collection", "collections")
+}
+
 /// Route key to topmost overlay.
 pub fn handle_key(browser: &mut Browser, key: KeyCode) {
     let yes = matches!(key, KeyCode::Char('y') | KeyCode::Char('Y'));
@@ -304,7 +308,7 @@ pub fn handle_key(browser: &mut Browser, key: KeyCode) {
     if let Some(msg) = browser.restart_depots.force_push_prompt.take() {
         browser.collections_status = if yes {
             match steam_restart::collections_push(true) {
-                Ok(done) => format!("Force-pushed {} collection(s) to Steam Cloud.", done.count),
+                Ok(done) => format!("Force-pushed {} to Steam Cloud.", collections(done.count)),
                 Err(err) => format!("Failed: {err}"),
             }
         } else {

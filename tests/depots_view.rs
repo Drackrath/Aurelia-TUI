@@ -252,3 +252,31 @@ fn questions_fit_both_sizes() {
         }
     }
 }
+
+#[test]
+fn counts_pluralise_and_prompt_mentions_esc() {
+    assert_eq!(view::plural(1, "file", "files"), "1 file");
+    assert_eq!(view::plural(0, "file", "files"), "0 files");
+    assert_eq!(view::plural(2, "chunk", "chunks"), "2 chunks");
+
+    let mut files = file_browser();
+    files.listing.as_mut().unwrap().files.truncate(1);
+    files.listing.as_mut().unwrap().total_size = 585;
+    files.details = true;
+    let render = |files: &FileBrowser, w: u16, h: u16| {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| view::draw_files(f, files, view::overlay_area(f.size())))
+            .unwrap();
+        screen(&term).join("\n")
+    };
+    for (w, h) in SIZES {
+        let text = render(&files, w, h);
+        assert!(text.contains("1 file, 585 B"), "{w}x{h}");
+        assert!(text.contains("1 chunk ·"), "{w}x{h}");
+        assert!(!text.contains("1 files") && !text.contains("chunk(s)"));
+    }
+    files_key(&mut files, KeyCode::Char('d'));
+    for (w, h) in SIZES {
+        assert!(render(&files, w, h).contains("[Esc] cancel"), "{w}x{h}");
+    }
+}

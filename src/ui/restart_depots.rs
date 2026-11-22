@@ -245,7 +245,7 @@ pub fn file_footer(files: &FileBrowser, width: usize) -> Paragraph<'static> {
             let label = match field {
                 FileInput::Filter => "Filter (glob, * ?): ",
                 FileInput::Manifest => "Branch or manifest id: ",
-                FileInput::Target => "Save to folder ([Enter] ok): ",
+                FileInput::Target => "Save to folder ([Enter] ok, [Esc] cancel): ",
             };
             let room = width.saturating_sub(label.chars().count() + 1);
             lines.push(Spans::from(vec![
@@ -260,7 +260,11 @@ pub fn file_footer(files: &FileBrowser, width: usize) -> Paragraph<'static> {
                 .as_ref()
                 .map(|l| {
                     let count = l.files.iter().filter(|f| f.is_file()).count();
-                    format!("{count} files, {}", convert(l.total_size as f64))
+                    format!(
+                        "{}, {}",
+                        plural(count, "file", "files"),
+                        convert(l.total_size as f64)
+                    )
                 })
                 .unwrap_or_default();
             let filter = if files.filter.is_empty() {
@@ -300,12 +304,17 @@ pub fn file_footer(files: &FileBrowser, width: usize) -> Paragraph<'static> {
         .style(theme::base())
 }
 
+/// `n` with the right noun form.
+pub fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
 /// One-line details for an entry.
 pub fn entry_details(entry: &DepotFileJson) -> String {
     let mut parts = vec![entry.path.clone(), entry.kind.clone()];
     if entry.is_file() {
         parts.push(convert(entry.size as f64));
-        parts.push(format!("{} chunk(s)", entry.chunks));
+        parts.push(plural(entry.chunks as usize, "chunk", "chunks"));
     }
     if entry.executable {
         parts.push("executable".to_string());
