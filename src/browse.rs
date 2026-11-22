@@ -279,6 +279,8 @@ pub struct Browser {
     pub chat_input: String,
     /// Scroll offset (top row) within the chat message list.
     pub chat_scroll: usize,
+    /// Invite, profile and persona-wait state.
+    pub social: crate::social::SocialState,
     /// Whether the inventory overlay is open.
     pub show_inventory: bool,
     /// The selected game's inventory items (loaded when the overlay opens).
@@ -672,6 +674,7 @@ impl Browser {
             chat_partner: String::new(),
             chat_input: String::new(),
             chat_scroll: 0,
+            social: Default::default(),
             show_inventory: false,
             inventory: Vec::new(),
             inv_scroll: 0,

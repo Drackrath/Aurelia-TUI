@@ -1,0 +1,21 @@
+{
+  "steam_id": 76561197960287930,
+  "persona_name": "Rabscuttle",
+  "profile_url": "https://steamcommunity.com/id/rabscuttle",
+  "avatar_url": "https://avatars.cloudflare.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg",
+  "visibility": 3,
+  "privacy_state": 3,
+  "is_public": true,
+  "is_limited": false,
+  "ban_expires": null,
+  "created": 1063407589,
+  "real_name": "Rab",
+  "location": "Bellevue, Washington, United States",
+  "headline": null,
+  "summary": "Hello <b>there</b>&amp; welcome<br>second line",
+  "persona_state": 3,
+  "game_app_id": 440,
+  "game_name": "Team Fortress 2",
+  "last_logoff": 1700000000,
+  "sources": ["link_details", "profile_info", "persona_state"]
+}

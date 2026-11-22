@@ -33,6 +33,7 @@ pub mod move_game;
 pub mod proton;
 pub mod relink;
 pub mod running;
+pub mod social;
 pub mod status;
 pub mod tabs;
 pub mod versions;

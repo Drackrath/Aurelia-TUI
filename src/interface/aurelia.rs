@@ -156,6 +156,9 @@ pub struct ConfigJson {
     /// Friends/chat presence the daemon announces (`"online"` / `"offline"`).
     #[serde(default)]
     pub chat_presence: Option<String>,
+    /// `user` status wait, seconds.
+    #[serde(default)]
+    pub persona_wait_secs: Option<u64>,
     /// How per-game Wine prefixes / compat data are laid out (e.g. `"Shared"`).
     #[serde(default)]
     pub steam_prefix_mode: Option<String>,
@@ -330,9 +333,9 @@ impl FriendJson {
             .unwrap_or_else(|| self.steam_id.to_string())
     }
 
-    /// Whether the friend is currently online (any non-offline persona state).
+    /// Online: not offline or invisible.
     pub fn is_online(&self) -> bool {
-        !matches!(self.persona_state, None | Some(0))
+        !matches!(self.persona_state, None | Some(0) | Some(7))
     }
 
     /// The game the friend is currently playing, if any (name, else `app <id>`).

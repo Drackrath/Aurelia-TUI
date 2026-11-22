@@ -585,6 +585,18 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::friend_add::friend_add_overlay(&browser), area);
                 }
 
+                // Social overlays: invite and profile.
+                if let Some(draft) = &browser.social.invite {
+                    let area = ui::centered_rect(60, 40, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::social::invite_overlay(draft), area);
+                }
+                if let Some(view) = &browser.social.profile {
+                    let area = ui::centered_rect(70, 70, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::social::profile_overlay(view), area);
+                }
+
                 // Remove-friend confirmation prompt floats above the friends panel.
                 if browser.confirm_friend_remove {
                     if let Some(friend) = browser.selected_friend() {
@@ -951,6 +963,24 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => browser.confirm_friend_remove = false,
                         }
+                    } else if browser.social.invite.is_some() {
+                        // Invite overlay keys.
+                        match input {
+                            KeyCode::Esc => browser.close_invite(),
+                            KeyCode::Char('\n') | KeyCode::Enter => browser.invite_send(),
+                            KeyCode::Tab | KeyCode::BackTab => browser.invite_toggle_field(),
+                            KeyCode::Backspace => browser.invite_pop(),
+                            KeyCode::Char(c) => browser.invite_push(c),
+                            _ => {}
+                        }
+                    } else if browser.social.profile.is_some() {
+                        // Profile overlay: scroll or close.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_profile(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.profile_scroll_down(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.profile_scroll_up(),
+                            _ => {}
+                        }
                     } else if browser.friends_focused() {
                         // Friends panel focused: j/k move the highlight (the whole
                         // list scrolls under it), c/Enter open the in-app chat, t
@@ -964,6 +994,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Enter | KeyCode::Char('c') => browser.open_chat(),
                             KeyCode::Char('t') => browser.open_chat_terminal(),
                             KeyCode::Char('a') => browser.open_friend_add(),
+                            KeyCode::Char('i') => browser.open_invite(),
+                            KeyCode::Char('p') => browser.open_friend_profile(),
+                            KeyCode::Char('m') => browser.open_own_profile(),
                             KeyCode::Char('x') => {
                                 if browser.selected_friend().is_some() {
                                     browser.confirm_friend_remove = true;
@@ -1383,6 +1416,16 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 _ => {}
                             }
+                        } else if browser.social.wait_input.is_some() {
+                            match input {
+                                KeyCode::Esc => browser.cancel_persona_wait_edit(),
+                                KeyCode::Char('\n') | KeyCode::Enter => {
+                                    browser.commit_persona_wait_edit()
+                                }
+                                KeyCode::Backspace => browser.persona_wait_pop(),
+                                KeyCode::Char(c) => browser.persona_wait_push(c),
+                                _ => {}
+                            }
                         } else if browser.config_proxy_input.is_some() {
                             match input {
                                 KeyCode::Esc => browser.cancel_proxy_edit(),
@@ -1424,6 +1467,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                         Some(config.aurelia_bin.clone().unwrap_or_default());
                                 }
                                 KeyCode::Char('e') => browser.begin_proxy_edit(),
+                                KeyCode::Char('w') => browser.begin_persona_wait_edit(),
                                 KeyCode::Char('c') => browser.clear_proxy(),
                                 _ => {}
                             }

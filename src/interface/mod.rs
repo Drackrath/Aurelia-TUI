@@ -7,3 +7,4 @@ pub mod hltb;
 pub mod install_options;
 pub mod proton_data;
 pub mod session;
+pub mod social;
