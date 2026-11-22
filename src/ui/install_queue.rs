@@ -82,12 +82,9 @@ pub fn render<B: Backend>(f: &mut Frame<B>, area: Rect, browser: &Browser) {
     f.render_widget(block.style(theme::base()), area);
 
     let mut footer: Vec<Spans<'static>> = Vec::new();
-    let notice = browser.queue_prompt().map(|p| (p, theme::accent()));
-    let notice = notice.or_else(|| {
-        (!q.status.is_empty()).then(|| {
-            let style = Style::default().fg(theme::WARN).add_modifier(Modifier::DIM);
-            (q.status.clone(), style)
-        })
+    let notice = (!q.status.is_empty()).then(|| {
+        let style = Style::default().fg(theme::WARN).add_modifier(Modifier::DIM);
+        (q.status.clone(), style)
     });
     if let Some((text, style)) = notice {
         footer.push(Spans::from(Span::styled(text, style)));
@@ -127,6 +124,10 @@ pub fn render<B: Backend>(f: &mut Frame<B>, area: Rect, browser: &Browser) {
         Paragraph::new(Text::from(footer)).wrap(Wrap { trim: true }),
         parts[1],
     );
+    // Shared popup shows confirm hints.
+    if let Some(prompt) = browser.queue_prompt() {
+        crate::ui::confirm::draw(f, prompt);
+    }
 }
 
 /// Settings value for the limit.
