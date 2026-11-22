@@ -1711,6 +1711,11 @@ pub fn set_branch(app_id: i32, branch: &str) -> Result<(), STError> {
 /// version name; this flattens them into one list, marking each entry's
 /// `installed` and `is_default` state (matched case-insensitively by name).
 pub fn proton_list() -> Result<Vec<ProtonJson>, STError> {
+    proton_list_with_default().map(|(protons, _)| protons)
+}
+
+/// Runtimes plus the configured default name.
+pub fn proton_list_with_default() -> Result<(Vec<ProtonJson>, String), STError> {
     let value = run_json(&["proton", "list"])?;
     let parsed: ProtonListResponse = serde_json::from_value(value)?;
 
@@ -1749,7 +1754,7 @@ pub fn proton_list() -> Result<Vec<ProtonJson>, STError> {
         }
     }
 
-    Ok(protons)
+    Ok((protons, parsed.default))
 }
 
 /// Make `version` the global default Proton/Wine runtime

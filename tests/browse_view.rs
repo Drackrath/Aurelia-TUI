@@ -346,7 +346,7 @@ fn render_proton(browser: &Browser) -> String {
     let backend = TestBackend::new(90, 16);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
-        .draw(|f| f.render_widget(ui::proton::proton(browser), f.size()))
+        .draw(|f| f.render_widget(ui::proton::proton(browser, f.size()), f.size()))
         .unwrap();
     let buf = terminal.backend().buffer();
     (0..16)
@@ -376,18 +376,11 @@ fn proton_overlay_offers_install_and_guards_uninstall() {
     assert!(!browser.selected_proton_uninstallable());
     let valve = render_proton(&browser);
     assert!(valve.contains("[i] install"), "install hint always present");
-    assert!(
-        !valve.contains("[u] uninstall"),
-        "Valve runtime must not offer uninstall"
-    );
+    assert!(valve.contains("[u] remove"), "remove key always listed");
 
     // Highlight the installed GE runtime: uninstall is offered.
     browser.proton_index = 2;
     assert!(browser.selected_proton_uninstallable());
-    assert!(
-        render_proton(&browser).contains("[u] uninstall"),
-        "installed custom runtime offers uninstall"
-    );
 
     // A not-installed runtime is never uninstallable.
     browser.proton_index = 1;

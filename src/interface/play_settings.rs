@@ -7,7 +7,9 @@ use std::thread;
 
 use serde::Deserialize;
 
-use crate::interface::aurelia::{bin, run_json};
+use std::path::PathBuf;
+
+use crate::interface::aurelia::{ProtonJson, bin, run_json};
 use crate::interface::game_status::GameStatus;
 use crate::util::error::STError;
 
@@ -334,4 +336,103 @@ pub fn spawn_anticheat_install(kind: AntiCheat, status: Arc<Mutex<Option<GameSta
             move |out, ok| anticheat_result_status(kind, out, ok),
         );
     });
+}
+
+/// Digits-blanked name, the version family.
+fn family(name: &str) -> String {
+    let mut out = String::new();
+    let mut in_num = false;
+    for c in name.chars() {
+        if c.is_ascii_digit() {
+            if !in_num {
+                out.push('#');
+            }
+            in_num = true;
+        } else {
+            out.push(c.to_ascii_lowercase());
+            in_num = false;
+        }
+    }
+    out
+}
+
+/// Numbers in a name, for ordering.
+fn version_key(name: &str) -> Vec<u64> {
+    name.split(|c: char| !c.is_ascii_digit())
+        .filter_map(|part| part.parse().ok())
+        .collect()
+}
+
+/// Natural sort, newest first per family.
+///
+/// Families keep first-seen order.
+pub fn natural_sort_protons(list: &mut [ProtonJson]) {
+    let mut families: Vec<String> = Vec::new();
+    for p in list.iter() {
+        let f = family(&p.name);
+        if !families.contains(&f) {
+            families.push(f);
+        }
+    }
+    list.sort_by(|a, b| {
+        let fa = families.iter().position(|f| *f == family(&a.name));
+        let fb = families.iter().position(|f| *f == family(&b.name));
+        fa.cmp(&fb)
+            .then_with(|| version_key(&b.name).cmp(&version_key(&a.name)))
+    });
+}
+
+/// Lowercase alphanumerics only.
+fn normalize(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// Row name the default resolves to.
+///
+/// Exact name, symlink, then fuzzy match.
+pub fn resolve_default(default: &str, names: &[String], dirs: &[PathBuf]) -> Option<String> {
+    if default.is_empty() {
+        return None;
+    }
+    if let Some(n) = names.iter().find(|n| n.eq_ignore_ascii_case(default)) {
+        return Some(n.clone());
+    }
+    // Follow links like GE-Proton-latest.
+    for dir in dirs {
+        let Ok(real) = std::fs::canonicalize(dir.join(default)) else {
+            continue;
+        };
+        let Some(target) = real.file_name().map(|f| f.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        if let Some(n) = names.iter().find(|n| n.eq_ignore_ascii_case(&target)) {
+            return Some(n.clone());
+        }
+    }
+    let needle = normalize(default);
+    names
+        .iter()
+        .find(|n| {
+            let cand = normalize(n);
+            !cand.is_empty() && (cand == needle || cand.contains(&needle))
+        })
+        .cloned()
+}
+
+/// Folders where custom runtimes live.
+pub fn compat_tool_dirs() -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    [
+        ".steam/root/compatibilitytools.d",
+        ".steam/steam/compatibilitytools.d",
+        ".local/share/Steam/compatibilitytools.d",
+    ]
+    .iter()
+    .map(|p| home.join(p))
+    .collect()
 }

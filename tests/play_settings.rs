@@ -199,7 +199,10 @@ fn game_settings_render_launch_rows() {
     b.show_game_config = true;
     b.game_config = Some(serde_json::from_str(&fixture("config_game.json")).unwrap());
     let text = render(90, 16, |f| {
-        f.render_widget(ui::game_config::game_config(&b), Rect::new(0, 0, 90, 16));
+        f.render_widget(
+            ui::game_config::game_config(&b, Rect::new(0, 0, 90, 16)),
+            Rect::new(0, 0, 90, 16),
+        );
     });
     assert!(text.contains("Launch options: PROTON_LOG=1"));
     assert!(text.contains("Wine prefix: /home/user/Games/Elden"));
@@ -225,7 +228,10 @@ fn game_settings_edit_input_round_trip() {
     }
     assert!(b.game_config_editing());
     let text = render(90, 16, |f| {
-        f.render_widget(ui::game_config::game_config(&b), Rect::new(0, 0, 90, 16));
+        f.render_widget(
+            ui::game_config::game_config(&b, Rect::new(0, 0, 90, 16)),
+            Rect::new(0, 0, 90, 16),
+        );
     });
     assert!(text.contains("Launch options: -dx11_"));
     assert!(text.contains("empty clears"));
