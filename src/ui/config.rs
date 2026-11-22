@@ -67,6 +67,10 @@ pub fn config(browser: &Browser) -> Table<'static> {
     let mut rows = vec![
         row("HowLongToBeat", yes_no(Config::cached().hltb_enabled)),
         row(
+            "Auto cloud sync (TUI)",
+            yes_no(Config::cached().auto_cloud_sync),
+        ),
+        row(
             "Aurelia binary",
             binary::describe(browser.config_binary_input.as_deref()),
         ),
@@ -125,7 +129,7 @@ pub fn config(browser: &Browser) -> Table<'static> {
     } else if browser.config_proxy_input.is_some() {
         "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
     } else {
-        "Settings ([h] HLTB · [b] binary · [l] language · [o] presence · [w] persona wait · [e]/[c] proxy · [s] shaders · [a] anti-cheat)"
+        "Settings ([h] HLTB · [b] binary · [l] language · [o] presence · [w] persona wait · [e]/[c] proxy · [s] shaders · [a] anti-cheat · [g] cloud sync · [t] TUI cloud)"
             .to_string()
     };
 

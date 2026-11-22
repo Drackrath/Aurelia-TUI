@@ -45,9 +45,16 @@ pub struct Config {
     /// Games launched with `--steam`.
     #[serde(default)]
     pub steam_integration: Vec<i32>,
+    /// Sync saves around play.
+    #[serde(default = "default_auto_cloud_sync")]
+    pub auto_cloud_sync: bool,
 }
 
 fn default_hltb_enabled() -> bool {
+    true
+}
+
+fn default_auto_cloud_sync() -> bool {
     true
 }
 
@@ -65,6 +72,7 @@ impl Default for Config {
             info_language: None,
             launch_targets: BTreeMap::new(),
             steam_integration: vec![],
+            auto_cloud_sync: default_auto_cloud_sync(),
         }
     }
 }

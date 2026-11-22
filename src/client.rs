@@ -4,6 +4,7 @@
 //! client so the UI event loop is unchanged.
 
 use crate::interface::aurelia::{self, LoginPhase};
+use crate::interface::cloud_play;
 use crate::interface::game::{self, Game};
 use crate::interface::game_status::GameStatus;
 use crate::interface::steam_restart;
@@ -271,13 +272,15 @@ fn execute(
             Command::Run(id, status) => {
                 thread::spawn(move || {
                     steam_restart::apply_pending_dlc();
-                    aurelia::play(id, status)
+                    cloud_play::around_play(id, &status.clone(), || aurelia::play(id, status))
                 });
             }
             Command::RunWith(id, opts, status) => {
                 thread::spawn(move || {
                     steam_restart::apply_pending_dlc();
-                    aurelia::play_with(id, opts, status)
+                    cloud_play::around_play(id, &status.clone(), || {
+                        aurelia::play_with(id, opts, status)
+                    })
                 });
             }
             Command::ProtonInstall(name, status) => {

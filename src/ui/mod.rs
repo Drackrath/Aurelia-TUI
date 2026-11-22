@@ -5,6 +5,7 @@
 pub mod actions;
 pub mod chat;
 pub mod cloud;
+pub mod cloud_sync;
 pub mod achievements;
 pub mod account;
 pub mod branches;

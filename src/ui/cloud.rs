@@ -23,6 +23,30 @@ pub fn cloud(browser: &Browser) -> Table<'static> {
         ]));
     }
 
+    // Last outcome, failed and skipped.
+    if let Some(record) = browser
+        .selected()
+        .and_then(|g| crate::interface::cloud_status::get(g.id))
+    {
+        let now = crate::interface::cloud_status::now();
+        rows.push(Row::new(vec![
+            Cell::from(Span::styled(
+                crate::ui::cloud_sync::describe(&record, now),
+                theme::label(),
+            )),
+            Cell::from(Span::styled(
+                format!("{} failed · {} skipped", record.failed, record.skipped),
+                theme::dim(),
+            )),
+        ]));
+        for line in record.message.iter().flat_map(|m| m.lines()) {
+            rows.push(Row::new(vec![
+                Cell::from(Span::styled(line.to_string(), theme::dim())),
+                Cell::from(Span::raw("")),
+            ]));
+        }
+    }
+
     if browser.cloud_files.is_empty() {
         if browser.cloud_status.is_empty() {
             rows.push(Row::new(vec![

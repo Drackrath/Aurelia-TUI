@@ -37,6 +37,12 @@ pub fn game_config(browser: &Browser) -> Paragraph<'static> {
         _ => "(none)".to_string(),
     };
 
+    let cloud = browser
+        .game_cloud_sync
+        .as_ref()
+        .map(|c| c.label())
+        .unwrap_or_else(|| "(unknown)".to_string());
+
     let mut rows: Vec<(&str, String)> = vec![
         ("Runner", runner),
         ("Forced Proton", proton),
@@ -47,6 +53,7 @@ pub fn game_config(browser: &Browser) -> Paragraph<'static> {
         ("Steam integration", browser.steam_integration_label()),
     ];
     rows.extend(crate::ui::play_settings::game_config_rows(browser));
+    rows.push(("Cloud sync", cloud));
 
     let mut lines: Vec<Spans<'static>> = Vec::new();
     for (i, (label, value)) in rows.iter().enumerate() {

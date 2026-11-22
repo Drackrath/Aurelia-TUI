@@ -14,3 +14,6 @@ pub mod proton_data;
 pub mod session;
 pub mod social;
 pub mod steam_restart;
+pub mod cloud_play;
+pub mod cloud_status;
+pub mod cloud_sync;
