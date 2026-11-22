@@ -1,6 +1,7 @@
 use crate::util::error::STError;
 use crate::util::paths::config_location;
 
+use crate::interface::binary::BinarySignature;
 use crate::interface::game::GameType;
 
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,12 @@ pub struct Config {
     /// existing enabled behavior without resetting favourites or hidden games.
     #[serde(default = "default_hltb_enabled")]
     pub hltb_enabled: bool,
+    /// Chosen `aurelia` path; `AURELIA_BIN` wins.
+    #[serde(default)]
+    pub aurelia_bin: Option<String>,
+    /// Binary the TUI last ran.
+    #[serde(default)]
+    pub last_binary: Option<BinarySignature>,
 }
 
 fn default_hltb_enabled() -> bool {
@@ -43,6 +50,8 @@ impl Default for Config {
             allowed_games: vec![GameType::Game, GameType::DLC],
             highlight: theme::ACCENT,
             hltb_enabled: default_hltb_enabled(),
+            aurelia_bin: None,
+            last_binary: None,
         }
     }
 }

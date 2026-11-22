@@ -24,6 +24,7 @@ use aurelia_tui::app::{App, Mode};
 use aurelia_tui::client::{Client, State};
 use aurelia_tui::config::Config;
 use aurelia_tui::interface::aurelia::{self, LoginPhase};
+use aurelia_tui::interface::{binary, capabilities};
 use aurelia_tui::util::stateful::Named;
 
 /// Blend `img` toward `bg` so the top-aligned cover art reads as a translucent
@@ -142,13 +143,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
     let events = Events::new();
     let client = Client::new();
 
+    // Probe binary; retire stale daemon first.
+    capabilities::probe();
+    let binary_notice = binary::reconcile_daemon(&mut config);
+
     // Always probe the session first (stored session or daemon). The health
     // result drives whether we land on the library or the sign-in page.
     client.check_session()?;
     app.mode = Mode::Loading;
-
-    // Probed once: the binary doesn't change while the TUI runs.
-    let aurelia_version = aurelia::version();
 
     // Seed the browser from the cached library, if present.
     let mut cached = false;
@@ -160,6 +162,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         _ => Browser::new(Vec::new()),
     };
     let mut hltb_chord: Option<&str> = None;
+    if binary_notice.is_some() {
+        browser.notice = binary_notice;
+    }
 
     // Wall-clock anchor for the list-name marquee. Deriving the scroll step from
     // elapsed time (rather than a per-frame counter) keeps it advancing at a
@@ -333,6 +338,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     chunks[2],
                 );
                 // Bottom-right corner, right of the key hints.
+                let aurelia_version = capabilities::version();
                 frame.render_widget(
                     ui::status::version_badge(aurelia_version.as_deref()),
                     ui::status::version_badge_area(chunks[2], aurelia_version.as_deref()),
@@ -1294,7 +1300,12 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         // `o` logs out of Steam; any other key dismisses the overlay.
                         match input {
                             KeyCode::Char('o') => {
-                                let _ = aurelia::logout();
+                                // Show the token revocation result.
+                                let status = match aurelia::logout() {
+                                    Ok(result) => result.summary(),
+                                    Err(error) => format!("Logout failed: {error}"),
+                                };
+                                client.set_last_error(Some(status));
                                 browser.show_account = false;
                                 app.mode = Mode::Login;
                             }
@@ -1304,7 +1315,31 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         // Settings overlay. While editing the proxy URL, keys edit
                         // that input; otherwise dismiss / toggle presence / edit or
                         // clear the proxy, or toggle TUI-owned HLTB lookups in place.
-                        if browser.config_proxy_input.is_some() {
+                        if browser.config_binary_input.is_some() {
+                            match input {
+                                KeyCode::Esc => browser.config_binary_input = None,
+                                KeyCode::Char('\n') | KeyCode::Enter => {
+                                    let typed =
+                                        browser.config_binary_input.take().unwrap_or_default();
+                                    browser.notice =
+                                        match binary::set_configured(&mut config, &typed) {
+                                            Ok(notice) => notice,
+                                            Err(error) => Some(error),
+                                        };
+                                }
+                                KeyCode::Backspace => {
+                                    if let Some(s) = browser.config_binary_input.as_mut() {
+                                        s.pop();
+                                    }
+                                }
+                                KeyCode::Char(c) => {
+                                    if let Some(s) = browser.config_binary_input.as_mut() {
+                                        s.push(c);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        } else if browser.config_proxy_input.is_some() {
                             match input {
                                 KeyCode::Esc => browser.cancel_proxy_edit(),
                                 KeyCode::Char('\n') | KeyCode::Enter => {
@@ -1339,6 +1374,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                             browser.notice = Some(format!("HLTB setting: {error}"));
                                         }
                                     }
+                                }
+                                KeyCode::Char('b') => {
+                                    browser.config_binary_input =
+                                        Some(config.aurelia_bin.clone().unwrap_or_default());
                                 }
                                 KeyCode::Char('e') => browser.begin_proxy_edit(),
                                 KeyCode::Char('c') => browser.clear_proxy(),

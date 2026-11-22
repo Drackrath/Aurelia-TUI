@@ -202,6 +202,8 @@ pub struct Browser {
     /// The inline proxy-URL edit buffer in the config overlay (None = not
     /// editing; Some = the URL the user is typing, empty to clear).
     pub config_proxy_input: Option<String>,
+    /// Typed `aurelia` binary path, if editing.
+    pub config_binary_input: Option<String>,
     /// Whether the Steam Wallet overlay is open.
     pub show_wallet: bool,
     /// The fetched wallet balance, shown by the wallet overlay.
@@ -632,6 +634,7 @@ impl Browser {
             config_info: None,
             config_proxy: None,
             config_proxy_input: None,
+            config_binary_input: None,
             show_wallet: false,
             wallet_info: None,
             expand_description: false,
@@ -2363,6 +2366,7 @@ impl Browser {
         self.config_info = None;
         self.config_proxy = None;
         self.config_proxy_input = None;
+        self.config_binary_input = None;
     }
 
     /// Re-fetch just the proxy setting (after an edit/clear), keeping the overlay

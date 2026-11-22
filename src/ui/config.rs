@@ -7,6 +7,7 @@ use tui::widgets::{Cell, Row, Table};
 
 use crate::browse::Browser;
 use crate::config::Config;
+use crate::interface::binary;
 use crate::theme;
 
 /// One key-value row in the settings table.
@@ -46,10 +47,13 @@ fn proxy_value(browser: &Browser) -> String {
 pub fn config(browser: &Browser) -> Table<'static> {
     // Local preferences must remain visible without a working launcher. Keep
     // the switch first so it is also reachable in shorter settings panels.
-    let mut rows = vec![row(
-        "HowLongToBeat",
-        yes_no(Config::cached().hltb_enabled),
-    )];
+    let mut rows = vec![
+        row("HowLongToBeat", yes_no(Config::cached().hltb_enabled)),
+        row(
+            "Aurelia binary",
+            binary::describe(browser.config_binary_input.as_deref()),
+        ),
+    ];
     rows.extend(match &browser.config_info {
         Some(info) => vec![
             row("Presence", opt(&info.chat_presence)),
@@ -81,10 +85,13 @@ pub fn config(browser: &Browser) -> Table<'static> {
         rows.push(row("Proxy", proxy_value(browser)));
     }
 
-    let title = if browser.config_proxy_input.is_some() {
+    let title = if browser.config_binary_input.is_some() {
+        "Settings — aurelia path ([Enter] save · [Esc] cancel · empty = auto)".to_string()
+    } else if browser.config_proxy_input.is_some() {
         "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
     } else {
-        "Settings ([h] HLTB · [o] presence · [e] edit proxy · [c] clear proxy)".to_string()
+        "Settings ([h] HLTB · [b] binary · [o] presence · [e] edit proxy · [c] clear proxy)"
+            .to_string()
     };
 
     Table::new(rows)

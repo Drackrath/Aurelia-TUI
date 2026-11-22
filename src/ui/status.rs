@@ -7,7 +7,7 @@ use tui::text::{Span, Spans, Text};
 use tui::widgets::Paragraph;
 
 use crate::browse::Browser;
-use crate::interface::aurelia;
+use crate::interface::{aurelia, capabilities};
 use crate::theme;
 
 /// A dim "  ·  " separator span.
@@ -41,7 +41,12 @@ pub fn version_badge_area(area: Rect, version: Option<&str>) -> Rect {
 /// The badge text, and whether it should be drawn as a warning.
 fn version_badge_text(version: Option<&str>) -> (String, bool) {
     let (min_major, min_minor, min_patch) = aurelia::MIN_VERSION;
+    let missing = capabilities::missing();
     match version {
+        Some(v) if aurelia::version_supported(v) && !missing.is_empty() => (
+            format!("aurelia v{v} (missing: {})", missing.join(", ")),
+            true,
+        ),
         Some(v) if aurelia::version_supported(v) => (format!("aurelia v{v}"), false),
         Some(v) => (
             format!("aurelia v{v} (needs >= {min_major}.{min_minor}.{min_patch})"),
