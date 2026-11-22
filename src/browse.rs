@@ -20,6 +20,7 @@ use crate::theme;
 use crate::util::error::STError;
 
 pub mod install_options;
+mod library_info;
 
 /// The quick-filter tabs along the top of the library.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -81,6 +82,7 @@ pub enum InstallPhase {
 pub enum Sort {
     Name,
     Installed,
+    Playtime,
 }
 
 impl Sort {
@@ -88,13 +90,15 @@ impl Sort {
         match self {
             Sort::Name => "name",
             Sort::Installed => "installed",
+            Sort::Playtime => "playtime",
         }
     }
 
     pub fn next(self) -> Sort {
         match self {
             Sort::Name => Sort::Installed,
-            Sort::Installed => Sort::Name,
+            Sort::Installed => Sort::Playtime,
+            Sort::Playtime => Sort::Name,
         }
     }
 }
@@ -615,6 +619,7 @@ pub enum Action {
     Collections,
     Favourite,
     Hide,
+    SteamDb,
 }
 
 /// One rendered row of the Actions menu: the action, the category header it
@@ -2499,6 +2504,7 @@ impl Browser {
                         .then_with(|| a.raw_name().to_lowercase().cmp(&b.raw_name().to_lowercase()))
                 });
             }
+            Sort::Playtime => library_info::sort_by_playtime(&mut games),
         }
         games
     }
@@ -2689,6 +2695,7 @@ impl Browser {
                 game.install_dir = entry.install_path.clone().unwrap_or_default();
                 game.update_available = entry.update_available;
                 game.platform = entry.platform.clone();
+                game.library = entry.library.clone();
                 if let Ok(mut s) = game.status_counter().lock() {
                     *s = None;
                 }
@@ -3019,6 +3026,7 @@ impl Browser {
         rows.push(ActionRow { action: Action::Collections, category: LIB, label: "Collections", key: "O" });
         rows.push(ActionRow { action: Action::Favourite, category: LIB, label: "Toggle favourite", key: "f" });
         rows.push(ActionRow { action: Action::Hide, category: LIB, label: "Hide game", key: "H" });
+        rows.push(ActionRow { action: Action::SteamDb, category: LIB, label: "Open on SteamDB", key: "" });
 
         rows
     }
@@ -3757,6 +3765,7 @@ mod install_tests {
             active_branch: None,
             assets: None,
             store_url: None,
+            library: Default::default(),
         })
     }
 
@@ -3809,6 +3818,7 @@ mod install_tests {
             active_branch: None,
             assets: None,
             store_url: None,
+            library: Default::default(),
         });
 
         b.poll_game_refresh();

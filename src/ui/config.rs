@@ -70,6 +70,12 @@ pub fn config(browser: &Browser) -> Table<'static> {
             "Aurelia binary",
             binary::describe(browser.config_binary_input.as_deref()),
         ),
+        row(
+            "Store language",
+            crate::interface::library_info::language_label(
+                Config::cached().info_language.as_deref(),
+            ),
+        ),
     ];
     rows.extend(match &browser.config_info {
         Some(info) => vec![
@@ -113,7 +119,7 @@ pub fn config(browser: &Browser) -> Table<'static> {
     } else if browser.config_proxy_input.is_some() {
         "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
     } else {
-        "Settings ([h] HLTB · [b] binary · [o] presence · [w] persona wait · [e] edit proxy · [c] clear proxy)"
+        "Settings ([h] HLTB · [b] binary · [l] language · [o] presence · [w] persona wait · [e] edit proxy · [c] clear proxy)"
             .to_string()
     };
 

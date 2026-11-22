@@ -5,6 +5,7 @@ pub mod game;
 pub mod game_status;
 pub mod hltb;
 pub mod install_options;
+pub mod library_info;
 pub mod proton_data;
 pub mod session;
 pub mod social;

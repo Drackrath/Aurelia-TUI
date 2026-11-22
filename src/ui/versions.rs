@@ -106,7 +106,7 @@ pub fn versions(browser: &Browser) -> Paragraph<'static> {
         } else if let Some(busy) = browser.downgrade_busy_text() {
             busy
         } else {
-            "[p] pin  [u] unpin  [d] downgrade selected  [Esc] close".to_string()
+            "[p] pin  [u] unpin  [d] downgrade selected  [s] SteamDB manifests  [Esc] close".to_string()
         };
         lines.push(Spans::from(Span::styled(status, theme::dim())));
     }

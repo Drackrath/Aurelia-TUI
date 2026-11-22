@@ -56,6 +56,9 @@ pub struct Game {
     /// Installed depot platform, from `list`.
     #[serde(default)]
     pub platform: Option<String>,
+    /// Playtime, queued update, installed size.
+    #[serde(default)]
+    pub library: crate::interface::library_info::LibraryInfoJson,
 
     #[serde(skip)]
     proton_tier: Arc<Mutex<Option<String>>>,
@@ -87,7 +90,9 @@ impl Game {
             .assets
             .as_ref()
             .and_then(|a| a.capsule.clone().or_else(|| a.header.clone()));
+        let library = entry.library.clone();
         Game {
+            library,
             id: entry.app_id as i32,
             name: entry.name,
             developer: "-".to_string(),
@@ -230,6 +235,19 @@ impl Game {
         });
     }
 
+    /// Snapshot of fetched store info.
+    pub fn info_snapshot(&self) -> Option<InfoJson> {
+        self.info.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    /// Drop store info; refetch on demand.
+    pub fn reset_info(&self) {
+        if let Ok(mut slot) = self.info.lock() {
+            *slot = None;
+        }
+        self.info_requested.store(false, Ordering::SeqCst);
+    }
+
     pub fn get_developer(&self) -> String {
         if let Ok(guard) = self.info.lock() {
             if let Some(info) = &*guard {
@@ -353,6 +371,7 @@ mod hltb_tests {
             active_branch: None,
             assets: None,
             store_url: Some("https://store.steampowered.com/app/400".into()),
+            library: Default::default(),
         })
     }
 

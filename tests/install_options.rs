@@ -45,6 +45,7 @@ fn game(platform: Option<&str>) -> Game {
         active_branch: None,
         assets: None,
         store_url: None,
+        library: Default::default(),
     })
 }
 

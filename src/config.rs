@@ -35,6 +35,9 @@ pub struct Config {
     /// Binary the TUI last ran.
     #[serde(default)]
     pub last_binary: Option<BinarySignature>,
+    /// Store text language; `None` = Aurelia's.
+    #[serde(default)]
+    pub info_language: Option<String>,
 }
 
 fn default_hltb_enabled() -> bool {
@@ -52,6 +55,7 @@ impl Default for Config {
             hltb_enabled: default_hltb_enabled(),
             aurelia_bin: None,
             last_binary: None,
+            info_language: None,
         }
     }
 }

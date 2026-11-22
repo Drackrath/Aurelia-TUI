@@ -1,0 +1,85 @@
+{
+  "app_id": 620,
+  "name": "Portal 2",
+  "type": "game",
+  "is_free": false,
+  "early_access": false,
+  "description": "The \"Perpetual Testing Initiative\" has been expanded.",
+  "full_description": "Portal 2 draws from the award-winning formula of innovative gameplay.",
+  "developers": [
+    "Valve"
+  ],
+  "publishers": [
+    "Valve"
+  ],
+  "franchises": [
+    "Portal"
+  ],
+  "release_date": "2011-04-18",
+  "coming_soon": false,
+  "price": "9,75€",
+  "discount_pct": 0,
+  "country": "DE",
+  "price_cents": 975,
+  "original_price": null,
+  "original_price_cents": null,
+  "discount_end": null,
+  "discount_end_date": null,
+  "region_locked": false,
+  "purchase_options": [],
+  "tags": [
+    {
+      "id": 1664,
+      "name": "Puzzle",
+      "weight": 100
+    }
+  ],
+  "rating": null,
+  "links": [],
+  "screenshots": [],
+  "trailers": [],
+  "platforms": [
+    "windows",
+    "linux"
+  ],
+  "reviews": "Overwhelmingly Positive",
+  "store_url": "https://store.steampowered.com/app/620/",
+  "assets": {
+    "header": "https://cdn.cloudflare.steamstatic.com/steam/apps/620/header.jpg",
+    "capsule": null,
+    "hero": null,
+    "background": null,
+    "logo": null
+  },
+  "dlc": [
+    {
+      "app_id": 323180,
+      "name": "Portal 2 Sixense Perceptual Pack"
+    }
+  ],
+  "extended": {
+    "genres": [
+      "Action",
+      "Adventure"
+    ],
+    "categories": [
+      "Single-player",
+      "Co-op",
+      "Steam Achievements"
+    ],
+    "tags": [
+      "Puzzle"
+    ],
+    "metacritic": 95,
+    "metacritic_url": "https://www.metacritic.com/game/pc/portal-2",
+    "website": "http://www.thinkwithportals.com/",
+    "requirements": {
+      "minimum": [
+        "OS: Windows 7",
+        "Processor: 3.0 GHz P4",
+        "Memory: 2 GB RAM"
+      ],
+      "recommended": []
+    }
+  }
+}
