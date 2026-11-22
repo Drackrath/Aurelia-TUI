@@ -204,7 +204,8 @@ fn game_settings_render_launch_rows() {
     assert!(text.contains("Launch options: PROTON_LOG=1"));
     assert!(text.contains("Wine prefix: /home/user/Games/Elden"));
     assert!(text.contains("Prefix in use: /home/user/Games/Elden/pfx (custom)"));
-    assert_eq!(Browser::GAME_CONFIG_ROWS, ROW_PREFIX + 1);
+    assert_eq!(Browser::GAME_CONFIG_ROWS, ROW_PREFIX + 2);
+    assert_eq!(Browser::GAME_CONFIG_CLOUD_ROW, ROW_PREFIX + 1);
 }
 
 #[test]
