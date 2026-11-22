@@ -3,6 +3,7 @@
 //! event loop only has to lay them out.
 
 pub mod actions;
+pub mod aurelia_log;
 pub mod chat;
 pub mod cloud;
 pub mod achievements;

@@ -109,6 +109,8 @@ fn entries() -> Vec<Entry> {
         Entry::Binding("A then o", "log out"),
         Entry::Binding("w", "wallet balance"),
         Entry::Binding("l", "sign in again"),
+        Entry::Binding("Enter → log", "Aurelia log (j/k/g/G)"),
+        Entry::Binding("Enter → recon", "reconnect Steam session"),
         Entry::Blank,
         Entry::Header("General"),
         Entry::Binding("?", "toggle this help"),

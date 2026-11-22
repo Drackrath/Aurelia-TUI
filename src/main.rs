@@ -558,6 +558,16 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
+                // Aurelia log overlay.
+                if browser.aurelia_log.open {
+                    let area = ui::centered_rect(90, 80, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(
+                        ui::aurelia_log::render(&browser.aurelia_log, area.height),
+                        area,
+                    );
+                }
+
                 // Running-games overlay floats above everything.
                 if browser.show_running {
                     let area = ui::centered_rect(60, 60, frame.size());
@@ -613,6 +623,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         App::build_login_landing(client.get_last_error()),
                         placement[0],
                     ),
+                    Mode::LoginQr if client.is_qr_scanned() => {
+                        frame.render_widget(App::build_qr_scanned(), placement[0])
+                    }
                     Mode::LoginQr => {
                         frame.render_widget(App::build_qr(client.get_qr()), placement[0])
                     }
@@ -780,6 +793,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                                 Config::save(&config)?;
                                                 browser.refresh();
                                             }
+                                            Action::AureliaLog => browser.aurelia_log.open(),
+                                            Action::Reconnect => {
+                                                browser.notice = Some(if browser.reconnect.start() {
+                                                    "Reconnecting Steam session...".into()
+                                                } else {
+                                                    "Reconnect already running".into()
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -787,6 +808,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char(c) => browser.actions_filter_push(c),
                             _ => {}
                         }
+                    } else if browser.aurelia_log.open {
+                        browser.aurelia_log.handle_key(input);
                     } else if browser.show_versions {
                         // Versions & pinning overlay. When prompting for a
                         // downgrade manifest id, keys edit that input instead.
@@ -1663,9 +1686,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 Mode::LoginClassic => match input {
                     KeyCode::Char('q') => {
+                        client.cancel_classic()?;
                         break;
                     }
                     KeyCode::Esc => {
+                        client.cancel_classic()?;
                         app.mode = Mode::Login;
                     }
                     _ => {}
@@ -1673,6 +1698,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 Mode::LoginGuard => match input {
                     KeyCode::Esc => {
                         terminal.hide_cursor()?;
+                        client.cancel_classic()?;
                         app.mode = Mode::Login;
                     }
                     KeyCode::Char('\n') | KeyCode::Enter => {
@@ -1784,8 +1810,11 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         browser.poll_market();
         // Adopt a finished runtime-plugin worker (install/update/repair).
         browser.poll_engine();
+        if let Some(notice) = browser.reconnect.poll() {
+            browser.notice = Some(notice);
+        }
 
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install && !browser.show_actions && !browser.show_versions && !browser.show_game_config && !browser.show_launch_targets && !browser.show_collections && !browser.show_engine {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install && !browser.show_actions && !browser.show_versions && !browser.show_game_config && !browser.show_launch_targets && !browser.show_collections && !browser.show_engine && !browser.aurelia_log.open {
             let selected = browser.selected();
             let cur_sel = selected.as_ref().map(|g| g.id);
             if cur_sel != artwork_sel_id {
