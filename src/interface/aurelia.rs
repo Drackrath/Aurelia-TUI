@@ -1138,23 +1138,23 @@ struct LoginEvent {
 /// Progress events are emitted on **stderr**; the terminal result object goes
 /// to **stdout**.
 #[derive(Debug, Deserialize)]
-struct ProgressJson {
+pub(crate) struct ProgressJson {
     #[serde(default)]
-    event: Option<String>,
+    pub(crate) event: Option<String>,
     #[serde(default)]
-    state: Option<String>,
+    pub(crate) state: Option<String>,
     #[serde(default)]
-    percent: Option<f64>,
+    pub(crate) percent: Option<f64>,
     /// Estimated seconds remaining, or `None` when not yet estimable (the CLI
     /// emits `eta_seconds: null` early in a transfer).
     #[serde(default)]
-    eta_seconds: Option<u64>,
+    pub(crate) eta_seconds: Option<u64>,
 }
 
 /// Format a download ETA into a compact " · ETA 3m 12s" suffix to sit next to
 /// the State value. Empty when the time is not yet estimable, so a status line
 /// without an estimate is unchanged.
-fn eta_suffix(eta_seconds: Option<u64>) -> String {
+pub(crate) fn eta_suffix(eta_seconds: Option<u64>) -> String {
     let Some(secs) = eta_seconds else {
         return String::new();
     };
@@ -1172,7 +1172,7 @@ fn eta_suffix(eta_seconds: Option<u64>) -> String {
 /// The error message of an `{"error": "...", "hint": "..."}` payload, if `value`
 /// is one. Since v0.1.37 the CLI may attach a `hint` (e.g. "run `aurelia login`")
 /// to typed errors; it is appended in parentheses.
-fn json_error(value: &serde_json::Value) -> Option<String> {
+pub(crate) fn json_error(value: &serde_json::Value) -> Option<String> {
     let err = value.get("error").and_then(|e| e.as_str())?;
     match value.get("hint").and_then(|h| h.as_str()) {
         Some(hint) if !hint.is_empty() => Some(format!("{err} ({hint})")),
@@ -1184,7 +1184,7 @@ fn json_error(value: &serde_json::Value) -> Option<String> {
 ///
 /// Errors surface as `{"error": "..."}` on stdout; that is translated into an
 /// `STError::Problem`. stderr (tracing/diagnostics) is discarded.
-fn run_json(args: &[&str]) -> Result<serde_json::Value, STError> {
+pub(crate) fn run_json(args: &[&str]) -> Result<serde_json::Value, STError> {
     let output = process::Command::new(bin())
         .args(args)
         .arg("--json")
@@ -2008,7 +2008,7 @@ pub fn login_classic(
 }
 
 /// Update a shared status cell, preserving any previously-known install dir/size.
-fn set_status(status: &Arc<Mutex<Option<GameStatus>>>, msg: &str) {
+pub(crate) fn set_status(status: &Arc<Mutex<Option<GameStatus>>>, msg: &str) {
     if let Ok(mut guard) = status.lock() {
         let next = GameStatus::msg(&guard, msg);
         *guard = Some(next);
@@ -2035,13 +2035,28 @@ pub enum InstallAction {
 #[derive(Debug, Clone)]
 pub struct InstallControl {
     action: Arc<Mutex<InstallAction>>,
+    /// Platform and language flags.
+    options: crate::interface::install_options::InstallOpts,
 }
 
 impl InstallControl {
     pub fn new() -> Self {
         Self {
             action: Arc::new(Mutex::new(InstallAction::Running)),
+            options: Default::default(),
         }
+    }
+
+    /// A control carrying install flags.
+    pub fn with_options(options: crate::interface::install_options::InstallOpts) -> Self {
+        Self {
+            options,
+            ..Self::new()
+        }
+    }
+
+    pub fn options(&self) -> &crate::interface::install_options::InstallOpts {
+        &self.options
     }
 
     pub fn set(&self, action: InstallAction) {
@@ -2107,6 +2122,8 @@ pub fn install(
         args.push("--library");
         args.push(library);
     }
+    let extra = control.options().args();
+    args.extend(extra.iter().map(String::as_str));
     let spawned = process::Command::new(bin())
         .args(&args)
         .stdin(process::Stdio::null())
@@ -2196,11 +2213,16 @@ pub fn install(
     }
 }
 
-/// Uninstall a game (`aurelia uninstall <id> --json`). The game's Wine prefix /
-/// compat data is left in place (no `--delete-prefix`). Blocks until the CLI
+/// Uninstall a game (`aurelia uninstall <id> --json`). Blocks until the CLI
 /// reports the result; the parsed value is ignored beyond error detection.
-pub fn uninstall(app_id: i32) -> Result<(), STError> {
-    run_json(&["uninstall", &app_id.to_string()])?;
+/// `delete_prefix` adds `--delete-prefix`.
+pub fn uninstall(app_id: i32, delete_prefix: bool) -> Result<(), STError> {
+    let id = app_id.to_string();
+    let mut args = vec!["uninstall", id.as_str()];
+    if delete_prefix {
+        args.push("--delete-prefix");
+    }
+    run_json(&args)?;
     Ok(())
 }
 
