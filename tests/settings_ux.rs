@@ -9,7 +9,11 @@ use tui::Terminal;
 use tui::backend::TestBackend;
 use tui::layout::Rect;
 
-fn isolate_config() {
+/// Serializes tests sharing the config.
+static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn isolate_config() -> std::sync::MutexGuard<'static, ()> {
+    let guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("settings-ux-config");
     // SAFETY: set before Config::cached().
     unsafe {
@@ -17,6 +21,7 @@ fn isolate_config() {
         std::env::set_var("AURELIA_TUI_CACHE_DIR", &dir);
         std::env::set_var("AURELIA_BIN", dir.join("missing-aurelia"));
     }
+    guard
 }
 
 fn launcher_browser() -> Browser {
@@ -48,7 +53,7 @@ fn render(b: &Browser, w: u16, h: u16) -> String {
 
 #[test]
 fn rows_are_grouped_and_ordered() {
-    isolate_config();
+    let _lock = isolate_config();
     let b = launcher_browser();
     let rows = settings::selectable(&b);
     assert_eq!(rows[..4], settings::TUI_ROWS);
@@ -74,7 +79,7 @@ fn rows_are_grouped_and_ordered() {
 
 #[test]
 fn without_launcher_only_local_rows() {
-    isolate_config();
+    let _lock = isolate_config();
     let mut b = Browser::new(vec![]);
     b.show_config = true;
     let rows = settings::selectable(&b);
@@ -85,7 +90,7 @@ fn without_launcher_only_local_rows() {
 
 #[test]
 fn selection_clamps_and_shows_help() {
-    isolate_config();
+    let _lock = isolate_config();
     let mut b = launcher_browser();
     assert_eq!(settings::selected(&b), Some(Setting::Hltb));
     settings::previous(&mut b);
@@ -98,7 +103,7 @@ fn selection_clamps_and_shows_help() {
 
 #[test]
 fn small_panel_scrolls_to_selection() {
-    isolate_config();
+    let _lock = isolate_config();
     let mut b = launcher_browser();
     b.config_index = settings::selectable(&b).len() - 1;
     let out = render(&b, 100, 12);
@@ -132,7 +137,7 @@ fn shortcuts_map_to_rows() {
 
 #[test]
 fn enter_toggles_and_opens_inputs() {
-    isolate_config();
+    let _lock = isolate_config();
     let mut config = Config::default();
     config.save().unwrap();
     let mut b = launcher_browser();
@@ -172,7 +177,7 @@ fn game(id: i32) -> Game {
 
 #[test]
 fn actions_menu_reaches_app_screens() {
-    isolate_config();
+    let _lock = isolate_config();
     let b = Browser::new(vec![game(10)]);
     let rows = b.action_candidates();
     for (action, key) in [
@@ -196,7 +201,7 @@ fn actions_menu_reaches_app_screens() {
 
 #[test]
 fn account_logout_needs_confirmation_text() {
-    isolate_config();
+    let _lock = isolate_config();
     let mut b = Browser::new(vec![]);
     let draw = |b: &Browser| {
         let mut t = Terminal::new(TestBackend::new(80, 12)).unwrap();

@@ -79,15 +79,18 @@ impl Default for Config {
 
 impl Config {
     pub fn new() -> Result<Config, STError> {
-        let config = match serde_json::from_str(&fs::read_to_string(config_location()?)?) {
-            Ok(config) => config,
-            _ => {
+        // Lock across read and publish.
+        let mut cache = CACHE.write()?;
+        let path = config_location()?;
+        let config = match serde_json::from_str(&fs::read_to_string(&path)?).ok() {
+            Some(config) => config,
+            None => {
                 let config = Config::default();
-                config.save()?;
+                fs::write(&path, serde_json::to_string(&config)?)?;
                 config
             }
         };
-        *CACHE.write()? = Some(config.clone());
+        *cache = Some(config.clone());
         Ok(config)
     }
 
@@ -107,8 +110,10 @@ impl Config {
     pub fn save(&self) -> Result<(), STError> {
         // Publish only persisted settings. A failed save must not make a toggle
         // appear successful in cached readers while the UI retains its old copy.
+        // Lock so loads can't interleave.
+        let mut cache = CACHE.write()?;
         fs::write(config_location()?, serde_json::to_string(&self)?)?;
-        *CACHE.write()? = Some(self.clone());
+        *cache = Some(self.clone());
         Ok(())
     }
 }

@@ -467,9 +467,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     frame.render_widget(ui::actions::actions_in(&browser, area.height), area);
                 }
                 if browser.confirm_reconnect {
-                    let area = ui::centered_rect(50, 30, frame.size());
-                    frame.render_widget(Clear, area);
-                    frame.render_widget(ui::confirm::confirm_reconnect(), area);
+                    ui::confirm::draw(frame, ui::confirm::reconnect_text());
                 }
 
                 // Versions & pinning overlay floats above everything.
@@ -510,12 +508,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 // "Not installed — install now?" prompt floats above the library.
                 if browser.confirm_install {
                     if let Some(game) = browser.selected() {
-                        let area = ui::centered_rect(40, 20, frame.size());
-                        frame.render_widget(Clear, area);
-                        frame.render_widget(
-                            ui::confirm::confirm_install(&game.get_name()),
-                            area,
-                        );
+                        ui::confirm::draw(frame, ui::confirm::install_text(&game.get_name()));
                     }
                 }
 
@@ -586,10 +579,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     // Destructive uninstall confirmation floats above the overlay.
                     if browser.confirm_proton_uninstall {
                         if let Some(p) = browser.selected_proton() {
-                            let prompt = ui::confirm::confirm_uninstall(&p.name);
-                            let confirm_area = ui::centered_rect(40, 20, frame.size());
-                            frame.render_widget(Clear, confirm_area);
-                            frame.render_widget(prompt, confirm_area);
+                            ui::confirm::draw(frame, ui::confirm::uninstall_text(&p.name));
                         }
                     }
                 }
@@ -633,12 +623,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 // Remove-friend confirmation prompt floats above the friends panel.
                 if browser.confirm_friend_remove {
                     if let Some(friend) = browser.selected_friend() {
-                        let area = ui::centered_rect(40, 20, frame.size());
-                        frame.render_widget(Clear, area);
-                        frame.render_widget(
-                            ui::confirm::confirm_remove_friend(&friend.display_name()),
-                            area,
-                        );
+                        let text = ui::confirm::remove_friend_text(&friend.display_name());
+                        ui::confirm::draw(frame, text);
                     }
                 }
 
