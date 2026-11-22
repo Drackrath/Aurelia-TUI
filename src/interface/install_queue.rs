@@ -1,6 +1,6 @@
 //! Install backlog, progress, typed errors.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::Read;
 use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -180,7 +180,7 @@ impl InstallError {
         };
         let extra = self.kind.advice().map(str::to_string).or(self.hint.clone());
         if let Some(extra) = extra.filter(|e| !e.is_empty()) {
-            out.push_str(&format!(" ({extra})"));
+            out.push_str(&format!(" — {extra}"));
         }
         out
     }
@@ -463,7 +463,9 @@ fn stream(args: &[String], status: &Arc<Mutex<Option<GameStatus>>>) -> Result<St
         buf
     });
     if let Some(stderr) = child.stderr.take() {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let label = crate::interface::aurelia_log::label(&refs);
+        for line in crate::interface::aurelia_log::tee(&label, stderr) {
             if let Some(event) = parse_progress(&line) {
                 set_status(status, &progress_status(&event));
             }

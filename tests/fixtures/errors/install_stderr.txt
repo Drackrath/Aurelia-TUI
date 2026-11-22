@@ -1,0 +1,6 @@
+{"event":"progress","state":"downloading","percent":12.5,"eta_seconds":40}
+2026-11-22T10:00:00Z  WARN aurelia: depot 441 key missing; retrying
+{"event":"progress","state":"downloading","percent":13.0,"eta_seconds":39}
+
+{"event":"shaders","state":"processing","done":1,"total":4,"percent":25.0}
+{"event":"shaders","state":"finished","done":4,"total":4}

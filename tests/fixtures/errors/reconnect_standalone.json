@@ -1,0 +1,1 @@
+{"error":"--reconnect needs the session daemon, but this command is running standalone (AURELIA_NO_DAEMON is set, or the daemon is unreachable). Start `aurelia daemon` first.","type":"unknown"}

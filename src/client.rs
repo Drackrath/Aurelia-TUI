@@ -7,6 +7,7 @@ use crate::interface::aurelia::{self, LoginPhase};
 use crate::interface::cloud_play;
 use crate::interface::game::{self, Game};
 use crate::interface::game_status::GameStatus;
+use crate::interface::session::with_advice;
 use crate::interface::steam_restart;
 
 use crate::util::error::STError;
@@ -15,8 +16,8 @@ use crate::util::paths::{cache_location, invalidate_cache};
 
 use std::fs;
 use std::io::Write;
-use std::process::ChildStdin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::{Child, ChildStdin};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -43,7 +44,7 @@ pub enum Command {
     LoginQr(QrAttempt),
     /// Begin a classic username/password login. The `Receiver` delivers a Steam
     /// Guard code from the UI if one is prompted for.
-    LoginClassic(String, String, Receiver<String>),
+    LoginClassic(String, String, Receiver<String>, ClassicAttempt),
     /// Fetch and cache the full library (`aurelia list`).
     LoadGames,
     /// Invalidate the cache and re-verify the session.
@@ -78,6 +79,19 @@ fn send_cancel(mut stdin: ChildStdin) {
     let _ = stdin.flush();
 }
 
+/// One numbered classic login attempt.
+pub struct ClassicAttempt {
+    id: u64,
+    current: Arc<AtomicU64>,
+    child: Arc<Mutex<Option<Child>>>,
+}
+
+impl ClassicAttempt {
+    fn is_current(&self) -> bool {
+        self.current.load(Ordering::SeqCst) == self.id
+    }
+}
+
 /// One numbered QR login attempt.
 pub struct QrAttempt {
     id: u64,
@@ -86,6 +100,7 @@ pub struct QrAttempt {
     qr: Arc<Mutex<Option<String>>>,
     state: Arc<Mutex<State>>,
     last_error: Arc<Mutex<Option<String>>>,
+    scanned: Arc<AtomicBool>,
 }
 
 impl QrAttempt {
@@ -115,6 +130,13 @@ impl QrAttempt {
         }
     }
 
+    /// Note a scan if still current.
+    fn mark_scanned(&self) {
+        if self.is_current() {
+            self.scanned.store(true, Ordering::SeqCst);
+        }
+    }
+
     /// Record the result if still current.
     fn finish(&self, result: Result<(), STError>) {
         if let Err(err) = &result {
@@ -130,7 +152,7 @@ impl QrAttempt {
             Ok(()) => State::Loaded(0, -2),
             Err(err) => {
                 if let Ok(mut e) = self.last_error.lock() {
-                    *e = Some(format!("QR sign-in failed: {}", err));
+                    *e = Some(with_advice(format!("QR sign-in failed: {}", err)));
                 }
                 State::Failed
             }
@@ -176,7 +198,7 @@ fn handle_login(
         }
         Err(err) => {
             log!("aurelia health check failed", err);
-            (State::Failed, Some(format!("{}", err)), None)
+            (State::Failed, Some(with_advice(format!("{}", err))), None)
         }
     };
     *last_error.lock()? = err;
@@ -226,21 +248,36 @@ fn execute(
                 // stays responsive; it updates the shared state when it resolves.
                 thread::spawn(move || {
                     run_qr_attempt(attempt, |a| {
-                        aurelia::login_qr(|stdin| a.attach(stdin), |url| a.publish(url))
+                        aurelia::login_qr(
+                            |stdin| a.attach(stdin),
+                            |url| a.publish(url),
+                            || a.mark_scanned(),
+                        )
                     })
                 });
             }
-            Command::LoginClassic(username, password, guard_rx) => {
+            Command::LoginClassic(username, password, guard_rx, attempt) => {
                 let state = state.clone();
                 let phase = login_phase.clone();
                 let last_error = last_error.clone();
                 thread::spawn(move || {
-                    let next = match aurelia::login_classic(&username, &password, &phase, guard_rx) {
+                    let result = aurelia::login_classic_cancellable(
+                        &username,
+                        &password,
+                        &phase,
+                        guard_rx,
+                        &attempt.child,
+                    );
+                    // Cancelled attempts stay silent.
+                    if !attempt.is_current() {
+                        return;
+                    }
+                    let next = match result {
                         Ok(()) => State::Loaded(0, -2),
                         Err(err) => {
                             log!("classic login failed", err);
                             if let Ok(mut e) = last_error.lock() {
-                                *e = Some(format!("Sign-in failed: {}", err));
+                                *e = Some(with_advice(format!("Sign-in failed: {}", err)));
                             }
                             State::Failed
                         }
@@ -312,6 +349,12 @@ pub struct Client {
     qr_attempt: Arc<AtomicU64>,
     /// Stdin of the live QR child.
     qr_stdin: Arc<Mutex<Option<ChildStdin>>>,
+    /// Whether the live QR was scanned.
+    qr_scanned: Arc<AtomicBool>,
+    /// Number of the live classic attempt.
+    classic_attempt: Arc<AtomicU64>,
+    /// Child slot of the live attempt.
+    classic_child: Mutex<Arc<Mutex<Option<Child>>>>,
 }
 
 impl Client {
@@ -328,6 +371,9 @@ impl Client {
             account: Arc::new(Mutex::new(None)),
             qr_attempt: Arc::new(AtomicU64::new(0)),
             qr_stdin: Arc::new(Mutex::new(None)),
+            qr_scanned: Arc::new(AtomicBool::new(false)),
+            classic_attempt: Arc::new(AtomicU64::new(0)),
+            classic_child: Mutex::new(Arc::new(Mutex::new(None))),
         };
         Client::start_process(
             client.state.clone(),
@@ -398,6 +444,7 @@ impl Client {
         if let Some(stdin) = slot.take() {
             send_cancel(stdin);
         }
+        self.qr_scanned.store(false, Ordering::SeqCst);
         Ok(QrAttempt {
             id,
             current: self.qr_attempt.clone(),
@@ -405,7 +452,37 @@ impl Client {
             qr: self.qr.clone(),
             state: self.state.clone(),
             last_error: self.last_error.clone(),
+            scanned: self.qr_scanned.clone(),
         })
+    }
+
+    /// Whether the QR code was scanned.
+    pub fn is_qr_scanned(&self) -> bool {
+        self.qr_scanned.load(Ordering::SeqCst)
+    }
+
+    /// Retire the old classic attempt.
+    fn begin_classic_attempt(&self) -> Result<ClassicAttempt, STError> {
+        let id = self.classic_attempt.fetch_add(1, Ordering::SeqCst) + 1;
+        // Dropping the sender unblocks recv.
+        *self.guard_tx.lock()? = None;
+        let fresh = Arc::new(Mutex::new(None));
+        let old = std::mem::replace(&mut *self.classic_child.lock()?, fresh.clone());
+        let child = old.lock()?.take();
+        if let Some(mut child) = child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        Ok(ClassicAttempt {
+            id,
+            current: self.classic_attempt.clone(),
+            child: fresh,
+        })
+    }
+
+    /// Cancel any in-flight classic login.
+    pub fn cancel_classic(&self) -> Result<(), STError> {
+        self.begin_classic_attempt().map(|_| ())
     }
 
     /// The current QR-login challenge URL, if one is pending.
@@ -417,6 +494,7 @@ impl Client {
     /// for progress (including a Steam Guard prompt) and [`Client::get_state`]
     /// for completion (`Loaded(_, -2)`) or failure (`Failed`).
     pub fn login_classic(&self, username: &str, password: &str) -> Result<(), STError> {
+        let attempt = self.begin_classic_attempt()?;
         *self.state.lock()? = State::LoggedOut;
         *self.login_phase.lock()? = LoginPhase::Connecting;
         *self.last_error.lock()? = None;
@@ -426,6 +504,7 @@ impl Client {
             username.to_string(),
             password.to_string(),
             rx,
+            attempt,
         ))?;
         Ok(())
     }
@@ -582,6 +661,7 @@ impl Client {
 impl Drop for Client {
     fn drop(&mut self) {
         let _ = self.cancel_qr();
+        let _ = self.cancel_classic();
     }
 }
 

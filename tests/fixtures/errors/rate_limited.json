@@ -1,0 +1,1 @@
+{"error":"Steam is rate limiting requests (retry after 60s)","hint":"Steam is throttling this client; pause before retrying","retry_after_seconds":60,"type":"rate_limited"}

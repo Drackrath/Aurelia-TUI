@@ -427,6 +427,10 @@ pub struct Browser {
     pub proton_status: Arc<Mutex<Option<GameStatus>>>,
     /// Whether the Proton uninstall confirmation prompt is showing.
     pub confirm_proton_uninstall: bool,
+    /// Aurelia log overlay state.
+    pub aurelia_log: crate::ui::aurelia_log::LogView,
+    /// Off-thread `login --reconnect`.
+    pub reconnect: crate::interface::session::Reconnect,
     /// Whether the running-games overlay is open.
     pub show_running: bool,
     /// The games Aurelia currently has running (loaded when the overlay opens).
@@ -636,6 +640,8 @@ pub enum Action {
     Collections,
     Favourite,
     Hide,
+    AureliaLog,
+    Reconnect,
     InstallQueue,
     SteamDb,
     PlaySkipShaders,
@@ -763,6 +769,8 @@ impl Browser {
             proton_index: 0,
             proton_status: Arc::new(Mutex::new(None)),
             confirm_proton_uninstall: false,
+            aurelia_log: Default::default(),
+            reconnect: Default::default(),
             show_running: false,
             running: Vec::new(),
             running_index: 0,
@@ -3049,6 +3057,10 @@ impl Browser {
         rows.push(ActionRow { action: Action::Favourite, category: LIB, label: "Toggle favourite", key: "f" });
         rows.push(ActionRow { action: Action::Hide, category: LIB, label: "Hide game", key: "H" });
         rows.push(ActionRow { action: Action::SteamDb, category: LIB, label: "Open on SteamDB", key: "" });
+
+        const TOOLS: &str = "Aurelia";
+        rows.push(ActionRow { action: Action::AureliaLog, category: TOOLS, label: "Aurelia log", key: "" });
+        rows.push(ActionRow { action: Action::Reconnect, category: TOOLS, label: "Reconnect Steam session", key: "" });
 
         rows
     }

@@ -15,6 +15,7 @@ use std::thread;
 use serde::Deserialize;
 
 use crate::interface::game_status::GameStatus;
+use crate::interface::{aurelia_log, cli_json};
 use crate::util::error::STError;
 use crate::util::log::log;
 
@@ -896,31 +897,18 @@ pub fn market_price(app_id: u32, name: &str) -> Result<MarketPriceJson, STError>
 /// Run `aurelia <args> --json` standalone (`AURELIA_NO_DAEMON=1`), parsing the
 /// stdout JSON. This mirrors [`run_json`] but forces a no-daemon invocation, as
 /// used by the threaded market workers so they never share the UI process's
-/// daemon connection. stderr (diagnostics) is discarded.
-fn run_json_standalone(args: &[&str]) -> Result<serde_json::Value, STError> {
+/// daemon connection. stderr goes to the Aurelia log.
+pub(crate) fn run_json_standalone(args: &[&str]) -> Result<serde_json::Value, STError> {
     let output = process::Command::new(bin())
         .args(args)
         .arg("--json")
         .env("AURELIA_NO_DAEMON", "1")
         .stdin(process::Stdio::null())
-        .stderr(process::Stdio::null())
+        .stderr(process::Stdio::piped())
         .output()
         .map_err(STError::Process)?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        return Err(STError::Problem(format!(
-            "aurelia produced no output for `{}`",
-            args.join(" ")
-        )));
-    }
-
-    let value: serde_json::Value = serde_json::from_str(trimmed)?;
-    if let Some(err) = json_error(&value) {
-        return Err(STError::Problem(err.to_string()));
-    }
-    Ok(value)
+    aurelia_log::record(&aurelia_log::label(args), &output.stderr);
+    cli_json::finish(args, &output, "")
 }
 
 /// Run a Community Market search off the UI thread, publishing the outcome into
@@ -1188,44 +1176,25 @@ pub(crate) fn eta_suffix(eta_seconds: Option<u64>) -> String {
     format!(" · ETA {pretty}")
 }
 
-/// The error message of an `{"error": "...", "hint": "..."}` payload, if `value`
-/// is one. Since v0.1.37 the CLI may attach a `hint` (e.g. "run `aurelia login`")
-/// to typed errors; it is appended in parentheses.
+/// "message — hint" of an error payload.
 pub(crate) fn json_error(value: &serde_json::Value) -> Option<String> {
-    let err = value.get("error").and_then(|e| e.as_str())?;
-    match value.get("hint").and_then(|h| h.as_str()) {
-        Some(hint) if !hint.is_empty() => Some(format!("{err} ({hint})")),
-        _ => Some(err.to_string()),
-    }
+    crate::util::error::CliError::from_json(value).map(|e| e.summary())
 }
 
 /// Run `aurelia <args> --json`, returning the parsed stdout JSON value.
 ///
-/// Errors surface as `{"error": "..."}` on stdout; that is translated into an
-/// `STError::Problem`. stderr (tracing/diagnostics) is discarded.
+/// Errors surface as `{"error", "type", "hint"}` on stdout and become
+/// `STError::Cli`. stderr goes to the Aurelia log.
 pub(crate) fn run_json(args: &[&str]) -> Result<serde_json::Value, STError> {
     let output = process::Command::new(bin())
         .args(args)
         .arg("--json")
         .stdin(process::Stdio::null())
-        .stderr(process::Stdio::null())
+        .stderr(process::Stdio::piped())
         .output()
         .map_err(STError::Process)?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        return Err(STError::Problem(format!(
-            "aurelia produced no output for `{}` (is the `aurelia` binary on PATH?)",
-            args.join(" ")
-        )));
-    }
-
-    let value: serde_json::Value = serde_json::from_str(trimmed)?;
-    if let Some(err) = json_error(&value) {
-        return Err(STError::Problem(err.to_string()));
-    }
-    Ok(value)
+    aurelia_log::record(&aurelia_log::label(args), &output.stderr);
+    cli_json::finish(args, &output, "is the `aurelia` binary on PATH?")
 }
 
 /// Report whether a Steam session is currently authenticated.
@@ -1804,7 +1773,7 @@ pub fn proton_install(name: String, status: Arc<Mutex<Option<GameStatus>>>) {
     });
 
     if let Some(stderr) = child.stderr.take() {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        for line in aurelia_log::tee(&format!("proton install {name}"), stderr) {
             let line = line.trim();
             if line.is_empty() {
                 continue;
@@ -1875,6 +1844,7 @@ pub fn stop(app_id: i32) -> Result<(), STError> {
 pub fn login_qr(
     on_stdin: impl FnOnce(process::ChildStdin),
     mut on_challenge: impl FnMut(String),
+    mut on_scanned: impl FnMut(),
 ) -> Result<(), STError> {
     let spawned = process::Command::new(bin())
         .args(["login", "--qr", "--json"])
@@ -1907,10 +1877,14 @@ pub fn login_qr(
                 continue;
             }
             if let Ok(event) = serde_json::from_str::<QrEvent>(line) {
-                if event.event.as_deref() == Some("qr_challenge") {
-                    if let Some(url) = event.url {
-                        on_challenge(url);
+                match event.event.as_deref() {
+                    Some("qr_challenge") => {
+                        if let Some(url) = event.url {
+                            on_challenge(url);
+                        }
                     }
+                    Some("qr_scanned") => on_scanned(),
+                    _ => {}
                 }
             }
         }
@@ -1919,16 +1893,7 @@ pub fn login_qr(
     let result = result_handle.join().unwrap_or_default();
     let _ = child.wait();
 
-    let value: serde_json::Value = serde_json::from_str(result.trim()).map_err(|_| {
-        STError::Problem("QR login did not complete (no result from aurelia)".to_string())
-    })?;
-    if value.get("logged_in").and_then(|b| b.as_bool()) == Some(true) {
-        Ok(())
-    } else if let Some(err) = json_error(&value) {
-        Err(STError::Problem(err.to_string()))
-    } else {
-        Err(STError::Problem("QR login did not complete".to_string()))
-    }
+    crate::interface::session::qr_result(&result)
 }
 
 fn set_phase(phase: &Arc<Mutex<LoginPhase>>, value: LoginPhase) {
@@ -1952,6 +1917,18 @@ pub fn login_classic(
     phase: &Arc<Mutex<LoginPhase>>,
     guard_rx: Receiver<String>,
 ) -> Result<(), STError> {
+    let slot = Arc::new(Mutex::new(None));
+    login_classic_cancellable(username, password, phase, guard_rx, &slot)
+}
+
+/// [`login_classic`], killable through `child_slot`.
+pub fn login_classic_cancellable(
+    username: &str,
+    password: &str,
+    phase: &Arc<Mutex<LoginPhase>>,
+    guard_rx: Receiver<String>,
+    child_slot: &Arc<Mutex<Option<process::Child>>>,
+) -> Result<(), STError> {
     set_phase(phase, LoginPhase::Connecting);
 
     let spawned = process::Command::new(bin())
@@ -1966,6 +1943,11 @@ pub fn login_classic(
 
     let mut stdin = child.stdin.take();
     let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    // Cancel kills it through the slot.
+    if let Ok(mut slot) = child_slot.lock() {
+        *slot = Some(child);
+    }
     let result_handle = thread::spawn(move || {
         let mut buf = String::new();
         if let Some(mut out) = stdout {
@@ -1974,7 +1956,7 @@ pub fn login_classic(
         buf
     });
 
-    if let Some(stderr) = child.stderr.take() {
+    if let Some(stderr) = stderr {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
             let line = line.trim();
             if line.is_empty() {
@@ -2001,6 +1983,9 @@ pub fn login_classic(
                                 let _ = si.flush();
                             }
                             set_phase(phase, LoginPhase::Connecting);
+                        } else {
+                            // UI gave up: EOF ends it.
+                            stdin = None;
                         }
                     }
                     None => {}
@@ -2013,26 +1998,19 @@ pub fn login_classic(
     let result = result_handle.join().unwrap_or_default();
     // Close stdin so aurelia sees EOF if it is still reading.
     drop(stdin);
-    let _ = child.wait();
+    let child = child_slot.lock().ok().and_then(|mut slot| slot.take());
+    if let Some(mut child) = child {
+        let _ = child.wait();
+    }
 
-    match serde_json::from_str::<serde_json::Value>(result.trim()) {
-        Ok(value) if value.get("logged_in").and_then(|b| b.as_bool()) == Some(true) => {
+    match crate::interface::session::classic_result(&result) {
+        Ok(()) => {
             set_phase(phase, LoginPhase::Success);
             Ok(())
         }
-        Ok(value) => {
-            let msg = value
-                .get("error")
-                .and_then(|e| e.as_str())
-                .unwrap_or("login failed")
-                .to_string();
-            set_phase(phase, LoginPhase::Failed(msg.clone()));
-            Err(STError::Problem(msg))
-        }
-        Err(_) => {
-            let msg = "login did not complete".to_string();
-            set_phase(phase, LoginPhase::Failed(msg.clone()));
-            Err(STError::Problem(msg))
+        Err(err) => {
+            set_phase(phase, LoginPhase::Failed(err.to_string()));
+            Err(err)
         }
     }
 }
@@ -2218,7 +2196,7 @@ pub fn verify(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
     });
 
     if let Some(stderr) = child.stderr.take() {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        for line in aurelia_log::tee(&format!("verify {id}"), stderr) {
             let line = line.trim();
             if line.is_empty() {
                 continue;
@@ -2286,7 +2264,7 @@ pub fn update(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
     });
 
     if let Some(stderr) = child.stderr.take() {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        for line in aurelia_log::tee(&format!("update {id}"), stderr) {
             let line = line.trim();
             if line.is_empty() {
                 continue;
@@ -2721,7 +2699,7 @@ pub fn downgrade(
     });
 
     if let Some(stderr) = child.stderr.take() {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        for line in aurelia_log::tee(&format!("downgrade {app_id}"), stderr) {
             let line = line.trim();
             if line.is_empty() {
                 continue;

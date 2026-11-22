@@ -1,0 +1,1 @@
+{"error":"could not read the stored session: session.json is keyed to the OS keyring, which is unavailable — unlock the keyring, or run `aurelia logout` and then `aurelia login`","type":"unknown"}

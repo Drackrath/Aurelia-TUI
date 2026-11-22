@@ -291,7 +291,7 @@ impl PlayOutcome {
             }
             PlayOutcome::Failed(err) => {
                 let detail = match err.hint.as_deref() {
-                    Some(hint) if !hint.is_empty() => format!("{} ({hint})", err.message),
+                    Some(hint) if !hint.is_empty() => format!("{} — {hint}", err.message),
                     _ => err.message.clone(),
                 };
                 match err.effective_kind() {
@@ -442,11 +442,12 @@ pub fn run_play(
 ) -> PlayOutcome {
     set_status(status, "launching...");
     let started = Instant::now();
-    let output = process::Command::new(aurelia::bin())
-        .args(args)
-        .stdin(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .output();
+    let output = crate::interface::aurelia_log::output(
+        process::Command::new(aurelia::bin())
+            .args(args)
+            .stdin(process::Stdio::null()),
+        &format!("play {app_id}"),
+    );
     let outcome = match output {
         Ok(output) => parse_play_output(
             &String::from_utf8_lossy(&output.stdout),
