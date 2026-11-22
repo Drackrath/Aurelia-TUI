@@ -87,7 +87,7 @@ fn game_settings_last_row_and_hints_fit() {
         let rows = lines(w, h, |f| {
             f.render_widget(ui::game_config::game_config(&b, area), area)
         });
-        assert!(has(&rows, "▶ Cloud sync"), "last row visible at {w}x{h}");
+        assert!(has(&rows, "▶ Aurelia Steam Cloud sync"), "last row visible at {w}x{h}");
         assert!(has(&rows, "[Esc] close"), "hint fits at {w}x{h}");
         assert!(has(&rows, "[x] del script"), "hint fits at {w}x{h}");
         assert!(has(&rows, "Prefix in use:"), "prefix line at {w}x{h}");
