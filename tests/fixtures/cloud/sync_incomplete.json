@@ -1,0 +1,1 @@
+{"app_id":620,"direction":"down","remote_root":"/r","status":"incomplete","downloaded":[],"uploaded":[],"conflicts":[],"skipped":[{"filename":"%WinAppDataLocal%/y.sav","root_token":"WinAppDataLocal","reason":"no wine prefix"}],"skipped_root_tokens":["WinAppDataLocal"],"failed":[],"wine_prefix":"/pfx"}
