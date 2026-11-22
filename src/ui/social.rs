@@ -75,7 +75,7 @@ pub fn invite_overlay(draft: &InviteDraft) -> Paragraph<'static> {
     }
     Paragraph::new(Text::from(lines))
         .block(theme::panel(
-            "Invite · [Enter] send [Tab] field [Esc]".to_string(),
+            "Invite · [Enter] send [Tab] field [Esc] close".to_string(),
         ))
         .style(theme::base())
         .wrap(Wrap { trim: false })

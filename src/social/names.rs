@@ -97,17 +97,20 @@ pub fn host_steam_running() -> bool {
 }
 
 /// Panel note for missing names.
-pub fn missing_note(friends: &[FriendJson], steam_here: bool) -> Vec<&'static str> {
-    if !names_missing(friends) {
-        return Vec::new();
-    }
-    if steam_here {
+pub fn missing_note(friends: &[FriendJson], steam_here: bool) -> Vec<String> {
+    let left = friends.iter().filter(|f| lacks_name(f)).count();
+    if steam_here && left > 0 {
         vec![
-            "Steam runs here: names hidden",
-            "[p] loads one, or close Steam",
+            "Names fill in by themselves".to_string(),
+            format!("{left} left · close Steam for all"),
+        ]
+    } else if names_missing(friends) {
+        vec![
+            "Steam sent no names yet".to_string(),
+            "Names fill in by themselves".to_string(),
         ]
     } else {
-        vec!["Steam sent no names yet", "[p] loads one; names fill in"]
+        Vec::new()
     }
 }
 

@@ -323,8 +323,29 @@ impl Browser {
         }
     }
 
+    /// Jump to the first friend.
+    pub fn friends_first(&mut self) {
+        self.friends_index = 0;
+    }
+
+    /// Jump to the last friend.
+    pub fn friends_last(&mut self) {
+        self.friends_index = self.friends.len().saturating_sub(1);
+    }
+
+    /// Move one panel page.
+    pub fn friends_page(&mut self, down: bool) {
+        let page = self.social.names.visible_rows.get().max(1);
+        let last = self.friends.len().saturating_sub(1);
+        self.friends_index = if down {
+            (self.friends_index + page).min(last)
+        } else {
+            self.friends_index.saturating_sub(page)
+        };
+    }
+
     /// Panel note when names are missing.
-    pub fn friends_note(&self) -> Vec<&'static str> {
+    pub fn friends_note(&self) -> Vec<String> {
         names::missing_note(&self.friends, self.social.names.steam_here)
     }
 

@@ -1129,6 +1129,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             KeyCode::Down | KeyCode::Char('j') => browser.friends_scroll_down(),
                             KeyCode::Up | KeyCode::Char('k') => browser.friends_scroll_up(),
+                            KeyCode::Char('g') | KeyCode::Home => browser.friends_first(),
+                            KeyCode::Char('G') | KeyCode::End => browser.friends_last(),
+                            KeyCode::PageDown => browser.friends_page(true),
+                            KeyCode::PageUp => browser.friends_page(false),
                             KeyCode::Char('?') => {
                                 browser.help_scroll = 0;
                                 browser.show_help = true;
