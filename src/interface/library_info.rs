@@ -222,3 +222,72 @@ pub fn open_url(url: String) {
 pub fn take_open_error() -> Option<String> {
     OPEN_ERROR.lock().ok().and_then(|mut slot| slot.take())
 }
+
+/// VDF quoted tokens and braces.
+fn vdf_tokens(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' | '}' => tokens.push(c.to_string()),
+            '"' => {
+                let mut tok = String::new();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => tok.extend(chars.next()),
+                        '"' => break,
+                        _ => tok.push(c),
+                    }
+                }
+                tokens.push(tok);
+            }
+            _ => {}
+        }
+    }
+    tokens
+}
+
+/// `InstalledDepots` manifests from an appmanifest.
+pub fn acf_installed_manifests(text: &str) -> BTreeMap<String, u64> {
+    let tokens = vdf_tokens(text);
+    let mut out = BTreeMap::new();
+    let Some(pos) = tokens
+        .iter()
+        .position(|t| t.eq_ignore_ascii_case("InstalledDepots"))
+    else {
+        return out;
+    };
+    let mut i = pos + 2;
+    // Entries: depot { key value }.
+    while i + 1 < tokens.len() && tokens[i] != "}" {
+        let depot = tokens[i].clone();
+        if tokens[i + 1] != "{" {
+            break;
+        }
+        i += 2;
+        while i + 1 < tokens.len() && tokens[i] != "}" {
+            if tokens[i].eq_ignore_ascii_case("manifest")
+                && let Ok(id) = tokens[i + 1].parse()
+            {
+                out.insert(depot.clone(), id);
+            }
+            i += 2;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Appmanifest path for an install dir.
+pub fn acf_path(install_dir: &str, app_id: i32) -> Option<std::path::PathBuf> {
+    let steamapps = std::path::Path::new(install_dir).parent()?.parent()?;
+    Some(steamapps.join(format!("appmanifest_{app_id}.acf")))
+}
+
+/// Installed manifests read from disk.
+pub fn read_installed_manifests(install_dir: &str, app_id: i32) -> BTreeMap<String, u64> {
+    acf_path(install_dir, app_id)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|t| acf_installed_manifests(&t))
+        .unwrap_or_default()
+}

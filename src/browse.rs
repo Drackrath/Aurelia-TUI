@@ -565,6 +565,8 @@ pub struct Browser {
     pub versions_input: Option<String>,
     /// Pending pin/downgrade awaiting `y`.
     pub versions_confirm: Option<VersionsConfirm>,
+    /// Installed manifests from the appmanifest.
+    pub versions_installed: std::collections::BTreeMap<String, u64>,
     /// Shared status cell for an in-flight downgrade, streamed from the backend
     /// worker thread (mirrors a game's install status).
     pub versions_busy: Arc<Mutex<Option<GameStatus>>>,
@@ -861,6 +863,7 @@ impl Browser {
             versions_status: String::new(),
             versions_input: None,
             versions_confirm: None,
+            versions_installed: Default::default(),
             versions_busy: Arc::new(Mutex::new(None)),
             show_game_config: false,
             game_config: None,
@@ -3382,6 +3385,7 @@ impl Browser {
         self.versions_status.clear();
         self.versions_input = None;
         self.versions_confirm = None;
+        self.versions_installed = self.disk_installed_manifests(app_id);
         self.show_versions = true;
     }
 
