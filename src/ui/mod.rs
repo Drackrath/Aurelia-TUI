@@ -31,6 +31,7 @@ pub mod market_search;
 pub mod move_game;
 pub mod proton;
 pub mod relink;
+pub mod restart_depots;
 pub mod running;
 pub mod status;
 pub mod tabs;

@@ -89,6 +89,8 @@ fn entries() -> Vec<Entry> {
         Entry::Binding("D", "manage DLC"),
         Entry::Binding("b", "beta branches"),
         Entry::Binding("o", "depots"),
+        Entry::Binding("  Enter", "  browse depot files"),
+        Entry::Binding("  / b d", "  filter / branch / download"),
         Entry::Binding("P", "proton (d/i/u)"),
         Entry::Binding("R", "running games"),
         Entry::Binding("W", "workshop items"),

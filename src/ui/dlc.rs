@@ -41,12 +41,15 @@ pub fn dlc(browser: &Browser) -> List<'static> {
                     theme::value()
                 };
 
-                let spans = vec![
+                let mut spans = vec![
                     Span::styled(marker.to_string(), name_style),
                     Span::styled(entry.display_name(), name_style),
                     Span::raw("  ".to_string()),
                     Span::styled(format!("[{}]", state), state_style),
                 ];
+                if let Some(label) = crate::ui::restart_depots::pending_dlc_label(entry.app_id) {
+                    spans.push(Span::styled(label, theme::value().fg(theme::WARN)));
+                }
 
                 ListItem::new(Spans::from(spans))
             })
