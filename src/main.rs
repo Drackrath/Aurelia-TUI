@@ -2043,6 +2043,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(g) = selected.as_ref() {
                     g.query_proton();
                     g.query_info();
+                    if browser.expand_description {
+                        g.query_extended();
+                    }
                     if config.hltb_enabled {
                         g.query_hltb();
                     }

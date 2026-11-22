@@ -195,3 +195,25 @@ fn list_badges_queued_and_online_games() {
     let suffix = ui::library_info::list_suffix(&portal2, 30);
     assert_eq!(suffix.as_deref(), Some("queued"));
 }
+
+#[test]
+fn extended_cache_is_per_app_and_language() {
+    let ext: InfoJson =
+        serde_json::from_str(include_str!("fixtures/library_info/info_extended.json")).unwrap();
+    let ext = ext.extended.unwrap();
+    assert!(info::claim_extended(9_620, Some("german")));
+    assert!(!info::claim_extended(9_620, Some("german")), "fetch once");
+    assert!(
+        info::cached_extended(9_620, Some("german")).is_none(),
+        "in flight"
+    );
+    info::store_extended(9_620, Some("german"), Some(ext));
+    let hit = info::cached_extended(9_620, Some("german")).unwrap();
+    assert_eq!(hit.metacritic, Some(95));
+    // Other language: separate entry.
+    assert!(info::cached_extended(9_620, None).is_none());
+    assert!(info::claim_extended(9_620, None));
+    // Failures stay cached, no retry.
+    info::store_extended(9_620, None, None);
+    assert!(!info::claim_extended(9_620, None));
+}
