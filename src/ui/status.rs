@@ -97,7 +97,7 @@ pub fn status_bar_fit(
         // Badge shares the top row.
         width = width.saturating_sub(version_badge_text(version).0.chars().count() + 2);
     }
-    status_bar_in(browser, account, width)
+    status_bar_sized(browser, account, width, usize::from(area.width))
 }
 
 /// One status part; lower rank drops first.
@@ -157,8 +157,43 @@ fn joined_width(parts: &[Part]) -> usize {
     text + parts.len().saturating_sub(1) * 5
 }
 
+/// Hints fitting `width`; help and quit stay.
+pub fn fit_hints<'a>(hints: &[(&'a str, &'a str)], width: usize) -> Vec<(&'a str, &'a str)> {
+    let keep = |cap: &str| cap == "[?]" || cap == "[q]";
+    let len = |h: &[(&str, &str)]| -> usize {
+        h.iter()
+            .map(|(k, d)| k.chars().count() + d.chars().count())
+            .sum()
+    };
+    let mut out: Vec<(&str, &str)> = hints.to_vec();
+    // Drop by priority, then from right.
+    const DROP: [&str; 7] = ["[r]", "[f]", "[d]", "[Tab]", "[s]", "[/]", "[Enter]"];
+    while len(&out) > width {
+        let ranked = DROP
+            .iter()
+            .find_map(|cap| out.iter().position(|(k, _)| k == cap));
+        match ranked.or_else(|| out.iter().rposition(|(k, _)| !keep(k))) {
+            Some(i) => {
+                out.remove(i);
+            }
+            None => break,
+        }
+    }
+    out
+}
+
 /// Status bar whose top line fits `width`.
 pub fn status_bar_in(browser: &Browser, account: Option<&str>, width: usize) -> Paragraph<'static> {
+    status_bar_sized(browser, account, width, usize::MAX)
+}
+
+/// Status bar with separate line widths.
+pub fn status_bar_sized(
+    browser: &Browser,
+    account: Option<&str>,
+    width: usize,
+    hint_width: usize,
+) -> Paragraph<'static> {
     let mut parts = parts(browser, account);
     // Drop low-priority parts until it fits.
     while joined_width(&parts) > width && parts.len() > 1 {
@@ -187,7 +222,7 @@ pub fn status_bar_in(browser: &Browser, account: Option<&str>, width: usize) -> 
     } else {
         &HINTS
     };
-    for (cap, desc) in hints {
+    for (cap, desc) in fit_hints(hints, hint_width) {
         line2.push(Span::styled(cap.to_string(), theme::key()));
         line2.push(Span::styled(desc.to_string(), theme::dim()));
     }

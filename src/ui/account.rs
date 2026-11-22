@@ -54,7 +54,7 @@ pub fn account(browser: &Browser) -> Table<'static> {
         .block(theme::panel(if browser.confirm_logout {
             "Log out? [y] yes · other key cancels".to_string()
         } else {
-            "Account — [o] log out · [Esc] close".to_string()
+            "Account — [r] reload · [o] log out · [Esc] close".to_string()
         }))
         .style(theme::base())
         .widths(&[Constraint::Percentage(28), Constraint::Percentage(72)])
