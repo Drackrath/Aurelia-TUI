@@ -285,7 +285,7 @@ fn friend_add_overlay_shows_input_and_resolved_preview() {
         "title hints the search key"
     );
     assert!(
-        joined.contains("[a] send request"),
+        joined.contains("[Enter] again sends"),
         "title hints the add key"
     );
     print_shot("Add friend (input)", &rows);

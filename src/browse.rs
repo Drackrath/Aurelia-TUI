@@ -222,6 +222,10 @@ pub struct Browser {
     pub config_proxy_input: Option<String>,
     /// Typed `aurelia` binary path, if editing.
     pub config_binary_input: Option<String>,
+    /// Highlighted Settings row.
+    pub config_index: usize,
+    /// Account overlay awaits logout confirmation.
+    pub confirm_logout: bool,
     /// Whether the Steam Wallet overlay is open.
     pub show_wallet: bool,
     /// The fetched wallet balance, shown by the wallet overlay.
@@ -654,6 +658,16 @@ pub enum Action {
     PlaySkipShaders,
     ProcessShaders,
     ProcessShadersForce,
+    Settings,
+    Account,
+    Wallet,
+    Running,
+    Friends,
+    OwnProfile,
+    Market,
+    MarketSearch,
+    Refresh,
+    Help,
 }
 
 /// One rendered row of the Actions menu: the action, the category header it
@@ -687,6 +701,8 @@ impl Browser {
             config_proxy: None,
             config_proxy_input: None,
             config_binary_input: None,
+            config_index: 0,
+            confirm_logout: false,
             show_wallet: false,
             wallet_info: None,
             expand_description: false,
@@ -2382,6 +2398,7 @@ impl Browser {
     /// Blocking; returns the backend error if the call fails.
     pub fn open_account(&mut self) -> Result<(), STError> {
         self.account_info = Some(aurelia::account()?);
+        self.confirm_logout = false;
         self.show_account = true;
         Ok(())
     }
@@ -3238,6 +3255,28 @@ impl Browser {
             label: "Reconnect Steam session",
             key: "",
         });
+
+        // App-wide screens, also global keys.
+        const APP: &str = "App";
+        for (action, label, key) in [
+            (Action::Settings, "Settings", "p"),
+            (Action::Account, "Account / log out", "A"),
+            (Action::Wallet, "Wallet balance", "w"),
+            (Action::Running, "Running games", "R"),
+            (Action::Friends, "Friends & chat", "F"),
+            (Action::OwnProfile, "My Steam profile", ""),
+            (Action::Market, "Market listings", "m"),
+            (Action::MarketSearch, "Search community market", "S"),
+            (Action::Refresh, "Refresh library", "r"),
+            (Action::Help, "Key help", "?"),
+        ] {
+            rows.push(ActionRow {
+                action,
+                category: APP,
+                label,
+                key,
+            });
+        }
 
         rows
     }

@@ -29,6 +29,7 @@ use aurelia_tui::interface::play_settings::{self, AntiCheat};
 use aurelia_tui::interface::steam_restart::Relocate;
 use aurelia_tui::interface::{binary, capabilities};
 use aurelia_tui::restart_depots;
+use aurelia_tui::settings;
 use aurelia_tui::util::stateful::Named;
 
 /// Blend `img` toward `bg` so the top-aligned cover art reads as a translucent
@@ -433,7 +434,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 if browser.show_config {
                     let area = ui::centered_rect(55, 60, frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::config::config(&browser), area);
+                    frame.render_widget(ui::config::config_in(&browser, area.height), area);
                 }
 
                 // Install queue overlay.
@@ -892,6 +893,29 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                                     game.status_counter(),
                                                 );
                                             }
+                                            Action::Settings => {
+                                                let _ = browser.open_config();
+                                            }
+                                            Action::Account => {
+                                                let _ = browser.open_account();
+                                            }
+                                            Action::Wallet => {
+                                                let _ = browser.open_wallet();
+                                            }
+                                            Action::Running => browser.open_running(),
+                                            Action::Friends => browser.enter_friends(),
+                                            Action::OwnProfile => browser.open_own_profile(),
+                                            Action::Market => browser.open_market(),
+                                            Action::MarketSearch => browser.open_market_search(),
+                                            Action::Refresh => {
+                                                cached = false;
+                                                app.mode = Mode::Loading;
+                                                client.restart()?;
+                                            }
+                                            Action::Help => {
+                                                browser.help_scroll = 0;
+                                                browser.show_help = true;
+                                            }
                                         }
                                     }
                                 }
@@ -1050,8 +1074,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         // `friends add` (kept open to show status), Esc to cancel.
                         match input {
                             KeyCode::Esc => browser.close_friend_add(),
-                            KeyCode::Char('\n') | KeyCode::Enter => browser.friend_search(),
-                            KeyCode::Char('a') => browser.friend_add_confirm(),
+                            // Enter resolves, then sends.
+                            KeyCode::Char('\n') | KeyCode::Enter => {
+                                if browser.friend_search_result.is_some() {
+                                    browser.friend_add_confirm()
+                                } else {
+                                    browser.friend_search()
+                                }
+                            }
                             KeyCode::Backspace => browser.friend_add_pop(),
                             KeyCode::Char(c) => browser.friend_add_push(c),
                             _ => {}
@@ -1083,7 +1113,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => browser.profile_scroll_up(),
                             _ => {}
                         }
-                    } else if browser.friends_focused() {
+                    } else if browser.friends_focused() && !browser.show_help {
                         // Friends panel focused: j/k move the highlight (the whole
                         // list scrolls under it), c/Enter open the in-app chat, t
                         // pops the chat into a new terminal window, a opens the
@@ -1106,6 +1136,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             KeyCode::Down | KeyCode::Char('j') => browser.friends_scroll_down(),
                             KeyCode::Up | KeyCode::Char('k') => browser.friends_scroll_up(),
+                            KeyCode::Char('?') => {
+                                browser.help_scroll = 0;
+                                browser.show_help = true;
+                            }
+                            KeyCode::Char('1') => browser.set_filter(Filter::All),
+                            KeyCode::Char('2') => browser.set_filter(Filter::Installed),
+                            KeyCode::Char('3') => browser.set_filter(Filter::Updates),
+                            KeyCode::Char('4') => browser.set_filter(Filter::Favourites),
                             // Tab/Shift-Tab keep cycling the tab ring so the
                             // Friends tab is not a dead end — stepping right off
                             // it wraps back to All.
@@ -1480,9 +1518,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             _ => {}
                         }
                     } else if browser.show_account {
-                        // `o` logs out of Steam; any other key dismisses the overlay.
+                        // `o` then `y` logs out.
                         match input {
-                            KeyCode::Char('o') => {
+                            KeyCode::Char('o') if !browser.confirm_logout => {
+                                browser.confirm_logout = true;
+                            }
+                            KeyCode::Char('y') | KeyCode::Char('Y') if browser.confirm_logout => {
+                                browser.confirm_logout = false;
                                 // Show the token revocation result.
                                 let status = match aurelia::logout() {
                                     Ok(result) => result.summary(),
@@ -1492,6 +1534,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 browser.show_account = false;
                                 app.mode = Mode::Login;
                             }
+                            // Cancels a pending logout first.
+                            _ if browser.confirm_logout => browser.confirm_logout = false,
                             _ => browser.show_account = false,
                         }
                     } else if browser.show_config {
@@ -1551,67 +1595,18 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             match input {
                                 KeyCode::Esc | KeyCode::Char('q') => browser.close_config(),
-                                KeyCode::Char('o') => {
-                                    // Flip whatever the config currently shows
-                                    // (default offline when unknown), then re-fetch.
-                                    let online = browser
-                                        .config_info
-                                        .as_ref()
-                                        .map(|c| c.is_online())
-                                        .unwrap_or(false);
-                                    let _ = aurelia::set_presence(!online);
-                                    let _ = browser.open_config();
+                                KeyCode::Down | KeyCode::Char('j') => settings::next(&mut browser),
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    settings::previous(&mut browser)
                                 }
-                                KeyCode::Char('h') => {
-                                    // Keep the live copy and persisted/cache copy in
-                                    // sync; a failed save leaves the old preference.
-                                    let mut updated = config.clone();
-                                    updated.hltb_enabled = !updated.hltb_enabled;
-                                    match updated.save() {
-                                        Ok(()) => config = updated,
-                                        Err(error) => {
-                                            browser.notice = Some(format!("HLTB setting: {error}"));
-                                        }
-                                    }
+                                KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char(' ') => {
+                                    settings::activate(&mut browser, &mut config)
                                 }
-                                KeyCode::Char('b') => {
-                                    browser.config_binary_input =
-                                        Some(config.aurelia_bin.clone().unwrap_or_default());
-                                }
-                                KeyCode::Char('e') => browser.begin_proxy_edit(),
-                                KeyCode::Char('w') => browser.begin_persona_wait_edit(),
+                                // Old letter keys stay shortcuts.
                                 KeyCode::Char('c') => browser.clear_proxy(),
-                                KeyCode::Char('d') => browser.begin_limit_edit(),
-                                KeyCode::Char('l') => {
-                                    // Cycle store language, refetch info.
-                                    let mut updated = config.clone();
-                                    updated.info_language =
-                                        aurelia_tui::interface::library_info::next_language(
-                                            updated.info_language.as_deref(),
-                                        );
-                                    match updated.save() {
-                                        Ok(()) => {
-                                            config = updated;
-                                            browser.reset_store_info();
-                                        }
-                                        Err(error) => {
-                                            browser.notice =
-                                                Some(format!("Language setting: {error}"));
-                                        }
-                                    }
-                                }
-                                KeyCode::Char('s') => browser.toggle_shader_precache(),
-                                KeyCode::Char('a') => browser.toggle_anticheat_auto_install(),
-                                KeyCode::Char('g') => browser.toggle_cloud_sync_global(),
-                                KeyCode::Char('t') => {
-                                    let mut updated = config.clone();
-                                    updated.auto_cloud_sync = !updated.auto_cloud_sync;
-                                    match updated.save() {
-                                        Ok(()) => config = updated,
-                                        Err(error) => {
-                                            browser.notice =
-                                                Some(format!("Cloud sync setting: {error}"));
-                                        }
+                                KeyCode::Char(c) => {
+                                    if let Some(setting) = settings::from_shortcut(c) {
+                                        settings::apply(setting, &mut browser, &mut config);
                                     }
                                 }
                                 _ => {}

@@ -248,5 +248,5 @@ fn settings_render_play_rows() {
         f.render_widget(ui::config::config(&b), Rect::new(0, 0, 140, 24));
     });
     assert!(text.contains("Shader pre-caching"));
-    assert!(text.contains("[s] shaders"));
+    assert!(text.contains("[Enter] change"));
 }
