@@ -304,8 +304,13 @@ fn forget_and_stop_ask_first() {
     browser.queue_ask_forget(false);
     assert_eq!(
         browser.queue_prompt().unwrap(),
-        "Forget Portal? Downloaded files stay on disk. [y]"
+        "Forget Portal? Downloaded files stay on disk."
     );
+    for (w, h) in [(80, 24), (120, 40)] {
+        let text = screen(&browser, w, h).join("");
+        assert!(text.contains("stay on disk."), "{w}x{h}");
+        assert!(text.contains("[y] confirm   [n] cancel"), "{w}x{h}");
+    }
     browser.queue_answer(false);
     assert_eq!(browser.install_queue.pending, None);
     assert_eq!(browser.install_queue.entries.len(), 4, "nothing forgotten");
@@ -313,19 +318,25 @@ fn forget_and_stop_ask_first() {
     browser.queue_ask_forget(true);
     assert_eq!(
         browser.queue_prompt().unwrap(),
-        "Forget Portal and delete 1.0 GB of partial files? [y]"
+        "Forget Portal and delete 1.0 GB of partial files?"
     );
     for (w, h) in [(80, 24), (120, 40)] {
         let text = screen(&browser, w, h).join("");
-        assert!(text.contains("of partial files? [y]"), "{w}x{h}");
+        assert!(text.contains("partial files?"), "{w}x{h}");
+        assert!(text.contains("[y] confirm   [n] cancel"), "{w}x{h}");
     }
     browser.queue_answer(false);
 
     browser.queue_ask_stop();
     assert_eq!(
         browser.queue_prompt().unwrap(),
-        "Stop Portal? It stays in the queue as aborted. [y]"
+        "Stop Portal? It stays in the queue as aborted."
     );
+    for (w, h) in [(80, 24), (120, 40)] {
+        let text = screen(&browser, w, h).join("");
+        assert!(text.contains("aborted."), "{w}x{h}");
+        assert!(text.contains("[y] confirm   [n] cancel"), "{w}x{h}");
+    }
     browser.queue_answer(false);
     assert_eq!(browser.install_queue.status, "Cancelled");
 

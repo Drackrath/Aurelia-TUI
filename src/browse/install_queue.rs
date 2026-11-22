@@ -336,14 +336,14 @@ impl Browser {
         let name = entry.label();
         Some(match pending {
             QueueConfirm::Stop(_) => {
-                format!("Stop {name}? It stays in the queue as aborted. [y]")
+                format!("Stop {name}? It stays in the queue as aborted.")
             }
             QueueConfirm::Forget {
                 delete_files: false,
                 ..
-            } => format!("Forget {name}? Downloaded files stay on disk. [y]"),
+            } => format!("Forget {name}? Downloaded files stay on disk."),
             QueueConfirm::Forget { .. } => format!(
-                "Forget {name} and delete {} of partial files? [y]",
+                "Forget {name} and delete {} of partial files?",
                 iq::human_bytes(entry.downloaded_bytes)
             ),
         })
