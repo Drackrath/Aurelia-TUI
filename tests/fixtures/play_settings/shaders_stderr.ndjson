@@ -1,0 +1,3 @@
+{"databases":2,"event":"shaders","state":"started"}
+{"done":120,"event":"shaders","percent":12.5,"state":"processing","total":960}
+{"done":960,"event":"shaders","state":"finished","total":960}

@@ -43,15 +43,17 @@ pub fn game_config(browser: &Browser) -> Paragraph<'static> {
         .map(|c| c.label())
         .unwrap_or_else(|| "(unknown)".to_string());
 
-    let rows: [(&str, String); 7] = [
+    let mut rows: Vec<(&str, String)> = vec![
         ("Runner", runner),
         ("Forced Proton", proton),
         ("Platform", platform),
         ("Steam runtime", steam_runtime),
         ("Steam prefix", steam_prefix),
         ("Launch script", script),
-        ("Cloud sync", cloud),
+        ("Steam integration", browser.steam_integration_label()),
     ];
+    rows.extend(crate::ui::play_settings::game_config_rows(browser));
+    rows.push(("Cloud sync", cloud));
 
     let mut lines: Vec<Spans<'static>> = Vec::new();
     for (i, (label, value)) in rows.iter().enumerate() {
@@ -69,13 +71,21 @@ pub fn game_config(browser: &Browser) -> Paragraph<'static> {
         ]));
     }
 
+    if let Some(prefix) = crate::ui::play_settings::prefix_in_use(browser) {
+        lines.push(Spans::from(Span::styled(prefix, theme::dim())));
+    }
     lines.push(Spans::from(""));
-    let status = if !browser.game_config_status.is_empty() {
-        browser.game_config_status.clone()
-    } else {
-        "[Enter] change  [x] remove launch script  [Esc] close".to_string()
-    };
-    lines.push(Spans::from(Span::styled(status, theme::dim())));
+    if !browser.game_config_status.is_empty() {
+        lines.push(Spans::from(Span::styled(
+            browser.game_config_status.clone(),
+            theme::dim(),
+        )));
+    }
+    let hint = crate::ui::play_settings::edit_hint(browser)
+        .unwrap_or_else(|| "[Enter] change  [x] remove launch script  [Esc] close".to_string());
+    if browser.game_config_status.is_empty() || browser.game_config_editing() {
+        lines.push(Spans::from(Span::styled(hint, theme::dim())));
+    }
 
     paneled_paragraph(lines, "Game settings".to_string())
 }

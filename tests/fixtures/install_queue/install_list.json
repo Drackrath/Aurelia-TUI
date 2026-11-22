@@ -1,0 +1,57 @@
+[
+  {
+    "app_id": 220,
+    "name": "Half-Life 2",
+    "downloaded_bytes": 2147483648,
+    "total_bytes": 4294967296,
+    "percent": 50.0,
+    "status": "Downloading depot 221",
+    "is_downloading": true,
+    "state": "running"
+  },
+  {
+    "app_id": 400,
+    "name": "Portal",
+    "downloaded_bytes": 1000000000,
+    "total_bytes": 4000000000,
+    "percent": 25.0,
+    "status": "",
+    "is_downloading": false,
+    "state": "paused",
+    "platform": "windows",
+    "library": "/home/user/.local/share/Steam",
+    "error_type": null,
+    "added_at": 1763800000,
+    "updated_at": 1763800100
+  },
+  {
+    "app_id": 620,
+    "name": "Portal 2",
+    "downloaded_bytes": 3000000000,
+    "total_bytes": 12000000000,
+    "percent": 25.0,
+    "status": "not enough space on /mnt/games: needs 12.00 GiB but only 2.00 GiB free",
+    "is_downloading": false,
+    "state": "interrupted",
+    "platform": "linux",
+    "library": "/mnt/games",
+    "error_type": "disk_full",
+    "added_at": 1763800000,
+    "updated_at": 1763800200
+  },
+  {
+    "app_id": 70,
+    "name": "",
+    "downloaded_bytes": 0,
+    "total_bytes": 0,
+    "percent": 0.0,
+    "status": "",
+    "is_downloading": false,
+    "state": "aborted",
+    "platform": "windows",
+    "library": "/home/user/.local/share/Steam",
+    "error_type": null,
+    "added_at": 1763800000,
+    "updated_at": 1763800300
+  }
+]

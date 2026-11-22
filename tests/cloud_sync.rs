@@ -12,6 +12,7 @@ use aurelia_tui::interface::cloud_sync::{
     self, CloudSyncConfig, CloudSyncResult, ConflictPrompt, GameCloudMode, GameCloudSync, Resolve,
     SyncStatus, parse_sync, sync_args, sync_resolving,
 };
+use aurelia_tui::interface::launch::{PlayError, PlayOutcome};
 use aurelia_tui::ui::cloud_sync::{conflict, describe};
 use tui::Terminal;
 use tui::backend::TestBackend;
@@ -225,11 +226,25 @@ fn auto_sync_follows_both_switches() {
 
 #[test]
 fn failed_launches_skip_upload() {
-    assert!(launch_failed(Some("Failed: game is not installed")));
-    assert!(launch_failed(Some("Failed to launch")));
-    assert!(launch_failed(Some("failed to launch: no such file")));
-    assert!(launch_failed(None));
-    assert!(!launch_failed(Some("ran (finished)")));
+    let finished = PlayOutcome::Finished {
+        name: "Portal".into(),
+        steam_forced: None,
+        runtime: None,
+    };
+    assert!(!launch_failed(&finished));
+    let early = PlayOutcome::ExitedEarly {
+        name: "Portal".into(),
+        secs: 3,
+        steam_forced: None,
+    };
+    assert!(launch_failed(&early));
+    let failed = PlayOutcome::Failed(PlayError {
+        kind: Some("not_installed".into()),
+        message: "not installed".into(),
+        hint: None,
+        exit_code: Some(1),
+    });
+    assert!(launch_failed(&failed));
 }
 
 #[test]

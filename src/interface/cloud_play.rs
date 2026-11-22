@@ -7,6 +7,7 @@ use crate::interface::aurelia::CloudDirection;
 use crate::interface::cloud_status;
 use crate::interface::cloud_sync::{self, ConflictPrompt};
 use crate::interface::game_status::GameStatus;
+use crate::interface::launch::{PlayOutcome, play_succeeded};
 
 /// What to do around one launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,12 +31,9 @@ pub fn decide(tui_enabled: bool, game_effective: Option<bool>) -> AutoSync {
     }
 }
 
-/// Whether a play status means failure.
-pub fn launch_failed(state: Option<&str>) -> bool {
-    match state {
-        Some(s) => s.trim_start().to_ascii_lowercase().starts_with("failed"),
-        None => true,
-    }
+/// Whether to upload after this run.
+pub fn launch_failed(outcome: &PlayOutcome) -> bool {
+    !play_succeeded(outcome)
 }
 
 static REFRESH: Mutex<Vec<i32>> = Mutex::new(Vec::new());
@@ -98,7 +96,11 @@ pub fn auto_sync(app_id: i32, direction: CloudDirection) -> String {
 }
 
 /// Wrap a blocking `launch` with syncs.
-pub fn around_play(app_id: i32, status: &Arc<Mutex<Option<GameStatus>>>, launch: impl FnOnce()) {
+pub fn around_play(
+    app_id: i32,
+    status: &Arc<Mutex<Option<GameStatus>>>,
+    launch: impl FnOnce() -> PlayOutcome,
+) -> PlayOutcome {
     let plan = match decide(Config::cached().auto_cloud_sync, None) {
         AutoSync::Run => decide(
             true,
@@ -116,14 +118,13 @@ pub fn around_play(app_id: i32, status: &Arc<Mutex<Option<GameStatus>>>, launch:
         set_status(status, "cloud sync off for this game, skipping");
     }
 
-    launch();
+    let outcome = launch();
 
-    let state = current_state(status);
     // No upload after failed start.
-    if launch_failed(state.as_deref()) {
-        return;
+    if launch_failed(&outcome) {
+        return outcome;
     }
-    let state = state.unwrap_or_default();
+    let state = current_state(status).unwrap_or_default();
     match plan {
         AutoSync::Run => {
             set_status(status, &format!("{state} · syncing cloud saves (up)..."));
@@ -136,4 +137,5 @@ pub fn around_play(app_id: i32, status: &Arc<Mutex<Option<GameStatus>>>, launch:
         AutoSync::TuiOff => {}
     }
     request_refresh(app_id);
+    outcome
 }

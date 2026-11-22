@@ -1,0 +1,59 @@
+{
+  "app_id": 570,
+  "targets": [
+    {
+      "id": "linux",
+      "platform": "linux",
+      "steam_mode": null,
+      "flags": [
+        "--platform",
+        "linux"
+      ],
+      "available": true,
+      "missing": null,
+      "default": true
+    },
+    {
+      "id": "windows-runtime",
+      "platform": "windows",
+      "steam_mode": "runtime",
+      "flags": [
+        "--platform",
+        "windows",
+        "--steam-mode",
+        "runtime"
+      ],
+      "available": false,
+      "missing": "steam-runtime",
+      "default": false
+    },
+    {
+      "id": "windows-host",
+      "platform": "windows",
+      "steam_mode": "host",
+      "flags": [
+        "--platform",
+        "windows",
+        "--steam-mode",
+        "host"
+      ],
+      "available": true,
+      "missing": null,
+      "default": false
+    },
+    {
+      "id": "windows-standalone",
+      "platform": "windows",
+      "steam_mode": "none",
+      "flags": [
+        "--platform",
+        "windows",
+        "--steam-mode",
+        "none"
+      ],
+      "available": true,
+      "missing": null,
+      "default": false
+    }
+  ]
+}

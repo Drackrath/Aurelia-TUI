@@ -37,6 +37,11 @@ pub fn account(browser: &Browser) -> Table<'static> {
             ),
             row("Devices", info.authed_machines.to_string()),
             row("VAC bans", info.vac_bans.to_string()),
+            row(
+                "Daemon logon",
+                info.daemon_logon_id
+                    .map_or_else(|| "— (no daemon)".to_string(), |id| id.to_string()),
+            ),
         ],
         None => vec![Row::new(vec![Cell::from(Span::styled(
             "No account information",

@@ -1,0 +1,10 @@
+{
+  "app_id": 400,
+  "platform": "linux",
+  "download_size": 0,
+  "disk_size": 0,
+  "depot_count": 0,
+  "languages": ["english"],
+  "default_language": "english",
+  "installed_language": null
+}

@@ -1,0 +1,1 @@
+{"error":"failed to launch Teeworlds via the in-Wine Steam: app 380840 did not start within 300s of -applaunch; the in-Wine Steam may be updating it or showing a prompt (check its window), or raise --launch-timeout","type":"timeout","hint":"raise --timeout or retry"}

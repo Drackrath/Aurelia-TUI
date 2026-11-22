@@ -19,6 +19,14 @@ use crate::interface::game_status::GameStatus;
 use crate::theme;
 use crate::util::error::STError;
 
+pub mod install_queue;
+pub mod install_options;
+mod library_info;
+mod play_settings;
+pub use play_settings::{PLAY_ROWS, ROW_LAUNCH_OPTIONS, ROW_PREFIX};
+#[path = "browse_launch.rs"]
+mod launch_ui;
+
 /// The quick-filter tabs along the top of the library.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Filter {
@@ -79,6 +87,7 @@ pub enum InstallPhase {
 pub enum Sort {
     Name,
     Installed,
+    Playtime,
 }
 
 impl Sort {
@@ -86,13 +95,15 @@ impl Sort {
         match self {
             Sort::Name => "name",
             Sort::Installed => "installed",
+            Sort::Playtime => "playtime",
         }
     }
 
     pub fn next(self) -> Sort {
         match self {
             Sort::Name => Sort::Installed,
-            Sort::Installed => Sort::Name,
+            Sort::Installed => Sort::Playtime,
+            Sort::Playtime => Sort::Name,
         }
     }
 }
@@ -202,6 +213,8 @@ pub struct Browser {
     /// The inline proxy-URL edit buffer in the config overlay (None = not
     /// editing; Some = the URL the user is typing, empty to clear).
     pub config_proxy_input: Option<String>,
+    /// Typed `aurelia` binary path, if editing.
+    pub config_binary_input: Option<String>,
     /// Whether the Steam Wallet overlay is open.
     pub show_wallet: bool,
     /// The fetched wallet balance, shown by the wallet overlay.
@@ -275,6 +288,8 @@ pub struct Browser {
     pub chat_input: String,
     /// Scroll offset (top row) within the chat message list.
     pub chat_scroll: usize,
+    /// Invite, profile and persona-wait state.
+    pub social: crate::social::SocialState,
     /// Whether the inventory overlay is open.
     pub show_inventory: bool,
     /// The selected game's inventory items (loaded when the overlay opens).
@@ -447,6 +462,10 @@ pub struct Browser {
     /// The library folder each in-flight install was started in, keyed by app
     /// id, so a paused install resumes into the *same* library (not the default).
     install_library_choice: HashMap<i32, Option<String>>,
+    /// Install backlog overlay state.
+    pub install_queue: install_queue::InstallQueue,
+    /// Global download limit setting.
+    pub download_limit: crate::interface::install_queue::DownloadLimit,
     /// Whether the "game not installed — install now?" prompt is open (shown
     /// when the user tries to launch a game the listing marks not installed).
     pub confirm_install: bool,
@@ -461,6 +480,14 @@ pub struct Browser {
     pub install_estimate: Option<u64>,
     /// The highlighted row within the install picker.
     pub install_picker_index: usize,
+    /// Picker platform and language rows.
+    pub install_options: install_options::InstallPickerOptions,
+    /// App the picker options belong to.
+    install_options_app: i32,
+    /// Install flags per app, for resume.
+    install_opts_choice: HashMap<i32, crate::interface::install_options::InstallOpts>,
+    /// Open change-language picker, if any.
+    pub language_picker: Option<install_options::LanguagePicker>,
     /// Off-thread inbox for targeted single-game install-state refreshes (after
     /// an install completes or is cancelled). A worker fetches the fresh `list`
     /// entry and drops it here; [`Browser::poll_game_refresh`] adopts it,
@@ -470,6 +497,8 @@ pub struct Browser {
     /// status bar until the next keypress. Keeps a failed backend call from
     /// having to crash the whole TUI to report itself.
     pub notice: Option<String>,
+    /// Restart, depot files, push state.
+    pub restart_depots: crate::restart_depots::RestartDepots,
     /// Browser-launch results arrive off-thread so opening a page cannot stall input.
     hltb_open_pending: Arc<Mutex<Option<Result<(), String>>>>,
 
@@ -524,6 +553,8 @@ pub struct Browser {
     pub game_config_status: String,
     /// Cloud switch of that game.
     pub game_cloud_sync: Option<crate::interface::cloud_sync::GameCloudSync>,
+    /// Text being typed into a row.
+    pub game_config_input: Option<String>,
 
     // --- Collections overlay ---
     /// Whether the collections overlay is open.
@@ -568,6 +599,8 @@ pub struct Browser {
     pub launch_targets_index: usize,
     /// A transient status line (fetch error, unavailable target).
     pub launch_targets_status: String,
+    /// Saved target and runtime install.
+    pub launch: crate::interface::launch::LaunchUi,
 }
 
 /// A single entry in the per-game Actions menu. Selecting one runs the same
@@ -585,6 +618,7 @@ pub enum Action {
     Uninstall,
     Versions,
     Branches,
+    ChangeLanguage,
     GameSettings,
     Proton,
     Engine,
@@ -602,6 +636,11 @@ pub enum Action {
     Collections,
     Favourite,
     Hide,
+    InstallQueue,
+    SteamDb,
+    PlaySkipShaders,
+    ProcessShaders,
+    ProcessShadersForce,
 }
 
 /// One rendered row of the Actions menu: the action, the category header it
@@ -634,6 +673,7 @@ impl Browser {
             config_info: None,
             config_proxy: None,
             config_proxy_input: None,
+            config_binary_input: None,
             show_wallet: false,
             wallet_info: None,
             expand_description: false,
@@ -660,6 +700,7 @@ impl Browser {
             chat_partner: String::new(),
             chat_input: String::new(),
             chat_scroll: 0,
+            social: Default::default(),
             show_inventory: false,
             inventory: Vec::new(),
             inv_scroll: 0,
@@ -736,11 +777,17 @@ impl Browser {
             market_price_cell: Arc::new(Mutex::new(aurelia::MarketPriceState::Idle)),
             install_controls: HashMap::new(),
             install_library_choice: HashMap::new(),
+            install_queue: Default::default(),
+            download_limit: Default::default(),
             confirm_install: false,
             show_install_picker: false,
             install_libraries: Vec::new(),
             install_estimate: None,
             install_picker_index: 0,
+            install_options: Default::default(),
+            install_options_app: 0,
+            install_opts_choice: HashMap::new(),
+            language_picker: None,
             game_refresh_slot: Arc::new(Mutex::new(Vec::new())),
             notice: None,
             hltb_open_pending: Arc::new(Mutex::new(None)),
@@ -764,6 +811,7 @@ impl Browser {
             game_config_app_id: 0,
             game_config_status: String::new(),
             game_cloud_sync: None,
+            game_config_input: None,
             show_collections: false,
             collections: Vec::new(),
             collections_index: 0,
@@ -781,6 +829,8 @@ impl Browser {
             launch_targets: Vec::new(),
             launch_targets_index: 0,
             launch_targets_status: String::new(),
+            launch: Default::default(),
+            restart_depots: Default::default(),
         };
         browser.reset_selection();
         browser
@@ -2335,6 +2385,7 @@ impl Browser {
         self.show_config = true;
         self.config_info = None;
         self.config_proxy = None;
+        self.refresh_download_limit();
         match aurelia::config_show() {
             Ok(info) => self.config_info = Some(info),
             Err(error) => {
@@ -2353,6 +2404,7 @@ impl Browser {
         self.config_info = None;
         self.config_proxy = None;
         self.config_proxy_input = None;
+        self.config_binary_input = None;
     }
 
     /// Re-fetch just the proxy setting (after an edit/clear), keeping the overlay
@@ -2419,6 +2471,7 @@ impl Browser {
     /// sensible selection.
     pub fn set_items(&mut self, items: Vec<Game>) {
         self.items = items;
+        self.install_queue.rescan();
         self.clamp_selection();
     }
 
@@ -2467,6 +2520,7 @@ impl Browser {
                         .then_with(|| a.raw_name().to_lowercase().cmp(&b.raw_name().to_lowercase()))
                 });
             }
+            Sort::Playtime => library_info::sort_by_playtime(&mut games),
         }
         games
     }
@@ -2499,7 +2553,7 @@ impl Browser {
         self.install_libraries = libraries;
         // The on-disk estimate, for showing the size and gauging fit. Treat 0
         // (unavailable) as unknown.
-        self.install_estimate = aurelia::install_estimate(app_id).ok().filter(|&b| b > 0);
+        self.load_install_options(app_id);
         self.install_picker_index = 0;
         self.show_install_picker = true;
         true
@@ -2555,7 +2609,7 @@ impl Browser {
         app_id: i32,
         library: Option<String>,
     ) -> aurelia::InstallControl {
-        let control = aurelia::InstallControl::new();
+        let control = aurelia::InstallControl::with_options(self.install_opts_for(app_id));
         self.install_controls.insert(app_id, control.clone());
         self.install_library_choice.insert(app_id, library);
         control
@@ -2598,7 +2652,7 @@ impl Browser {
     pub fn pause_install(&mut self, app_id: i32) {
         if let Some(control) = self.install_controls.get(&app_id) {
             control.set(aurelia::InstallAction::Paused);
-            let _ = aurelia::install_stop(app_id);
+            let _ = crate::interface::install_queue::install_pause(app_id as u32);
         }
     }
 
@@ -2609,6 +2663,7 @@ impl Browser {
     pub fn stop_install(&mut self, app_id: i32) {
         if let Some(control) = self.install_controls.remove(&app_id) {
             self.install_library_choice.remove(&app_id);
+            self.install_opts_choice.remove(&app_id);
             control.set(aurelia::InstallAction::Stopped);
             let _ = aurelia::install_stop(app_id);
             if let Some(game) = self.items.iter_mut().find(|g| g.id == app_id) {
@@ -2655,6 +2710,8 @@ impl Browser {
                 game.installed = entry.is_installed;
                 game.install_dir = entry.install_path.clone().unwrap_or_default();
                 game.update_available = entry.update_available;
+                game.platform = entry.platform.clone();
+                game.library = entry.library.clone();
                 if let Ok(mut s) = game.status_counter().lock() {
                     *s = None;
                 }
@@ -2692,6 +2749,7 @@ impl Browser {
         for (id, succeeded) in terminal {
             self.install_controls.remove(&id);
             self.install_library_choice.remove(&id);
+            self.install_opts_choice.remove(&id);
             if succeeded {
                 self.request_game_refresh(id);
             }
@@ -2944,22 +3002,31 @@ impl Browser {
         if installed {
             rows.push(ActionRow { action: Action::Play, category: PLAY, label: "Play", key: "" });
             rows.push(ActionRow { action: Action::PlayAs, category: PLAY, label: "Play as… (launch target)", key: "" });
+            rows.push(ActionRow { action: Action::PlaySkipShaders, category: PLAY, label: "Play without shader processing", key: "" });
             rows.push(ActionRow { action: Action::Update, category: PLAY, label: "Update", key: "U" });
             rows.push(ActionRow { action: Action::Verify, category: PLAY, label: "Verify files", key: "v" });
             rows.push(ActionRow { action: Action::Uninstall, category: PLAY, label: "Uninstall", key: "x" });
         } else if !installing {
             rows.push(ActionRow { action: Action::Install, category: PLAY, label: "Install", key: "d" });
         }
+        rows.push(ActionRow { action: Action::InstallQueue, category: PLAY, label: "Install queue", key: "B" });
 
         const VERS: &str = "Versions";
         rows.push(ActionRow { action: Action::Versions, category: VERS, label: "Versions & pinning", key: "V" });
         rows.push(ActionRow { action: Action::Branches, category: VERS, label: "Beta branches", key: "b" });
+        if installed && !installing {
+            rows.push(ActionRow { action: Action::ChangeLanguage, category: VERS, label: "Change language", key: "" });
+        }
 
         const RT: &str = "Runtimes & config";
         rows.push(ActionRow { action: Action::GameSettings, category: RT, label: "Game settings", key: "" });
         rows.push(ActionRow { action: Action::Proton, category: RT, label: "Proton runtimes", key: "P" });
         rows.push(ActionRow { action: Action::Engine, category: RT, label: "Runtime plugins (umu / lux)", key: "E" });
         rows.push(ActionRow { action: Action::LaunchOptions, category: RT, label: "Launch options", key: "L" });
+        if installed {
+            rows.push(ActionRow { action: Action::ProcessShaders, category: RT, label: "Process Vulkan shaders", key: "" });
+            rows.push(ActionRow { action: Action::ProcessShadersForce, category: RT, label: "Process Vulkan shaders (force)", key: "" });
+        }
 
         const CONTENT: &str = "Content";
         if Config::cached().hltb_enabled {
@@ -2981,6 +3048,7 @@ impl Browser {
         rows.push(ActionRow { action: Action::Collections, category: LIB, label: "Collections", key: "O" });
         rows.push(ActionRow { action: Action::Favourite, category: LIB, label: "Toggle favourite", key: "f" });
         rows.push(ActionRow { action: Action::Hide, category: LIB, label: "Hide game", key: "H" });
+        rows.push(ActionRow { action: Action::SteamDb, category: LIB, label: "Open on SteamDB", key: "" });
 
         rows
     }
@@ -3193,18 +3261,7 @@ impl Browser {
     /// overlay, highlighting the target plain `play` would pick.
     pub fn open_launch_targets(&mut self, app_id: i32) {
         self.launch_targets_status.clear();
-        self.launch_targets = match aurelia::launch_targets(app_id) {
-            Ok(targets) => targets,
-            Err(e) => {
-                self.launch_targets_status = format!("Failed: {e}");
-                Vec::new()
-            }
-        };
-        self.launch_targets_index = self
-            .launch_targets
-            .iter()
-            .position(|t| t.default)
-            .unwrap_or(0);
+        self.fetch_launch_targets(app_id);
         self.show_launch_targets = true;
     }
 
@@ -3240,16 +3297,18 @@ impl Browser {
             self.launch_targets_status = format!("Unavailable (missing: {missing}).");
             return None;
         }
-        Some(target.play_opts())
+        let steam = launch_ui::steam_flag(self.launch.app_id);
+        Some(crate::interface::launch::play_target_opts(target, steam))
     }
 
     // --- Game settings overlay (per-game config overrides + launch script) ---
 
     /// Number of editable rows in the game-settings overlay: Runner, Forced
-    /// Proton, Platform, Steam runtime, Steam prefix, Launch script, Cloud sync.
-    pub const GAME_CONFIG_ROWS: usize = 7;
+    /// Proton, Platform, Steam runtime, Steam prefix, Launch script, plus
+    /// Steam integration, play rows, Cloud sync.
+    pub const GAME_CONFIG_ROWS: usize = 7 + PLAY_ROWS + 1;
     /// Row index of "Cloud sync".
-    pub const GAME_CONFIG_CLOUD_ROW: usize = 6;
+    pub const GAME_CONFIG_CLOUD_ROW: usize = 7 + PLAY_ROWS;
 
     /// Fetch the game's per-game config, launch-script state, and the installed
     /// Proton list (for cycling the forced runtime) and open the overlay.
@@ -3263,6 +3322,7 @@ impl Browser {
         self.game_config_app_id = app_id;
         self.game_config_index = 0;
         self.game_config_status.clear();
+        self.game_config_input = None;
         self.show_game_config = true;
     }
 
@@ -3272,6 +3332,7 @@ impl Browser {
         self.game_script = None;
         self.game_config_protons.clear();
         self.game_config_index = 0;
+        self.game_config_input = None;
     }
 
     pub fn game_config_next(&mut self) {
@@ -3395,8 +3456,10 @@ impl Browser {
                         Err(e) => format!("Failed: {e}"),
                     };
             }
+            // Steam integration (TUI config).
+            6 => self.toggle_steam_integration(),
             // Launch script: create one if none, else clear the per-game override.
-            _ => {
+            5 => {
                 let has_script = self.game_script.as_ref().map(|s| s.exists).unwrap_or(false);
                 let res = if has_script {
                     aurelia::config_game_clear_launch_script(id)
@@ -3409,6 +3472,8 @@ impl Browser {
                     Err(e) => format!("Failed: {e}"),
                 };
             }
+            // Text rows open an input.
+            _ => return self.play_settings_activate(),
         }
         self.refresh_game_config();
     }
@@ -3727,6 +3792,7 @@ mod install_tests {
             active_branch: None,
             assets: None,
             store_url: None,
+            library: Default::default(),
         })
     }
 
@@ -3779,6 +3845,7 @@ mod install_tests {
             active_branch: None,
             assets: None,
             store_url: None,
+            library: Default::default(),
         });
 
         b.poll_game_refresh();

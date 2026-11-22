@@ -75,11 +75,12 @@ pub fn list(browser: &Browser, width: u16, marquee_tick: usize) -> List<'static>
             // Reserve the trailing note's width ("  {note}") so the marquee never
             // shoves it off the row.
             let cloud = super::cloud_sync::list_marker(game.id);
-            let note_w = b
-                .note
-                .as_deref()
+            let info = super::library_info::list_suffix(game, inner);
+            let note_w = [b.note.as_deref(), info.as_deref()]
+                .into_iter()
+                .flatten()
                 .map(|n| n.chars().count() + 2)
-                .unwrap_or(0)
+                .sum::<usize>()
                 + cloud.as_ref().map(|m| m.content.chars().count()).unwrap_or(0);
             // Only the hovered (highlighted) row marquees an over-long name; the
             // rest render normally and let the `List` clip them at the column
@@ -99,6 +100,9 @@ pub fn list(browser: &Browser, width: u16, marquee_tick: usize) -> List<'static>
 
             if let Some(note) = b.note {
                 spans.push(Span::styled(format!("  {}", note), theme::dim()));
+            }
+            if let Some(info) = info {
+                spans.push(Span::styled(format!("  {info}"), theme::dim()));
             }
             spans.extend(cloud);
 

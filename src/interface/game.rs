@@ -53,6 +53,15 @@ pub struct Game {
     pub update_available: bool,
     #[serde(default)]
     pub size: f64,
+    /// Installed depot platform, from `list`.
+    #[serde(default)]
+    pub platform: Option<String>,
+    /// Playtime, queued update, installed size.
+    #[serde(default)]
+    pub library: crate::interface::library_info::LibraryInfoJson,
+    /// Shared through Steam Family.
+    #[serde(default)]
+    pub family_shared: bool,
 
     #[serde(skip)]
     proton_tier: Arc<Mutex<Option<String>>>,
@@ -84,7 +93,9 @@ impl Game {
             .assets
             .as_ref()
             .and_then(|a| a.capsule.clone().or_else(|| a.header.clone()));
+        let library = entry.library.clone();
         Game {
+            library,
             id: entry.app_id as i32,
             name: entry.name,
             developer: "-".to_string(),
@@ -99,6 +110,8 @@ impl Game {
             install_dir: entry.install_path.unwrap_or_default(),
             update_available: entry.update_available,
             size: 0.0,
+            platform: entry.platform,
+            family_shared: entry.is_family_shared,
             proton_tier: Arc::new(Mutex::new(None)),
             hltb: Arc::new(Mutex::new(HltbState::Pending)),
             info: Arc::new(Mutex::new(None)),
@@ -226,6 +239,46 @@ impl Game {
         });
     }
 
+    /// Fetch `info --extended` once per session.
+    pub fn query_extended(&self) {
+        use crate::interface::library_info as li;
+        let lang = Config::cached().info_language;
+        if !li::claim_extended(self.id, lang.as_deref()) {
+            return;
+        }
+        let reference = self.info.clone();
+        let id = self.id;
+        thread::spawn(move || {
+            // Plain info on failure.
+            let result = aurelia::fetch_info_extended(id);
+            let ext = result.as_ref().ok().and_then(|i| i.extended.clone());
+            li::store_extended(id, lang.as_deref(), ext);
+            let info = result.or_else(|_| aurelia::fetch_info(id));
+            if let (Ok(info), Ok(mut slot)) = (info, reference.lock()) {
+                *slot = Some(info);
+            }
+        });
+    }
+
+    /// Cached extended info, current language.
+    pub fn extended_info(&self) -> Option<crate::interface::library_info::ExtendedInfoJson> {
+        let lang = Config::cached().info_language;
+        crate::interface::library_info::cached_extended(self.id, lang.as_deref())
+    }
+
+    /// Snapshot of fetched store info.
+    pub fn info_snapshot(&self) -> Option<InfoJson> {
+        self.info.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    /// Drop store info; refetch on demand.
+    pub fn reset_info(&self) {
+        if let Ok(mut slot) = self.info.lock() {
+            *slot = None;
+        }
+        self.info_requested.store(false, Ordering::SeqCst);
+    }
+
     pub fn get_developer(&self) -> String {
         if let Ok(guard) = self.info.lock() {
             if let Some(info) = &*guard {
@@ -349,6 +402,7 @@ mod hltb_tests {
             active_branch: None,
             assets: None,
             store_url: Some("https://store.steampowered.com/app/400".into()),
+            library: Default::default(),
         })
     }
 

@@ -7,6 +7,7 @@ use crate::interface::aurelia::{self, LoginPhase};
 use crate::interface::cloud_play;
 use crate::interface::game::{self, Game};
 use crate::interface::game_status::GameStatus;
+use crate::interface::steam_restart;
 
 use crate::util::error::STError;
 use crate::util::log::log;
@@ -270,11 +271,13 @@ fn execute(
             }
             Command::Run(id, status) => {
                 thread::spawn(move || {
+                    steam_restart::apply_pending_dlc();
                     cloud_play::around_play(id, &status.clone(), || aurelia::play(id, status))
                 });
             }
             Command::RunWith(id, opts, status) => {
                 thread::spawn(move || {
+                    steam_restart::apply_pending_dlc();
                     cloud_play::around_play(id, &status.clone(), || {
                         aurelia::play_with(id, opts, status)
                     })
@@ -362,6 +365,13 @@ impl Client {
     /// The last health/login failure message, if any.
     pub fn get_last_error(&self) -> Option<String> {
         self.last_error.lock().ok().and_then(|e| e.clone())
+    }
+
+    /// Show `message` on the sign-in page.
+    pub fn set_last_error(&self, message: Option<String>) {
+        if let Ok(mut e) = self.last_error.lock() {
+            *e = message;
+        }
     }
 
     /// Start a QR-code login. Poll [`Client::get_qr`] for the challenge to

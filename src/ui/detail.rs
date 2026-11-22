@@ -1,7 +1,5 @@
 //! The detail pane for the selected game.
 
-use pretty_bytes::converter::convert;
-
 use tui::layout::Constraint;
 use tui::style::Style;
 use tui::text::{Span, Spans, Text};
@@ -126,6 +124,12 @@ fn build_content(
                     1,
                 );
             }
+            for (row, h) in super::library_info::library_rows(g)
+                .into_iter()
+                .chain(super::library_info::extended_rows(g, width, expand))
+            {
+                push(row, h);
+            }
 
             if let Some(cloud) = super::cloud_sync::detail_value(g.id) {
                 push(
@@ -163,7 +167,7 @@ fn build_content(
 
             if let Some(status) = g.get_status() {
                 push(blank(), 1);
-                let size = convert(status.size);
+                let size = super::library_info::size_text(g, status.size);
                 for &(heading, value) in &[
                     ("State", &status.state),
                     ("Installation", &status.installdir),

@@ -36,6 +36,9 @@ pub fn launch_targets(browser: &Browser) -> Paragraph<'static> {
             Span::styled(selection_marker(selected).to_string(), style),
             Span::styled(target.label(), style),
         ];
+        if browser.launch.saved.as_deref() == Some(target.id.as_str()) {
+            spans.push(Span::styled("  [saved]".to_string(), theme::accent()));
+        }
         if target.default {
             spans.push(Span::styled("  [default]".to_string(), theme::accent()));
         }
@@ -47,12 +50,38 @@ pub fn launch_targets(browser: &Browser) -> Paragraph<'static> {
     }
 
     lines.push(Spans::from(""));
-    let status = if !browser.launch_targets_status.is_empty() {
-        browser.launch_targets_status.clone()
-    } else {
-        "[Enter] launch  [Esc] close".to_string()
-    };
-    lines.push(Spans::from(Span::styled(status, theme::dim())));
+    lines.push(Spans::from(Span::styled(play_uses(browser), theme::label())));
+    if let Some(progress) = browser.launch.runtime.progress_text() {
+        lines.push(Spans::from(Span::styled(progress, theme::accent())));
+    }
+    if !browser.launch_targets_status.is_empty() {
+        lines.push(Spans::from(Span::styled(
+            browser.launch_targets_status.clone(),
+            theme::dim(),
+        )));
+    }
+    lines.push(Spans::from(Span::styled(hints(browser), theme::dim())));
 
     paneled_paragraph(lines, "Play as…".to_string())
+}
+
+/// Which target plain Play uses.
+fn play_uses(browser: &Browser) -> String {
+    match browser.launch.saved.as_deref() {
+        None => "Play uses: automatic".to_string(),
+        Some(id) => match browser.launch_targets.iter().find(|t| t.id == id) {
+            Some(t) if t.available => format!("Play uses: {} (saved)", t.label()),
+            _ => format!("Play uses: default ({id} unavailable)"),
+        },
+    }
+}
+
+/// Key hints for the highlighted row.
+fn hints(browser: &Browser) -> String {
+    let mut hints = String::from("[Enter] launch once  [d] set as default  [a] automatic");
+    if browser.launch_target_needs_runtime() && !browser.launch.runtime.is_running() {
+        hints.push_str("  [i] install Steam runtime");
+    }
+    hints.push_str("  [Esc] close");
+    hints
 }
