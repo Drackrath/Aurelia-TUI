@@ -51,18 +51,14 @@ pub fn info_lines(browser: &Browser) -> Vec<Spans<'static>> {
     lines
 }
 
-/// Upload/download confirm wording.
-pub fn confirm_text(direction: CloudDirection) -> (String, String) {
+/// Confirm wording per direction.
+pub fn confirm_text(direction: CloudDirection) -> String {
     match direction {
-        CloudDirection::Up => (
-            "Upload local saves to Steam Cloud?".to_string(),
-            "Cloud copies of changed files are replaced by this PC's saves.".to_string(),
-        ),
-        _ => (
-            "Download Steam Cloud saves to this PC?".to_string(),
-            "Local copies of changed files are replaced by the Cloud's saves.".to_string(),
-        ),
+        CloudDirection::Up => "Upload local saves to Steam Cloud? Cloud copies of changed files are replaced by this PC's saves.",
+        CloudDirection::Down => "Download Steam Cloud saves to this PC? Local copies of changed files are replaced by the Cloud's saves.",
+        CloudDirection::Both => "Sync saves both ways with Steam Cloud? Newer files win; conflicts will ask.",
     }
+    .to_string()
 }
 
 /// The windowed file table.
@@ -140,12 +136,6 @@ pub fn draw<B: Backend>(frame: &mut Frame<B>, browser: &Browser, area: Rect) {
     );
 
     if let Some(direction) = browser.cloud_view.confirm {
-        let (question, detail) = confirm_text(direction);
-        let popup = crate::ui::centered_rect(80, 60, area);
-        frame.render_widget(Clear, popup);
-        frame.render_widget(
-            crate::ui::restart_depots::question_box(question, detail),
-            popup,
-        );
+        crate::ui::confirm::draw(frame, confirm_text(direction));
     }
 }

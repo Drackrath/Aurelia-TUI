@@ -37,7 +37,7 @@ impl Browser {
                 self.cloud_view = CloudView::default();
                 self.close_cloud();
             }
-            KeyCode::Char('s') => self.cloud_sync_selected(CloudDirection::Both),
+            KeyCode::Char('s') => self.cloud_view.confirm = Some(CloudDirection::Both),
             KeyCode::Char('d') => self.cloud_view.confirm = Some(CloudDirection::Down),
             KeyCode::Char('u') => self.cloud_view.confirm = Some(CloudDirection::Up),
             KeyCode::Down | KeyCode::Char('j') => *index = (*index + 1).min(last),
