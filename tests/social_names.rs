@@ -148,7 +148,9 @@ fn missing_names_note_and_scroll_at_both_sizes() {
         b.view = View::Friends;
         b.poll_social_at(Instant::now(), false);
         b.social.names.steam_here = true;
-        b.friends_index = b.friends.len() - 1;
+        // One name arrived; note stays.
+        b.friends[0].persona_name = Some("Magadanch1k".into());
+        b.friends_last();
         let pane = friends_pane(w, h);
         let rows = render(w, h, |f| {
             let n = pane.height.saturating_sub(2) as usize;
@@ -157,11 +159,11 @@ fn missing_names_note_and_scroll_at_both_sizes() {
         let out = rows.join("\n");
         assert!(out.contains("● Friends (27)"), "{w}x{h}\n{out}");
         assert!(
-            out.contains("Steam runs here: names hidden"),
+            out.contains("Names fill in by themselves"),
             "{w}x{h}\n{out}"
         );
         assert!(
-            out.contains("[p] loads one, or close Steam"),
+            out.contains("26 left · close Steam for all"),
             "{w}x{h}\n{out}"
         );
         let last = b.friends.last().unwrap().steam_id.to_string();
@@ -209,7 +211,7 @@ fn invite_overlay_header_and_title_fit() {
         });
         let out = rows.join("\n");
         assert!(
-            out.contains("Invite · [Enter] send [Tab] field [Esc]"),
+            out.contains("Invite · [Enter] send [Tab] field [Esc] close"),
             "{w}x{h}\n{out}"
         );
         assert_eq!(out.matches("76561197985686146").count(), 1, "{out}");
@@ -256,5 +258,49 @@ fn profile_overlay_loading_and_title_fit() {
             "{w}x{h}\n{out}"
         );
         assert!(out.contains("7s"), "{w}x{h}\n{out}");
+    }
+}
+
+#[test]
+fn note_clears_when_all_named() {
+    let mut friends = roster();
+    friends.pop();
+    assert_eq!(names::missing_note(&friends, true).len(), 2);
+    for f in friends.iter_mut() {
+        f.persona_name = Some("x".into());
+    }
+    assert!(names::missing_note(&friends, true).is_empty());
+    assert!(names::missing_note(&friends, false).is_empty());
+}
+
+#[test]
+fn jump_and_page_keys_keep_row_visible() {
+    isolate_config();
+    for (w, h) in SIZES {
+        let mut b = Browser::new(vec![]);
+        b.friends = roster();
+        b.view = View::Friends;
+        b.poll_social_at(Instant::now(), false);
+        b.social.names.steam_here = true;
+        let pane = friends_pane(w, h);
+        let n = pane.height.saturating_sub(2) as usize;
+        let draw =
+            |b: &Browser| render(w, h, |f| f.render_widget(ui::friends::friends(b, n), pane));
+        draw(&b);
+        let page = b.social.names.visible_rows.get();
+        b.friends_page(true);
+        assert_eq!(b.friends_index, page.min(26));
+        b.friends_last();
+        let rows = draw(&b);
+        let last = b.friends[26].steam_id.to_string();
+        assert!(rows.iter().any(|r| r.contains('▶') && r.contains(&last)));
+        b.friends_page(true);
+        assert_eq!(b.friends_index, 26, "page clamps at end");
+        b.friends_page(false);
+        assert_eq!(b.friends_index, 26usize.saturating_sub(page));
+        b.friends_first();
+        let rows = draw(&b);
+        let first = b.friends[0].steam_id.to_string();
+        assert!(rows.iter().any(|r| r.contains('▶') && r.contains(&first)));
     }
 }
