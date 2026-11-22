@@ -499,10 +499,17 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         let area = ui::centered_rect(40, 20, frame.size());
                         frame.render_widget(Clear, area);
                         frame.render_widget(
-                            ui::confirm::confirm_uninstall(&game.get_name()),
+                            ui::install_options::confirm_uninstall_game(&game.get_name()),
                             area,
                         );
                     }
+                }
+
+                // Change-language picker floats above.
+                if browser.language_picker.is_some() {
+                    let area = ui::centered_rect(50, 50, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::install_options::language_picker(&browser), area);
                 }
 
                 // DLC overlay floats above everything.
@@ -738,6 +745,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                             Action::Versions => browser.open_versions(game.id),
                                             Action::Branches => {
                                                 let _ = browser.open_branches(game.id);
+                                            }
+                                            Action::ChangeLanguage => {
+                                                browser.open_language_change(&game)
                                             }
                                             Action::GameSettings => {
                                                 browser.open_game_config(game.id)
@@ -1096,6 +1106,19 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => {
                                 browser.install_picker_previous()
                             }
+                            KeyCode::Char('p') => browser.install_picker_cycle_platform(),
+                            KeyCode::Left | KeyCode::Char('h') => {
+                                browser.install_picker_cycle_language(false)
+                            }
+                            KeyCode::Right | KeyCode::Char('l') => {
+                                browser.install_picker_cycle_language(true)
+                            }
+                            KeyCode::Enter | KeyCode::Char('\n')
+                                if browser.install_options.blocked() =>
+                            {
+                                browser.notice =
+                                    Some("No build for that platform — press p.".to_string());
+                            }
                             KeyCode::Enter | KeyCode::Char('\n') => {
                                 if !browser.selected_library_fits() {
                                     // Not enough room — keep the picker open so
@@ -1109,6 +1132,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                         browser.selected(),
                                         browser.selected_install_library(),
                                     ) {
+                                        let opts = browser.install_options.opts();
+                                        browser.set_install_opts(game.id, opts);
                                         let control = browser
                                             .begin_install(game.id, Some(library.clone()));
                                         client.install(&game, control, Some(library))?;
@@ -1118,12 +1143,31 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => {}
                         }
-                    } else if browser.confirm_uninstall {
-                        // Uninstall confirmation prompt: y confirms, anything else cancels.
+                    } else if browser.language_picker.is_some() {
+                        // Change-language picker keys.
                         match input {
-                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_language_change(),
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if let Some(p) = browser.language_picker.as_mut() {
+                                    p.next()
+                                }
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                if let Some(p) = browser.language_picker.as_mut() {
+                                    p.previous()
+                                }
+                            }
+                            KeyCode::Enter | KeyCode::Char('\n') => {
+                                browser.confirm_language_change();
+                            }
+                            _ => {}
+                        }
+                    } else if browser.confirm_uninstall {
+                        // y keeps prefix, Y deletes it.
+                        match input {
+                            KeyCode::Char(key @ ('y' | 'Y')) => {
                                 if let Some(game) = browser.selected() {
-                                    match aurelia::uninstall(game.id) {
+                                    match aurelia::uninstall(game.id, key == 'Y') {
                                         Ok(()) => {
                                             // Reload the library so the listing
                                             // reflects the now-uninstalled game
@@ -1824,7 +1868,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Adopt a finished runtime-plugin worker (install/update/repair).
         browser.poll_engine();
 
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install && !browser.show_actions && !browser.show_versions && !browser.show_game_config && !browser.show_launch_targets && !browser.show_collections && !browser.show_engine {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install && !browser.show_actions && !browser.show_versions && !browser.show_game_config && !browser.show_launch_targets && !browser.show_collections && !browser.show_engine && browser.language_picker.is_none() {
             let selected = browser.selected();
             let cur_sel = selected.as_ref().map(|g| g.id);
             if cur_sel != artwork_sel_id {

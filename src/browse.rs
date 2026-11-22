@@ -19,6 +19,8 @@ use crate::interface::game_status::GameStatus;
 use crate::theme;
 use crate::util::error::STError;
 
+pub mod install_options;
+
 /// The quick-filter tabs along the top of the library.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Filter {
@@ -463,6 +465,14 @@ pub struct Browser {
     pub install_estimate: Option<u64>,
     /// The highlighted row within the install picker.
     pub install_picker_index: usize,
+    /// Picker platform and language rows.
+    pub install_options: install_options::InstallPickerOptions,
+    /// App the picker options belong to.
+    install_options_app: i32,
+    /// Install flags per app, for resume.
+    install_opts_choice: HashMap<i32, crate::interface::install_options::InstallOpts>,
+    /// Open change-language picker, if any.
+    pub language_picker: Option<install_options::LanguagePicker>,
     /// Off-thread inbox for targeted single-game install-state refreshes (after
     /// an install completes or is cancelled). A worker fetches the fresh `list`
     /// entry and drops it here; [`Browser::poll_game_refresh`] adopts it,
@@ -585,6 +595,7 @@ pub enum Action {
     Uninstall,
     Versions,
     Branches,
+    ChangeLanguage,
     GameSettings,
     Proton,
     Engine,
@@ -742,6 +753,10 @@ impl Browser {
             install_libraries: Vec::new(),
             install_estimate: None,
             install_picker_index: 0,
+            install_options: Default::default(),
+            install_options_app: 0,
+            install_opts_choice: HashMap::new(),
+            language_picker: None,
             game_refresh_slot: Arc::new(Mutex::new(Vec::new())),
             notice: None,
             hltb_open_pending: Arc::new(Mutex::new(None)),
@@ -2513,7 +2528,7 @@ impl Browser {
         self.install_libraries = libraries;
         // The on-disk estimate, for showing the size and gauging fit. Treat 0
         // (unavailable) as unknown.
-        self.install_estimate = aurelia::install_estimate(app_id).ok().filter(|&b| b > 0);
+        self.load_install_options(app_id);
         self.install_picker_index = 0;
         self.show_install_picker = true;
         true
@@ -2569,7 +2584,7 @@ impl Browser {
         app_id: i32,
         library: Option<String>,
     ) -> aurelia::InstallControl {
-        let control = aurelia::InstallControl::new();
+        let control = aurelia::InstallControl::with_options(self.install_opts_for(app_id));
         self.install_controls.insert(app_id, control.clone());
         self.install_library_choice.insert(app_id, library);
         control
@@ -2623,6 +2638,7 @@ impl Browser {
     pub fn stop_install(&mut self, app_id: i32) {
         if let Some(control) = self.install_controls.remove(&app_id) {
             self.install_library_choice.remove(&app_id);
+            self.install_opts_choice.remove(&app_id);
             control.set(aurelia::InstallAction::Stopped);
             let _ = aurelia::install_stop(app_id);
             if let Some(game) = self.items.iter_mut().find(|g| g.id == app_id) {
@@ -2669,6 +2685,7 @@ impl Browser {
                 game.installed = entry.is_installed;
                 game.install_dir = entry.install_path.clone().unwrap_or_default();
                 game.update_available = entry.update_available;
+                game.platform = entry.platform.clone();
                 if let Ok(mut s) = game.status_counter().lock() {
                     *s = None;
                 }
@@ -2706,6 +2723,7 @@ impl Browser {
         for (id, succeeded) in terminal {
             self.install_controls.remove(&id);
             self.install_library_choice.remove(&id);
+            self.install_opts_choice.remove(&id);
             if succeeded {
                 self.request_game_refresh(id);
             }
@@ -2968,6 +2986,9 @@ impl Browser {
         const VERS: &str = "Versions";
         rows.push(ActionRow { action: Action::Versions, category: VERS, label: "Versions & pinning", key: "V" });
         rows.push(ActionRow { action: Action::Branches, category: VERS, label: "Beta branches", key: "b" });
+        if installed && !installing {
+            rows.push(ActionRow { action: Action::ChangeLanguage, category: VERS, label: "Change language", key: "" });
+        }
 
         const RT: &str = "Runtimes & config";
         rows.push(ActionRow { action: Action::GameSettings, category: RT, label: "Game settings", key: "" });
