@@ -122,7 +122,7 @@ fn entries() -> Vec<Entry> {
         Entry::Binding("Esc / q / F", "back to library"),
         Entry::Blank,
         Entry::Header("Game overlays"),
-        Entry::Binding("Play as: d a i", "default/auto/runtime"),
+        Entry::Binding("Play as: d a i", "choose/auto/runtime"),
         Entry::Binding("Versions: p u", "pin / unpin"),
         Entry::Binding("Versions: d s", "downgrade / SteamDB"),
         Entry::Binding("Game set.: x", "remove launch script"),

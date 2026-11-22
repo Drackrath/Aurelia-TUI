@@ -488,9 +488,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Launch targets ("Play as…") overlay floats above everything.
                 if browser.show_launch_targets {
-                    let area = ui::centered_rect(58, 40, frame.size());
+                    let area = ui::launch_targets::area(frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::launch_targets::launch_targets(&browser), area);
+                    frame.render_widget(ui::launch_targets::launch_targets(&browser, area), area);
                 }
 
                 // "Not installed — install now?" prompt floats above the library.
@@ -948,6 +948,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 _ => {}
                             }
                         }
+                    } else if browser.show_launch_targets && browser.launch.confirm_runtime {
+                        browser.launch_runtime_answer(input == KeyCode::Char('y'));
                     } else if browser.show_launch_targets {
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_launch_targets(),

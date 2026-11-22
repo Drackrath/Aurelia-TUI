@@ -15,6 +15,7 @@ impl Browser {
         let config = Config::cached();
         let steam = launch::steam_integration(&config, app_id);
         self.launch.app_id = app_id;
+        self.launch.confirm_runtime = false;
         self.launch.saved = launch::saved_target(&config, app_id).map(str::to_owned);
         self.launch_targets = match launch::launch_targets(app_id, steam) {
             Ok(targets) => targets,
@@ -55,7 +56,7 @@ impl Browser {
         {
             Ok(()) => {
                 self.launch.saved = Some(id);
-                format!("Play now uses {label}.")
+                format!("Play now uses your choice: {label}.")
             }
             Err(e) => format!("Failed: {e}"),
         };
@@ -79,18 +80,25 @@ impl Browser {
             .is_some_and(|t| t.missing.as_deref() == Some("steam-runtime"))
     }
 
-    /// Start `steam-runtime install` when it's missing.
+    /// Ask before installing the runtime.
     pub fn launch_target_install_runtime(&mut self) {
-        if !self.launch_target_needs_runtime() {
-            self.launch_targets_status = "This target doesn't need the Steam runtime.".to_string();
+        if !self.launch_target_needs_runtime() || self.launch.runtime.is_running() {
             return;
         }
-        if !self.launch.runtime.start() {
+        self.launch.confirm_runtime = true;
+    }
+
+    /// Answer the runtime install prompt.
+    pub fn launch_runtime_answer(&mut self, yes: bool) {
+        self.launch.confirm_runtime = false;
+        if !yes {
+            self.launch_targets_status = "Steam runtime install cancelled.".to_string();
+        } else if self.launch.runtime.start() {
+            self.launch_targets_status.clear();
+        } else {
             self.launch_targets_status =
                 "The Steam runtime install is already running.".to_string();
-            return;
         }
-        self.launch_targets_status.clear();
     }
 
     /// Adopt finished install, refresh targets.

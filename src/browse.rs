@@ -3529,8 +3529,10 @@ impl Browser {
     pub fn selected_launch_target(&mut self) -> Option<aurelia::PlayOpts> {
         let target = self.launch_targets.get(self.launch_targets_index)?;
         if !target.available {
-            let missing = target.missing.as_deref().unwrap_or("unknown");
-            self.launch_targets_status = format!("Unavailable (missing: {missing}).");
+            self.launch_targets_status = format!(
+                "Unavailable: {}",
+                crate::interface::launch::missing_long(target)
+            );
             return None;
         }
         let steam = launch_ui::steam_flag(self.launch.app_id);
