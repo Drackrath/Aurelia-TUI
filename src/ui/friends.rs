@@ -32,10 +32,7 @@ pub fn friends(browser: &Browser, visible_rows: usize) -> Paragraph<'static> {
 
     // Title: louder and action-hinting while focused, calmer otherwise.
     let title = if focused {
-        format!(
-            "● Friends ({}) · chat [t] window [i] invite [p] profile",
-            len
-        )
+        format!("● Friends ({})", len)
     } else {
         format!("Friends ({}) — [F] focus", len)
     };
@@ -57,18 +54,24 @@ pub fn friends(browser: &Browser, visible_rows: usize) -> Paragraph<'static> {
     // Whole-list scroll: choose the window start so `friends_index` stays inside
     // the visible window. Once the highlight moves past the bottom edge the whole
     // list shifts up by keeping `friends_index` as the last visible row.
-    let start = if visible_rows == 0 {
-        0
-    } else if browser.friends_index >= visible_rows {
-        browser.friends_index + 1 - visible_rows
-    } else {
-        0
-    };
+    let note = browser.friends_note();
+    let visible_rows = visible_rows.saturating_sub(note.len());
+    browser.social.names.visible_rows.set(visible_rows);
+    let (start, _) = crate::ui::scroll::window(browser.friends_index, len, visible_rows);
 
     // Enumerate over the FULL vec first so `i` is the ABSOLUTE friend index, then
     // slice the window with skip/take. This keeps `i == friends_index` correct
     // regardless of how far the list has scrolled.
-    let lines: Vec<Spans<'static>> = items
+    let mut lines: Vec<Spans<'static>> = note
+        .iter()
+        .map(|n| {
+            Spans::from(Span::styled(
+                n.to_string(),
+                Style::default().fg(theme::WARN),
+            ))
+        })
+        .collect();
+    let rows: Vec<Spans<'static>> = items
         .iter()
         .enumerate()
         .skip(start)
@@ -125,6 +128,7 @@ pub fn friends(browser: &Browser, visible_rows: usize) -> Paragraph<'static> {
             Spans::from(spans)
         })
         .collect();
+    lines.extend(rows);
 
     Paragraph::new(Text::from(lines))
         .block(theme::panel(title))
