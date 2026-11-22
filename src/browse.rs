@@ -21,6 +21,8 @@ use crate::util::error::STError;
 
 pub mod install_options;
 mod library_info;
+mod play_settings;
+pub use play_settings::{PLAY_ROWS, ROW_LAUNCH_OPTIONS, ROW_PREFIX};
 
 /// The quick-filter tabs along the top of the library.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -540,6 +542,8 @@ pub struct Browser {
     game_config_app_id: i32,
     /// A transient status line for the settings overlay.
     pub game_config_status: String,
+    /// Text being typed into a row.
+    pub game_config_input: Option<String>,
 
     // --- Collections overlay ---
     /// Whether the collections overlay is open.
@@ -620,6 +624,9 @@ pub enum Action {
     Favourite,
     Hide,
     SteamDb,
+    PlaySkipShaders,
+    ProcessShaders,
+    ProcessShadersForce,
 }
 
 /// One rendered row of the Actions menu: the action, the category header it
@@ -787,6 +794,7 @@ impl Browser {
             game_config_index: 0,
             game_config_app_id: 0,
             game_config_status: String::new(),
+            game_config_input: None,
             show_collections: false,
             collections: Vec::new(),
             collections_index: 0,
@@ -2986,6 +2994,7 @@ impl Browser {
         if installed {
             rows.push(ActionRow { action: Action::Play, category: PLAY, label: "Play", key: "" });
             rows.push(ActionRow { action: Action::PlayAs, category: PLAY, label: "Play as… (launch target)", key: "" });
+            rows.push(ActionRow { action: Action::PlaySkipShaders, category: PLAY, label: "Play without shader processing", key: "" });
             rows.push(ActionRow { action: Action::Update, category: PLAY, label: "Update", key: "U" });
             rows.push(ActionRow { action: Action::Verify, category: PLAY, label: "Verify files", key: "v" });
             rows.push(ActionRow { action: Action::Uninstall, category: PLAY, label: "Uninstall", key: "x" });
@@ -3005,6 +3014,10 @@ impl Browser {
         rows.push(ActionRow { action: Action::Proton, category: RT, label: "Proton runtimes", key: "P" });
         rows.push(ActionRow { action: Action::Engine, category: RT, label: "Runtime plugins (umu / lux)", key: "E" });
         rows.push(ActionRow { action: Action::LaunchOptions, category: RT, label: "Launch options", key: "L" });
+        if installed {
+            rows.push(ActionRow { action: Action::ProcessShaders, category: RT, label: "Process Vulkan shaders", key: "" });
+            rows.push(ActionRow { action: Action::ProcessShadersForce, category: RT, label: "Process Vulkan shaders (force)", key: "" });
+        }
 
         const CONTENT: &str = "Content";
         if Config::cached().hltb_enabled {
@@ -3293,7 +3306,7 @@ impl Browser {
 
     /// Number of editable rows in the game-settings overlay: Runner, Forced
     /// Proton, Platform, Steam runtime, Steam prefix, Launch script.
-    pub const GAME_CONFIG_ROWS: usize = 6;
+    pub const GAME_CONFIG_ROWS: usize = 6 + PLAY_ROWS;
 
     /// Fetch the game's per-game config, launch-script state, and the installed
     /// Proton list (for cycling the forced runtime) and open the overlay.
@@ -3306,6 +3319,7 @@ impl Browser {
         self.game_config_app_id = app_id;
         self.game_config_index = 0;
         self.game_config_status.clear();
+        self.game_config_input = None;
         self.show_game_config = true;
     }
 
@@ -3315,6 +3329,7 @@ impl Browser {
         self.game_script = None;
         self.game_config_protons.clear();
         self.game_config_index = 0;
+        self.game_config_input = None;
     }
 
     pub fn game_config_next(&mut self) {
@@ -3434,7 +3449,7 @@ impl Browser {
                     };
             }
             // Launch script: create one if none, else clear the per-game override.
-            _ => {
+            5 => {
                 let has_script = self.game_script.as_ref().map(|s| s.exists).unwrap_or(false);
                 let res = if has_script {
                     aurelia::config_game_clear_launch_script(id)
@@ -3447,6 +3462,8 @@ impl Browser {
                     Err(e) => format!("Failed: {e}"),
                 };
             }
+            // Text rows open an input.
+            _ => return self.play_settings_activate(),
         }
         self.refresh_game_config();
     }

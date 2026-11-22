@@ -164,6 +164,7 @@ fn game_settings_overlay_renders_rows() {
         launch_script: None,
         steam_runtime_policy: Some("Enabled".to_string()),
         steam_prefix_mode: Some("PerGame".to_string()),
+        ..Default::default()
     });
     let text = render(70, 12, |f| {
         f.render_widget(ui::game_config::game_config(&browser), Rect::new(0, 0, 70, 12));
