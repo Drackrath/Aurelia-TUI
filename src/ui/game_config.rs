@@ -37,13 +37,14 @@ pub fn game_config(browser: &Browser) -> Paragraph<'static> {
         _ => "(none)".to_string(),
     };
 
-    let rows: [(&str, String); 6] = [
+    let rows: [(&str, String); 7] = [
         ("Runner", runner),
         ("Forced Proton", proton),
         ("Platform", platform),
         ("Steam runtime", steam_runtime),
         ("Steam prefix", steam_prefix),
         ("Launch script", script),
+        ("Steam integration", browser.steam_integration_label()),
     ];
 
     let mut lines: Vec<Spans<'static>> = Vec::new();
