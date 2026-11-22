@@ -288,6 +288,9 @@ pub struct InfoJson {
     pub description: String,
     #[serde(default)]
     pub reviews: Option<String>,
+    /// Store platforms, e.g. `Windows`, `Linux`.
+    #[serde(default)]
+    pub platforms: Vec<String>,
     /// Present with `--extended`.
     #[serde(default)]
     pub extended: Option<crate::interface::library_info::ExtendedInfoJson>,

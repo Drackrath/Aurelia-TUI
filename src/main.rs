@@ -207,6 +207,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         }
         browser.poll_game_refresh();
         browser.poll_install_queue();
+        browser.poll_install_options();
 
         // A just-finished Proton install flips a runtime to [installed]; pick
         // that up by refreshing the list once, then drop the status line. Done
@@ -508,29 +509,18 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Install-location picker floats above the library.
                 if browser.show_install_picker {
-                    let area = ui::centered_rect(64, 40, frame.size());
-                    frame.render_widget(Clear, area);
-                    frame.render_widget(ui::install_picker::install_picker(&browser), area);
+                    ui::install_picker::draw(frame, &browser);
                 }
 
                 // Uninstall confirmation prompt floats above the library.
                 if browser.confirm_uninstall {
                     if let Some(game) = browser.selected() {
-                        let area = ui::centered_rect(40, 20, frame.size());
-                        frame.render_widget(Clear, area);
-                        frame.render_widget(
-                            ui::install_options::confirm_uninstall_game(&game.get_name()),
-                            area,
-                        );
+                        ui::install_options::draw_uninstall(frame, &browser, &game);
                     }
                 }
 
                 // Change-language picker floats above.
-                if browser.language_picker.is_some() {
-                    let area = ui::centered_rect(50, 50, frame.size());
-                    frame.render_widget(Clear, area);
-                    frame.render_widget(ui::install_options::language_picker(&browser), area);
-                }
+                ui::install_options::draw_language_picker(frame, &browser);
 
                 // DLC overlay floats above everything.
                 if browser.show_dlc {
@@ -1309,11 +1299,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             _ => {}
                         }
                     } else if browser.confirm_uninstall {
-                        // y keeps prefix, Y deletes it.
+                        // p toggles prefix, y confirms.
                         match input {
-                            KeyCode::Char(key @ ('y' | 'Y')) => {
+                            KeyCode::Char('p') => browser.toggle_uninstall_prefix(),
+                            KeyCode::Char('y') => {
+                                let delete_prefix = browser.uninstall_deletes_prefix();
                                 if let Some(game) = browser.selected() {
-                                    match aurelia::uninstall(game.id, key == 'Y') {
+                                    match aurelia::uninstall(game.id, delete_prefix) {
                                         Ok(()) => {
                                             // Reload the library so the listing
                                             // reflects the now-uninstalled game
@@ -1330,9 +1322,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                 }
-                                browser.confirm_uninstall = false;
+                                browser.close_uninstall_prompt();
                             }
-                            _ => browser.confirm_uninstall = false,
+                            _ => browser.close_uninstall_prompt(),
                         }
                     } else if browser.show_dlc {
                         // DLC overlay: navigate and toggle the highlighted DLC.

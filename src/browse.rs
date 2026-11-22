@@ -508,6 +508,10 @@ pub struct Browser {
     install_opts_choice: HashMap<i32, crate::interface::install_options::InstallOpts>,
     /// Open change-language picker, if any.
     pub language_picker: Option<install_options::LanguagePicker>,
+    /// Inbox for option dry runs.
+    options_inbox: install_options::OptionsInbox,
+    /// Uninstall prompt: also delete prefix.
+    pub uninstall_delete_prefix: bool,
     /// Off-thread inbox for targeted single-game install-state refreshes (after
     /// an install completes or is cancelled). A worker fetches the fresh `list`
     /// entry and drops it here; [`Browser::poll_game_refresh`] adopts it,
@@ -828,6 +832,8 @@ impl Browser {
             install_options_app: 0,
             install_opts_choice: HashMap::new(),
             language_picker: None,
+            options_inbox: Default::default(),
+            uninstall_delete_prefix: false,
             game_refresh_slot: Arc::new(Mutex::new(Vec::new())),
             notice: None,
             hltb_open_pending: Arc::new(Mutex::new(None)),
