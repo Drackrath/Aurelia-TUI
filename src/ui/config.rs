@@ -52,7 +52,9 @@ fn presence_value(value: &Option<String>) -> String {
 /// Persona wait, or live edit.
 fn persona_wait_value(browser: &Browser, secs: Option<u64>) -> String {
     if let Some(input) = &browser.social.wait_input {
-        return format!("{input}_ s");
+        // Flag out-of-range input early.
+        let range = crate::interface::social::parse_persona_wait(input).is_err();
+        return format!("{input}_ s{}", if range { "  (1-300)" } else { "" });
     }
     let secs = secs.unwrap_or(crate::interface::social::PERSONA_WAIT_DEFAULT);
     format!("{secs}s (profile status wait)")
@@ -123,7 +125,13 @@ fn header(title: &str) -> Spans<'static> {
 }
 
 /// A label/value line.
-fn line(label: &str, value: String, selected: bool, readonly: bool) -> Spans<'static> {
+fn line(
+    label: &str,
+    key: Option<char>,
+    value: String,
+    selected: bool,
+    readonly: bool,
+) -> Spans<'static> {
     let style = if selected {
         theme::selection(theme::ACCENT)
     } else if readonly {
@@ -136,9 +144,12 @@ fn line(label: &str, value: String, selected: bool, readonly: bool) -> Spans<'st
     } else {
         theme::label()
     };
+    let key = key.map_or_else(|| "    ".to_string(), |c| format!("[{c}] "));
+    let key_style = if selected { style } else { theme::dim() };
     Spans::from(vec![
         Span::styled(selection_marker(selected).to_string(), style),
         Span::styled(format!("{label:<LABEL_WIDTH$}"), label_style),
+        Span::styled(key, key_style),
         Span::styled(value, style),
     ])
 }
@@ -162,7 +173,8 @@ fn group(
             *at = lines.len();
         }
         let value = value(browser, setting);
-        lines.push(line(setting.label(), value, selected, false));
+        let key = Some(setting.shortcut());
+        lines.push(line(setting.label(), key, value, selected, false));
     }
 }
 
@@ -177,21 +189,23 @@ fn body(browser: &Browser) -> (Vec<Spans<'static>>, usize) {
     lines.push(Spans::from(""));
     lines.push(header("Info (read-only)"));
     for (label, value) in info_rows(browser) {
-        lines.push(line(label, value, false, true));
+        lines.push(line(label, None, value, false, true));
     }
     (lines, at)
 }
 
 /// Title for the current mode.
 fn title(browser: &Browser) -> String {
-    if browser.config_binary_input.is_some() {
-        "Settings — aurelia path ([Enter] save · [Esc] cancel · empty = auto)".to_string()
+    if browser.config_language_pick.is_some() {
+        "Store language — [j/k] select · [Enter] save · [Esc] cancel".to_string()
+    } else if browser.config_binary_input.is_some() {
+        "Aurelia path — [Enter] save · [Esc] cancel · empty=auto".to_string()
     } else if browser.social.wait_input.is_some() {
-        "Settings — persona wait, 1-300 s ([Enter] save · [Esc] cancel)".to_string()
+        "Persona wait 1-300 s — [Enter] save · [Esc] cancel".to_string()
     } else if browser.config_proxy_input.is_some() {
-        "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
+        "Proxy URL — [Enter] save · [Esc] cancel · empty clears".to_string()
     } else if browser.download_limit.input.is_some() {
-        "Settings — download limit ([Enter] save · [Esc] cancel)".to_string()
+        "Download limit — [Enter] save · [Esc] cancel".to_string()
     } else {
         TITLE.to_string()
     }
@@ -204,6 +218,9 @@ pub fn config(browser: &Browser) -> Paragraph<'static> {
 
 /// Settings overlay sized to `height` rows.
 pub fn config_in(browser: &Browser, height: u16) -> Paragraph<'static> {
+    if let Some(pick) = browser.config_language_pick {
+        return language_picker(pick, height, title(browser));
+    }
     let (lines, at) = body(browser);
     // Border plus blank and help.
     let room = usize::from(height).saturating_sub(4).max(1);
@@ -221,4 +238,27 @@ pub fn config_in(browser: &Browser, height: u16) -> Paragraph<'static> {
         )));
     }
     paneled_paragraph(shown, title(browser))
+}
+
+/// Store-language list with a highlight.
+fn language_picker(pick: usize, height: u16, title: String) -> Paragraph<'static> {
+    let choices = settings::language_choices();
+    let room = usize::from(height).saturating_sub(2);
+    let (start, end) = crate::ui::scroll::window(pick, choices.len(), room);
+    let lines: Vec<Spans<'static>> = (start..end)
+        .map(|i| {
+            let label = crate::interface::library_info::language_label(choices[i]);
+            let selected = i == pick;
+            let style = if selected {
+                theme::selection(theme::ACCENT)
+            } else {
+                theme::value()
+            };
+            Spans::from(vec![
+                Span::styled(selection_marker(selected).to_string(), style),
+                Span::styled(label, style),
+            ])
+        })
+        .collect();
+    paneled_paragraph(lines, title)
 }

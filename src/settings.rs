@@ -2,8 +2,10 @@
 
 use crate::browse::Browser;
 use crate::config::Config;
-use crate::interface::aurelia;
+use crossterm::event::KeyCode;
+
 use crate::interface::library_info;
+use crate::interface::{aurelia, binary};
 
 /// One changeable Settings row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,12 +36,12 @@ impl Setting {
     pub fn label(self) -> &'static str {
         match self {
             Setting::Hltb => "HowLongToBeat",
-            Setting::AutoCloudSync => "Auto cloud sync (TUI)",
+            Setting::AutoCloudSync => "Sync saves around Play (TUI)",
             Setting::StoreLanguage => "Store language",
             Setting::Binary => "Aurelia binary",
             Setting::Presence => "Presence",
             Setting::PersonaWait => "Persona wait",
-            Setting::CloudSync => "Cloud sync",
+            Setting::CloudSync => "Aurelia Steam Cloud sync",
             Setting::DownloadLimit => "Download limit",
             Setting::Shaders => "Shader pre-caching",
             Setting::AntiCheat => "Anti-cheat auto-install",
@@ -62,12 +64,12 @@ impl Setting {
     pub fn help(self) -> &'static str {
         match self {
             Setting::Hltb => "Fetch completion times from HowLongToBeat (TUI only).",
-            Setting::AutoCloudSync => "Sync Steam Cloud saves before and after play.",
-            Setting::StoreLanguage => "Language for store text in game details.",
+            Setting::AutoCloudSync => "TUI syncs saves before and after Play.",
+            Setting::StoreLanguage => "Store text language; Enter opens a list.",
             Setting::Binary => "Path to the aurelia binary; empty = automatic.",
             Setting::Presence => "Friends/chat presence; offline means invisible.",
             Setting::PersonaWait => "Seconds to wait for friends' status, 1-300.",
-            Setting::CloudSync => "Aurelia's global Steam Cloud save sync.",
+            Setting::CloudSync => "Aurelia's own Steam Cloud sync, all games.",
             Setting::DownloadLimit => "Download speed cap in kbit/s; off = unlimited.",
             Setting::Shaders => "Replay Vulkan shader caches before launch.",
             Setting::AntiCheat => "Install EAC/BattlEye runtimes when a game needs them.",
@@ -140,17 +142,16 @@ pub fn selected(browser: &Browser) -> Option<Setting> {
         .copied()
 }
 
-/// Move the highlight down, wrapping.
+/// Move the highlight down, clamped.
 pub fn next(browser: &mut Browser) {
     let n = selectable(browser).len().max(1);
-    browser.config_index = (browser.config_index.min(n - 1) + 1) % n;
+    browser.config_index = (browser.config_index + 1).min(n - 1);
 }
 
-/// Move the highlight up, wrapping.
+/// Move the highlight up, clamped.
 pub fn previous(browser: &mut Browser) {
     let n = selectable(browser).len().max(1);
-    let i = browser.config_index.min(n - 1);
-    browser.config_index = if i == 0 { n - 1 } else { i - 1 };
+    browser.config_index = browser.config_index.min(n - 1).saturating_sub(1);
 }
 
 /// Row behind a shortcut letter.
@@ -187,15 +188,9 @@ pub fn apply(setting: Setting, browser: &mut Browser, config: &mut Config) {
             });
         }
         Setting::StoreLanguage => {
-            if save(browser, config, "Language setting", |c| {
-                c.info_language = library_info::next_language(c.info_language.as_deref())
-            }) {
-                browser.reset_store_info();
-            }
+            browser.config_language_pick = Some(language_index(config.info_language.as_deref()))
         }
-        Setting::Binary => {
-            browser.config_binary_input = Some(config.aurelia_bin.clone().unwrap_or_default())
-        }
+        Setting::Binary => browser.config_binary_input = Some(binary_prefill(config)),
         Setting::Presence => {
             // Unknown presence counts as offline.
             let online = browser
@@ -236,4 +231,81 @@ fn save(
             false
         }
     }
+}
+
+/// Language list; index 0 = default.
+pub fn language_choices() -> Vec<Option<&'static str>> {
+    std::iter::once(None)
+        .chain(library_info::LANGUAGES.iter().copied().map(Some))
+        .collect()
+}
+
+/// Index of `current` in the choices.
+pub fn language_index(current: Option<&str>) -> usize {
+    language_choices()
+        .iter()
+        .position(|l| *l == current)
+        .unwrap_or(0)
+}
+
+/// Language picker keys; Enter saves changes.
+pub fn language_key(browser: &mut Browser, config: &mut Config, key: KeyCode) {
+    let Some(i) = browser.config_language_pick else {
+        return;
+    };
+    let last = language_choices().len() - 1;
+    match key {
+        KeyCode::Esc | KeyCode::Char('q') => browser.config_language_pick = None,
+        KeyCode::Down | KeyCode::Char('j') => {
+            browser.config_language_pick = Some((i + 1).min(last))
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            browser.config_language_pick = Some(i.saturating_sub(1))
+        }
+        KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char(' ') => {
+            browser.config_language_pick = None;
+            let chosen = language_choices()[i].map(str::to_string);
+            // Refetch only on real change.
+            if chosen != config.info_language
+                && save(browser, config, "Language setting", |c| {
+                    c.info_language = chosen
+                })
+            {
+                browser.reset_store_info();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Binary input starts at the current path.
+pub fn binary_prefill(config: &Config) -> String {
+    config
+        .aurelia_bin
+        .clone()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| {
+            let bin = aurelia::bin();
+            binary::resolve(&bin)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or(bin)
+        })
+}
+
+/// Save the typed binary path.
+pub fn commit_binary(browser: &mut Browser, config: &mut Config) {
+    let Some(typed) = browser.config_binary_input.take() else {
+        return;
+    };
+    // Untouched prefill keeps automatic mode.
+    if typed.trim() == binary_prefill(config) {
+        browser.notice = Some("Aurelia binary unchanged.".into());
+        return;
+    }
+    browser.notice = match binary::set_configured(config, &typed) {
+        Ok(Some(notice)) => Some(notice),
+        Ok(None) if typed.trim().is_empty() => Some("Aurelia binary: automatic.".into()),
+        Ok(None) => Some(format!("Aurelia binary: {}", typed.trim())),
+        Err(error) => Some(error),
+    };
 }

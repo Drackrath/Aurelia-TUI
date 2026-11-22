@@ -87,7 +87,7 @@ pub fn limit_value(browser: &Browser) -> String {
             Ok(k) => iq::limit_rate(k),
             Err(_) => "kbit/s or off".to_string(),
         };
-        return format!("{input}_  → {hint} ([Enter] save · [Esc] cancel)");
+        return format!("{input}_  → {hint}");
     }
     match limit.kbit {
         Some(k) => iq::describe_limit(k),
