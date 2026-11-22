@@ -107,7 +107,7 @@ fn overlay_scrolls_and_keeps_hints_at_both_sizes() {
 }
 
 #[test]
-fn up_and_down_ask_first_and_cancel() {
+fn sync_up_and_down_ask_first_and_cancel() {
     isolate();
     for (w, h) in [(120, 40), (80, 24)] {
         let mut b = with_files(3);
@@ -131,6 +131,20 @@ fn up_and_down_ask_first_and_cancel() {
         b.cloud_key(KeyCode::Esc);
         assert_eq!(b.cloud_view.confirm, None);
         assert!(b.show_cloud, "Esc only cancels the confirm");
+
+        // Both-ways sync asks too.
+        b.cloud_key(KeyCode::Char('s'));
+        assert_eq!(b.cloud_view.confirm, Some(CloudDirection::Both));
+        let screen = draw_overlay(&b, w, h).join("\n");
+        assert!(
+            screen.contains("Sync saves both ways with Steam Cloud?"),
+            "{w}x{h}"
+        );
+        assert!(screen.contains("conflicts will ask"), "{w}x{h}");
+        assert!(screen.contains("[y] confirm   [n] cancel"), "{w}x{h}");
+        b.cloud_key(KeyCode::Char('x'));
+        assert_eq!(b.cloud_view.confirm, None);
+        assert_eq!(b.cloud_status, "Cancelled.");
     }
 }
 
