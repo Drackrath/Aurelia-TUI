@@ -55,7 +55,8 @@ pub fn game_config(browser: &Browser, area: Rect) -> Paragraph<'static> {
         ("Launch script", script),
         ("Steam integration", browser.steam_integration_label()),
     ];
-    rows.extend(crate::ui::play_settings::game_config_rows(browser));
+    let row_w = area.width.saturating_sub(2) as usize;
+    rows.extend(crate::ui::play_settings::game_config_rows(browser, row_w));
     rows.push(("Aurelia Steam Cloud sync", cloud));
 
     // Footer first, rows get the rest.
