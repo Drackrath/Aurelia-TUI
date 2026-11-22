@@ -1,0 +1,1 @@
+{"error":"QR login failed: the scanned code expired before approval","event":"result","hint":"approve sooner after scanning; run `aurelia login` again","ok":false,"schema":1,"type":"login_expired"}
