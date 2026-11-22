@@ -1349,14 +1349,21 @@ pub fn install_estimate(id: i32) -> Result<u64, STError> {
     Ok(value.get("disk_size").and_then(|v| v.as_u64()).unwrap_or(0))
 }
 
-/// Store metadata via `info --extended`.
+/// Store metadata via plain `info`.
 pub fn fetch_info(id: i32) -> Result<InfoJson, STError> {
+    fetch_info_with(id, false)
+}
+
+/// Store metadata via `info --extended`.
+pub fn fetch_info_extended(id: i32) -> Result<InfoJson, STError> {
+    fetch_info_with(id, true)
+}
+
+fn fetch_info_with(id: i32, extended: bool) -> Result<InfoJson, STError> {
     use crate::interface::library_info::info_args;
     let id = id.to_string();
     let lang = crate::config::Config::cached().info_language;
-    // Extended first; plain on failure.
-    let value = run_json(&info_args(&id, lang.as_deref(), true))
-        .or_else(|_| run_json(&info_args(&id, lang.as_deref(), false)))?;
+    let value = run_json(&info_args(&id, lang.as_deref(), extended))?;
     Ok(serde_json::from_value(value)?)
 }
 

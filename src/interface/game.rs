@@ -239,6 +239,33 @@ impl Game {
         });
     }
 
+    /// Fetch `info --extended` once per session.
+    pub fn query_extended(&self) {
+        use crate::interface::library_info as li;
+        let lang = Config::cached().info_language;
+        if !li::claim_extended(self.id, lang.as_deref()) {
+            return;
+        }
+        let reference = self.info.clone();
+        let id = self.id;
+        thread::spawn(move || {
+            // Plain info on failure.
+            let result = aurelia::fetch_info_extended(id);
+            let ext = result.as_ref().ok().and_then(|i| i.extended.clone());
+            li::store_extended(id, lang.as_deref(), ext);
+            let info = result.or_else(|_| aurelia::fetch_info(id));
+            if let (Ok(info), Ok(mut slot)) = (info, reference.lock()) {
+                *slot = Some(info);
+            }
+        });
+    }
+
+    /// Cached extended info, current language.
+    pub fn extended_info(&self) -> Option<crate::interface::library_info::ExtendedInfoJson> {
+        let lang = Config::cached().info_language;
+        crate::interface::library_info::cached_extended(self.id, lang.as_deref())
+    }
+
     /// Snapshot of fetched store info.
     pub fn info_snapshot(&self) -> Option<InfoJson> {
         self.info.lock().ok().and_then(|slot| slot.clone())

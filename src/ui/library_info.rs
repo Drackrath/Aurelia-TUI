@@ -97,7 +97,7 @@ pub fn library_rows(game: &Game) -> Vec<(Row<'static>, u16)> {
 
 /// `info --extended` rows; more when expanded.
 pub fn extended_rows(game: &Game, width: u16, expand: bool) -> Vec<(Row<'static>, u16)> {
-    let Some(ext) = game.info_snapshot().and_then(|i| i.extended) else {
+    let Some(ext) = game.extended_info() else {
         return Vec::new();
     };
     let width = width as usize;

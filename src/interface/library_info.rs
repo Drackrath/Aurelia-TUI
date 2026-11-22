@@ -1,9 +1,10 @@
 //! Extra library and store fields.
 //!
 //! `list --json`: see Aurelia `LibraryGame`.
-//! `info --extended`: see `info_json_value`.
+//! `info --extended`: only when expanded.
 //! SteamDB links open off-thread.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::thread;
 
@@ -78,6 +79,50 @@ pub struct ExtendedInfoJson {
     pub website: Option<String>,
     #[serde(default)]
     pub requirements: RequirementsJson,
+}
+
+/// Session cache key: app and language.
+type ExtendedKey = (i32, String);
+
+/// `None` value: requested or failed.
+static EXTENDED: Mutex<Option<HashMap<ExtendedKey, Option<ExtendedInfoJson>>>> = Mutex::new(None);
+
+fn extended_key(app_id: i32, lang: Option<&str>) -> ExtendedKey {
+    (app_id, lang.unwrap_or_default().to_string())
+}
+
+/// Reserve a fetch; false if seen.
+pub fn claim_extended(app_id: i32, lang: Option<&str>) -> bool {
+    let Ok(mut guard) = EXTENDED.lock() else {
+        return false;
+    };
+    let map = guard.get_or_insert_with(HashMap::new);
+    let key = extended_key(app_id, lang);
+    if map.contains_key(&key) {
+        return false;
+    }
+    map.insert(key, None);
+    true
+}
+
+/// Record a finished extended fetch.
+pub fn store_extended(app_id: i32, lang: Option<&str>, ext: Option<ExtendedInfoJson>) {
+    if let Ok(mut guard) = EXTENDED.lock() {
+        guard
+            .get_or_insert_with(HashMap::new)
+            .insert(extended_key(app_id, lang), ext);
+    }
+}
+
+/// Cached extended info, if fetched.
+pub fn cached_extended(app_id: i32, lang: Option<&str>) -> Option<ExtendedInfoJson> {
+    EXTENDED
+        .lock()
+        .ok()?
+        .as_ref()?
+        .get(&extended_key(app_id, lang))
+        .cloned()
+        .flatten()
 }
 
 /// Arguments for `aurelia info` (before `--json`).
