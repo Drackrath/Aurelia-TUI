@@ -80,6 +80,7 @@ fn entries() -> Vec<Entry> {
         Entry::Binding("d", "install (pick library)"),
         Entry::Binding("Space", "pause / resume install"),
         Entry::Binding("c", "cancel install"),
+        Entry::Binding("B", "install queue / backlog"),
         Entry::Binding("x", "uninstall game"),
         Entry::Binding("M", "move install"),
         Entry::Binding("K", "relink install"),
