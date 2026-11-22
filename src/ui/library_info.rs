@@ -62,30 +62,33 @@ pub fn list_suffix(game: &Game, inner_width: usize) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
-fn kv(label: &str, value: String) -> (Row<'static>, u16) {
-    (
-        Row::new(vec![
-            Cell::from(Span::styled(label.to_string(), theme::label())),
-            Cell::from(Span::styled(value, theme::value())),
-        ]),
-        1,
-    )
-}
-
-/// Playtime and library flag rows.
-pub fn library_rows(game: &Game) -> Vec<(Row<'static>, u16)> {
+/// Playtime and library flag lines.
+pub fn library_lines(game: &Game) -> Vec<Line> {
     let lib = &game.library;
-    let mut rows = vec![kv(
-        "Playtime",
+    let mut lines = vec![(
+        "Playtime".to_string(),
         format_playtime(lib.playtime_forever_minutes),
     )];
     if lib.update_queued {
-        rows.push(kv("Update", "queued".into()));
+        lines.push(("Update".into(), "queued".into()));
     }
     if lib.online_only() {
-        rows.push(kv("Online", "required to play".into()));
+        lines.push(("Online".into(), "required to play".into()));
     }
-    rows
+    lines
+}
+
+/// Value width below which labels shorten.
+const NARROW_VALUE_WIDTH: u16 = 52;
+
+/// Whether detail labels need short forms.
+pub fn is_narrow(value_width: u16) -> bool {
+    value_width < NARROW_VALUE_WIDTH
+}
+
+/// Long or short label by width.
+pub fn label(long: &str, short: &str, narrow: bool) -> String {
+    if narrow { short } else { long }.to_string()
 }
 
 /// One detail line: label, text.
@@ -139,7 +142,13 @@ pub fn dedupe(items: &[String]) -> Vec<String> {
 }
 
 /// Extended info and description lines.
-pub fn extra_lines(game: &Game, width: u16, expand: bool, desc_limit: usize) -> Vec<Line> {
+pub fn extra_lines(
+    game: &Game,
+    width: u16,
+    expand: bool,
+    desc_limit: usize,
+    narrow: bool,
+) -> Vec<Line> {
     let width = width as usize;
     let mut out = Vec::new();
     if let Some(ext) = game.extended_info() {
@@ -147,7 +156,7 @@ pub fn extra_lines(game: &Game, width: u16, expand: bool, desc_limit: usize) -> 
             push_wrapped(&mut out, "Genres", &ext.genres.join(", "), width, 1);
         }
         if let Some(score) = ext.metacritic {
-            out.push(("Metacritic".into(), score.to_string()));
+            out.push((label("Metacritic", "Meta", narrow), score.to_string()));
         }
         if expand {
             if let Some(site) = ext.website.as_deref().filter(|s| !s.is_empty()) {
@@ -159,7 +168,8 @@ pub fn extra_lines(game: &Game, width: u16, expand: bool, desc_limit: usize) -> 
             let req = &ext.requirements;
             push_wrapped(&mut out, "Minimum", &req.minimum.join("\n"), width, all);
             let rec = req.recommended.join("\n");
-            push_wrapped(&mut out, "Recommended", &rec, width, all);
+            let rec_label = label("Recommended", "Recomm.", narrow);
+            push_wrapped(&mut out, &rec_label, &rec, width, all);
         }
     }
     let limit = if expand { usize::MAX } else { desc_limit };
@@ -174,7 +184,13 @@ pub fn extra_lines(game: &Game, width: u16, expand: bool, desc_limit: usize) -> 
 }
 
 /// Visible lines with scroll markers.
-pub fn visible_lines(lines: Vec<Line>, budget: usize, scroll: u16, expand: bool) -> Vec<Line> {
+pub fn visible_lines(
+    lines: Vec<Line>,
+    budget: usize,
+    scroll: u16,
+    expand: bool,
+    record: bool,
+) -> Vec<Line> {
     if budget == 0 {
         return Vec::new();
     }
@@ -182,8 +198,11 @@ pub fn visible_lines(lines: Vec<Line>, budget: usize, scroll: u16, expand: bool)
         return truncated(lines, budget);
     }
     let max = lines.len().saturating_sub(budget);
-    MAX_SCROLL.store(max.min(u16::MAX as usize) as u16, Ordering::Relaxed);
-    PAGE.store(budget.saturating_sub(1).max(1) as u16, Ordering::Relaxed);
+    // Only real renders set limits.
+    if record {
+        MAX_SCROLL.store(max.min(u16::MAX as usize) as u16, Ordering::Relaxed);
+        PAGE.store(budget.saturating_sub(1).max(1) as u16, Ordering::Relaxed);
+    }
     let start = (scroll as usize).min(max);
     let end = (start + budget).min(lines.len());
     let mut shown: Vec<Line> = lines[start..end].to_vec();

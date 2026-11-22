@@ -126,6 +126,7 @@ fn entries() -> Vec<Entry> {
         Entry::Binding("Play as: d a i", "choose/auto/runtime"),
         Entry::Binding("Versions: p u", "pin (asks y) / unpin"),
         Entry::Binding("Versions: d s", "downgrade (y) / SteamDB"),
+        Entry::Binding("Versions: g G", "first / last row"),
         Entry::Binding("Game set.: x", "remove launch script"),
         Entry::Binding("Install: p", "cycle platform"),
         Entry::Binding("Install: ←/→ h/l", "cycle language"),

@@ -1,6 +1,6 @@
 //! Browser hooks for library info.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::thread;
 
@@ -126,20 +126,20 @@ impl VersionsConfirm {
 impl Browser {
     /// Listed manifests plus unlisted pinned/installed depots.
     pub fn versions_rows(&self) -> Vec<VersionRow> {
+        // `list` fills this only with -u.
         let installed = self
             .items
             .iter()
             .find(|g| g.id == self.versions_app_id)
             .map(|g| g.library.local_manifest_ids.clone())
-            .unwrap_or_default();
+            .filter(|m| !m.is_empty())
+            .unwrap_or_else(|| self.versions_installed.clone());
         let pinned = self
             .versions_available
             .as_ref()
             .map(|a| a.pinned_manifests.clone())
             .unwrap_or_default();
-        let lookup = |map: &std::collections::BTreeMap<String, u64>, depot: u32| {
-            map.get(&depot.to_string()).copied()
-        };
+        let lookup = |map: &BTreeMap<String, u64>, depot: u32| map.get(&depot.to_string()).copied();
         let mut rows: Vec<VersionRow> = self
             .versions_manifests
             .iter()
@@ -170,6 +170,21 @@ impl Browser {
             pinned: lookup(&pinned, depot),
         }));
         rows
+    }
+
+    /// Appmanifest manifests for an installed game.
+    pub(super) fn disk_installed_manifests(&self, app_id: i32) -> BTreeMap<String, u64> {
+        self.items
+            .iter()
+            .find(|g| g.id == app_id && !g.install_dir.is_empty())
+            .map(|g| info::read_installed_manifests(&g.install_dir, app_id))
+            .unwrap_or_default()
+    }
+
+    /// Jump to first or last row.
+    pub fn versions_jump(&mut self, end: bool) {
+        let len = self.versions_rows().len();
+        self.versions_index = if end { len.saturating_sub(1) } else { 0 };
     }
 
     /// Depot of the highlighted row.

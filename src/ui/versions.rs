@@ -13,52 +13,73 @@ use crate::theme;
 use crate::ui::{paneled_paragraph, selection_marker};
 
 /// Footer key hints, wrapped to width.
-const HINT: &str = "[j/k] move  [p] pin  [u] unpin  [d] downgrade  [s] SteamDB  [Esc] close";
+const HINT: &str =
+    "[j/k] move  [g/G] ends  [p] pin  [u] unpin  [d] downgrade  [s] SteamDB  [Esc] close";
 
 /// Unsized variant; shows every row.
 pub fn versions(browser: &Browser) -> Paragraph<'static> {
     versions_sized(browser, 80, u16::MAX)
 }
 
-fn row_line(r: &VersionRow, selected: bool) -> Spans<'static> {
+/// Inner width needing compact rows.
+const NARROW: usize = 70;
+
+/// Narrow: last 8 manifest digits.
+pub fn short_manifest(id: u64, narrow: bool) -> String {
+    let text = id.to_string();
+    let n = text.chars().count();
+    if narrow && n > 9 {
+        format!("…{}", &text[n - 8..])
+    } else {
+        text
+    }
+}
+
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn row_line(r: &VersionRow, selected: bool, narrow: bool) -> Spans<'static> {
     let style = if selected {
         theme::selection(theme::ACCENT)
     } else {
         theme::value()
     };
     let name = match &r.depot_name {
-        Some(n) => format!("{n} ({})", r.depot_id),
-        None => r.depot_id.to_string(),
+        Some(n) if !narrow => format!("{n} ({})", r.depot_id),
+        _ => r.depot_id.to_string(),
     };
     let mut spans = vec![
         Span::styled(selection_marker(selected).to_string(), style),
         Span::styled(name, style),
     ];
     if let Some(branch) = &r.branch {
+        let branch = if narrow {
+            clip(branch, 12)
+        } else {
+            branch.clone()
+        };
         spans.push(Span::styled(format!(" [{branch}]"), theme::accent()));
     }
-    // Markers first; narrow screens.
-    if r.is_installed() {
-        spans.push(Span::styled(
-            " · installed".to_string(),
-            theme::value().fg(theme::ONLINE),
-        ));
-    }
-    if let Some(pin) = r.pinned {
-        let note = if r.manifest_id == Some(pin) || r.manifest_id.is_none() {
-            format!(" · pinned {pin}")
-        } else {
-            " · pinned elsewhere".to_string()
-        };
-        spans.push(Span::styled(note, theme::value().fg(theme::WARN)));
-    }
     match r.manifest_id {
-        Some(mid) => spans.push(Span::styled(format!("  {mid}"), theme::dim())),
+        Some(mid) => spans.push(Span::styled(
+            format!("  {}", short_manifest(mid, narrow)),
+            theme::dim(),
+        )),
         None => {
             if let Some(mid) = r.installed {
-                spans.push(Span::styled(format!(" · installed {mid}"), theme::dim()));
+                let label = if narrow { "inst" } else { "installed" };
+                spans.push(Span::styled(
+                    format!("  {label} {}", short_manifest(mid, narrow)),
+                    theme::dim(),
+                ));
             }
-            spans.push(Span::styled("  (not listed)".to_string(), theme::dim()));
+            spans.push(Span::styled(" (unlisted)".to_string(), theme::dim()));
         }
     }
     if let Some(size) = r.size {
@@ -66,6 +87,23 @@ fn row_line(r: &VersionRow, selected: bool) -> Spans<'static> {
             format!("  {}", convert(size as f64)),
             theme::dim(),
         ));
+    }
+    if r.is_installed() {
+        let text = if narrow { " · inst" } else { " · installed" };
+        spans.push(Span::styled(
+            text.to_string(),
+            theme::value().fg(theme::ONLINE),
+        ));
+    }
+    if let Some(pin) = r.pinned {
+        let note = if r.manifest_id == Some(pin) {
+            " · pinned".to_string()
+        } else if r.manifest_id.is_none() {
+            format!(" · pinned {}", short_manifest(pin, narrow))
+        } else {
+            " · pinned elsewhere".to_string()
+        };
+        spans.push(Span::styled(note, theme::value().fg(theme::WARN)));
     }
     Spans::from(spans)
 }
@@ -105,7 +143,7 @@ pub fn versions_sized(browser: &Browser, width: u16, height: u16) -> Paragraph<'
         ]));
     }
     header.push(Spans::from(Span::styled(
-        "depot [branch] · state  manifest  size".to_string(),
+        "depot [branch]  manifest  size · state".to_string(),
         theme::dim(),
     )));
 
@@ -153,7 +191,7 @@ pub fn versions_sized(browser: &Browser, width: u16, height: u16) -> Paragraph<'
     } else {
         let (start, end) = super::scroll::window(browser.versions_index, rows.len(), list_h);
         for (i, r) in rows.iter().enumerate().take(end).skip(start) {
-            lines.push(row_line(r, i == browser.versions_index));
+            lines.push(row_line(r, i == browser.versions_index, inner_w < NARROW));
         }
     }
     // Pin footer to bottom.

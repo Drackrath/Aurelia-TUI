@@ -946,6 +946,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Char('u') => browser.unpin_current(),
                                 KeyCode::Char('d') => browser.begin_downgrade_input(),
                                 KeyCode::Char('s') => browser.open_steamdb_depot(),
+                                KeyCode::Char('g') => browser.versions_jump(false),
+                                KeyCode::Char('G') => browser.versions_jump(true),
                                 _ => {}
                             }
                         }

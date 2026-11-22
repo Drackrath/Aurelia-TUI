@@ -5,6 +5,7 @@ use aurelia_tui::interface::aurelia::{AvailableJson, DepotManifestInfo, LibraryG
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::interface::library_info::{self as info, ExtendedInfoJson, RequirementsJson};
 use aurelia_tui::ui;
+use aurelia_tui::ui::versions::short_manifest;
 use tui::layout::Rect;
 use tui::{Terminal, backend::TestBackend};
 
@@ -97,7 +98,8 @@ fn expanded_detail_keeps_core_rows_and_scrolls_to_requirements() {
         // Scroll past the end clamps.
         let bottom = detail_text(&g, true, u16::MAX, w, h);
         assert!(bottom.contains("Rec line"), "{w}x{h} bottom: {bottom}");
-        assert!(bottom.contains("State"), "{w}x{h} core stays: {bottom}");
+        // Whole pane scrolls past core rows.
+        assert!(!bottom.contains("Homepage"), "{w}x{h}: {bottom}");
         assert_eq!(bottom.matches("Feature number 3,").count(), 0);
     }
 }
@@ -190,7 +192,7 @@ fn versions_scrolls_and_keeps_footer() {
 
         let top = versions_text(&browser, w, h);
         assert!(top.contains("[beta]"), "{w}x{h} branch: {top}");
-        assert!(top.contains("· installed"), "{w}x{h}: {top}");
+        assert!(top.contains("· inst"), "{w}x{h}: {top}");
         assert!(top.contains("[Esc] close"), "{w}x{h} footer: {top}");
         assert!(top.contains("(1/32)"), "{w}x{h} title: {top}");
 
@@ -230,4 +232,78 @@ fn pin_and_downgrade_ask_first() {
     assert!(browser.downgrade_busy_text().is_none(), "nothing started");
     browser.versions_confirm_key(false);
     assert!(browser.versions_confirm.is_none());
+}
+
+#[test]
+fn appmanifest_installed_depots_parse() {
+    let acf = include_str!("fixtures/library_info/appmanifest_1086940.acf");
+    let map = info::acf_installed_manifests(acf);
+    assert_eq!(map.len(), 2);
+    assert_eq!(map["1086941"], 8_253_106_406_752_983_615);
+    assert_eq!(map["2330359"], 5_418_311_130_917_311_458);
+    assert_eq!(
+        info::acf_path("/lib/steamapps/common/Baldurs Gate 3", 1_086_940).unwrap(),
+        std::path::PathBuf::from("/lib/steamapps/appmanifest_1086940.acf")
+    );
+}
+
+#[test]
+fn versions_reads_appmanifest_when_list_lacks_manifests() {
+    isolate_config();
+    let dir = std::env::temp_dir().join(format!("aurelia-acf-{}", std::process::id()));
+    let common = dir.join("steamapps/common/Baldurs Gate 3");
+    std::fs::create_dir_all(&common).unwrap();
+    std::fs::write(
+        dir.join("steamapps/appmanifest_1086940.acf"),
+        include_str!("fixtures/library_info/appmanifest_1086940.acf"),
+    )
+    .unwrap();
+    let entry: LibraryGameJson = serde_json::from_value(serde_json::json!({
+        "app_id": 1086940, "name": "Baldur's Gate 3", "is_installed": true,
+        "install_path": common.to_string_lossy(),
+    }))
+    .unwrap();
+    let mut browser = Browser::new(vec![Game::from_library(entry)]);
+    browser.open_versions(1_086_940);
+    browser.versions_manifests = vec![DepotManifestInfo {
+        depot_id: 1_086_941,
+        depot_name: None,
+        branch: "public".into(),
+        manifest_id: 8_253_106_406_752_983_615,
+        size: 154_770_000_000,
+    }];
+    let rows = browser.versions_rows();
+    assert!(rows[0].is_installed());
+    assert!(
+        rows.iter()
+            .any(|r| r.depot_id == 2_330_359 && r.installed.is_some())
+    );
+    for (w, h) in SIZES {
+        let text = versions_text(&browser, w, h);
+        assert!(
+            text.contains("installed") || text.contains("inst"),
+            "{w}x{h}: {text}"
+        );
+        assert!(text.contains("154.77 GB"), "{w}x{h} size visible: {text}");
+    }
+}
+
+#[test]
+fn versions_g_and_shift_g_jump() {
+    isolate_config();
+    let mut browser = versions_browser();
+    browser.versions_jump(true);
+    assert_eq!(browser.versions_index, browser.versions_rows().len() - 1);
+    browser.versions_jump(false);
+    assert_eq!(browser.versions_index, 0);
+}
+
+#[test]
+fn narrow_versions_shorten_manifest_ids() {
+    assert_eq!(short_manifest(4_016_443_084_035_836_922, true), "…35836922");
+    assert_eq!(
+        short_manifest(4_016_443_084_035_836_922, false),
+        "4016443084035836922"
+    );
+    assert_eq!(short_manifest(1234, true), "1234");
 }
