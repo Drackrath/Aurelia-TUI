@@ -492,6 +492,8 @@ pub struct Browser {
     /// status bar until the next keypress. Keeps a failed backend call from
     /// having to crash the whole TUI to report itself.
     pub notice: Option<String>,
+    /// Restart, depot files, push state.
+    pub restart_depots: crate::restart_depots::RestartDepots,
     /// Browser-launch results arrive off-thread so opening a page cannot stall input.
     hltb_open_pending: Arc<Mutex<Option<Result<(), String>>>>,
 
@@ -817,6 +819,7 @@ impl Browser {
             launch_targets_index: 0,
             launch_targets_status: String::new(),
             launch: Default::default(),
+            restart_depots: Default::default(),
         };
         browser.reset_selection();
         browser

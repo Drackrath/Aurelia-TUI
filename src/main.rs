@@ -26,6 +26,8 @@ use aurelia_tui::config::Config;
 use aurelia_tui::interface::aurelia::{self, LoginPhase};
 use aurelia_tui::interface::{binary, capabilities};
 use aurelia_tui::interface::play_settings::{self, AntiCheat};
+use aurelia_tui::interface::steam_restart::Relocate;
+use aurelia_tui::restart_depots;
 use aurelia_tui::util::stateful::Named;
 
 /// Blend `img` toward `bg` so the top-aligned cover art reads as a translucent
@@ -612,6 +614,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         );
                     }
                 }
+
+                // Restart, force-push, depot files overlays.
+                ui::restart_depots::draw(frame, &browser);
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
                 let layout = App::build_layout();
@@ -699,7 +704,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     // Any keypress dismisses a transient notice from the prior
                     // action (it is set again below if this action also fails).
                     browser.notice = None;
-                    if browser.show_actions {
+                    if browser.restart_depots.wants_key() {
+                        restart_depots::handle_key(&mut browser, input);
+                    } else if browser.show_actions {
                         // Per-game Actions menu (command palette): arrows move,
                         // typing filters, Enter runs the highlighted action via
                         // the SAME code path as its base-keymap accelerator.
@@ -920,7 +927,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Char('n') => browser.begin_collection_create(),
                                 KeyCode::Char('x') => browser.delete_selected_collection(),
                                 KeyCode::Char('P') => browser.collections_pull(),
-                                KeyCode::Char('U') => browser.collections_push(),
+                                KeyCode::Char('U') => {
+                                    restart_depots::collections_push(&mut browser)
+                                }
                                 KeyCode::Char('S') => browser.collections_sync(),
                                 _ => {}
                             }
@@ -1262,18 +1271,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_dlc(),
                             KeyCode::Down | KeyCode::Char('j') => browser.dlc_next(),
                             KeyCode::Up | KeyCode::Char('k') => browser.dlc_previous(),
-                            KeyCode::Char('e') => {
-                                if let Some(entry) = browser.selected_dlc() {
-                                    let _ = aurelia::set_dlc(entry.app_id as i32, true);
-                                    let _ = browser.refresh_dlc();
-                                }
-                            }
-                            KeyCode::Char('x') => {
-                                if let Some(entry) = browser.selected_dlc() {
-                                    let _ = aurelia::set_dlc(entry.app_id as i32, false);
-                                    let _ = browser.refresh_dlc();
-                                }
-                            }
+                            KeyCode::Char('e') => restart_depots::toggle_dlc(&mut browser, true),
+                            KeyCode::Char('x') => restart_depots::toggle_dlc(&mut browser, false),
                             _ => {}
                         }
                     } else if browser.show_branches {
@@ -1361,6 +1360,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_depots(),
                             KeyCode::Down | KeyCode::Char('j') => browser.depots_scroll_down(),
                             KeyCode::Up | KeyCode::Char('k') => browser.depots_scroll_up(),
+                            KeyCode::Char('\n') | KeyCode::Enter => {
+                                restart_depots::open_files(&mut browser)
+                            }
                             _ => {}
                         }
                     } else if browser.show_move {
@@ -1369,7 +1371,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         match input {
                             KeyCode::Esc => browser.close_move(),
                             KeyCode::Char('\n') | KeyCode::Enter => {
-                                let _ = browser.do_move();
+                                if let Err(e) = browser.do_move() {
+                                    let kind = Relocate::Move;
+                                    restart_depots::offer_restart(&mut browser, kind, &e);
+                                }
                             }
                             KeyCode::Backspace => browser.move_pop(),
                             KeyCode::Char(c) => browser.move_push(c),
@@ -1381,7 +1386,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         match input {
                             KeyCode::Esc => browser.close_relink(),
                             KeyCode::Char('\n') | KeyCode::Enter => {
-                                let _ = browser.do_relink();
+                                if let Err(e) = browser.do_relink() {
+                                    let kind = Relocate::Relink;
+                                    restart_depots::offer_restart(&mut browser, kind, &e);
+                                }
                             }
                             KeyCode::Backspace => browser.relink_pop(),
                             KeyCode::Char(c) => browser.relink_push(c),
@@ -1394,7 +1402,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         match input {
                             KeyCode::Esc => browser.close_import(),
                             KeyCode::Char('\n') | KeyCode::Enter => {
-                                let _ = browser.do_import();
+                                if let Err(e) = browser.do_import() {
+                                    let kind = Relocate::Import;
+                                    restart_depots::offer_restart(&mut browser, kind, &e);
+                                }
                             }
                             KeyCode::Backspace => browser.import_pop(),
                             KeyCode::Char(c) => browser.import_push(c),

@@ -1,6 +1,7 @@
 pub mod aurelia;
 pub mod binary;
 pub mod capabilities;
+pub mod depot_files;
 pub mod game;
 pub mod game_status;
 pub mod hltb;
@@ -11,3 +12,4 @@ pub mod launch;
 pub mod proton_data;
 pub mod session;
 pub mod social;
+pub mod steam_restart;
