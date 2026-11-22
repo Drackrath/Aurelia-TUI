@@ -236,11 +236,15 @@ fn file_browser_keys_navigate_and_prompt() {
     files.apply_listing(Ok(listing()));
 
     // Directories don't download.
-    assert!(!files_key(&mut files, KeyCode::Enter));
+    assert!(!files_key(&mut files, KeyCode::Char('d')));
     assert!(files.input.is_none());
 
+    // Enter only toggles details.
     files_key(&mut files, KeyCode::Char('j'));
     files_key(&mut files, KeyCode::Enter);
+    assert!(files.input.is_none() && files.details);
+
+    files_key(&mut files, KeyCode::Char('d'));
     let (field, text) = files.input.clone().unwrap();
     assert_eq!(field, FileInput::Target);
     assert_eq!(text, "~/Downloads");
@@ -286,8 +290,8 @@ fn file_browser_renders_listing_and_status() {
                 height: 6,
                 ..area
             };
-            f.render_widget(view::file_list(&files, 8), top);
-            f.render_widget(view::file_footer(&files), bottom);
+            f.render_widget(view::file_list(&files, 8, 88), top);
+            f.render_widget(view::file_footer(&files, 88), bottom);
         })
         .unwrap();
     let buf = terminal.backend().buffer();

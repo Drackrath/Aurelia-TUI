@@ -60,6 +60,10 @@ pub struct FileBrowser {
     pub last_dir: String,
     pub request: DownloadRequest,
     pub download: Arc<Mutex<DownloadState>>,
+    /// Download awaiting y/n.
+    pub confirm: Option<DownloadRequest>,
+    /// Show the selected entry's details.
+    pub details: bool,
 }
 
 impl FileBrowser {
@@ -92,6 +96,10 @@ impl FileBrowser {
 
     fn previous(&mut self) {
         self.index = self.index.saturating_sub(1);
+    }
+
+    fn jump(&mut self, key: KeyCode) {
+        self.index = list_jump(self.index, self.entry_count(), key);
     }
 
     /// Fetch the listing (blocking).
@@ -227,7 +235,41 @@ pub fn collections_push(browser: &mut Browser) {
     };
 }
 
-/// Browse the top depot's files.
+/// Rows PgUp/PgDn move.
+pub const PAGE: usize = 10;
+
+/// New index after a jump key.
+pub fn list_jump(index: usize, len: usize, key: KeyCode) -> usize {
+    let last = len.saturating_sub(1);
+    match key {
+        KeyCode::Char('g') | KeyCode::Home => 0,
+        KeyCode::Char('G') | KeyCode::End => last,
+        KeyCode::PageUp => index.saturating_sub(PAGE),
+        KeyCode::PageDown => (index + PAGE).min(last),
+        KeyCode::Down | KeyCode::Char('j') => (index + 1).min(last),
+        KeyCode::Up | KeyCode::Char('k') => index.saturating_sub(1),
+        _ => index,
+    }
+}
+
+/// Real name, not `Depot <id>` placeholder.
+pub fn depot_name(id: u64, name: &str) -> Option<String> {
+    let name = name.trim();
+    (!name.is_empty() && name != format!("Depot {id}")).then(|| name.to_string())
+}
+
+/// Depots overlay keys except Esc.
+pub fn depots_key(browser: &mut Browser, key: KeyCode) {
+    match key {
+        KeyCode::Enter | KeyCode::Char('\n') => open_files(browser),
+        _ => {
+            let len = browser.depots.len();
+            browser.depots_scroll = list_jump(browser.depots_scroll, len, key);
+        }
+    }
+}
+
+/// Browse the selected depot's files.
 pub fn open_files(browser: &mut Browser) {
     let Some(game) = browser.selected() else {
         return;
@@ -235,10 +277,9 @@ pub fn open_files(browser: &mut Browser) {
     let Some(depot) = browser.depots.get(browser.depots_scroll) else {
         return;
     };
-    let label = if depot.name.is_empty() {
-        depot.id.to_string()
-    } else {
-        format!("{} ({})", depot.name, depot.id)
+    let label = match depot_name(depot.id, &depot.name) {
+        Some(name) => format!("{name} ({})", depot.id),
+        None => format!("Depot {}", depot.id),
     };
     let mut files = FileBrowser {
         app_id: game.id as u32,
@@ -281,6 +322,12 @@ pub fn handle_key(browser: &mut Browser, key: KeyCode) {
 
 /// File browser keys; true closes.
 pub fn files_key(files: &mut FileBrowser, key: KeyCode) -> bool {
+    if let Some(request) = files.confirm.take() {
+        if matches!(key, KeyCode::Char('y') | KeyCode::Char('Y')) {
+            files.start_download(request, false);
+        }
+        return false;
+    }
     if files.asks_overwrite() {
         if matches!(key, KeyCode::Char('y') | KeyCode::Char('Y')) {
             let request = files.request.clone();
@@ -313,11 +360,16 @@ pub fn files_key(files: &mut FileBrowser, key: KeyCode) -> bool {
         KeyCode::Esc | KeyCode::Char('q') => return true,
         KeyCode::Down | KeyCode::Char('j') => files.next(),
         KeyCode::Up | KeyCode::Char('k') => files.previous(),
+        KeyCode::Char('g')
+        | KeyCode::Char('G')
+        | KeyCode::Home
+        | KeyCode::End
+        | KeyCode::PageUp
+        | KeyCode::PageDown => files.jump(key),
+        KeyCode::Enter | KeyCode::Char('\n') => files.details = !files.details,
         KeyCode::Char('/') => files.input = Some((FileInput::Filter, files.filter.clone())),
         KeyCode::Char('b') => files.input = Some((FileInput::Manifest, files.sel.label())),
-        KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char('d')
-            if files.selected().is_some_and(|f| f.is_file()) =>
-        {
+        KeyCode::Char('d') if files.selected().is_some_and(|f| f.is_file()) => {
             files.input = Some((FileInput::Target, files.last_dir.clone()));
         }
         _ => {}
@@ -350,7 +402,7 @@ fn submit_input(files: &mut FileBrowser, field: FileInput, text: String) {
                 size: entry.size,
                 out_dir,
             };
-            files.start_download(request, false);
+            files.confirm = Some(request);
         }
     }
 }

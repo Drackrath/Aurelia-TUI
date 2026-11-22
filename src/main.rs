@@ -546,9 +546,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Depots overlay floats above everything.
                 if browser.show_depots {
-                    let area = ui::centered_rect(70, 80, frame.size());
+                    let area = ui::restart_depots::overlay_area(frame.size());
+                    let rows = area.height.saturating_sub(2) as usize;
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::depots::depots(&browser), area);
+                    frame.render_widget(ui::depots::depots(&browser, rows), area);
                 }
 
                 // Move (relocate install) prompt floats above everything.
@@ -1419,15 +1420,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             _ => {}
                         }
                     } else if browser.show_depots {
-                        // Depots overlay: Esc/q close, j/k scroll.
+                        // Depots overlay: Esc/q close.
                         match input {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_depots(),
-                            KeyCode::Down | KeyCode::Char('j') => browser.depots_scroll_down(),
-                            KeyCode::Up | KeyCode::Char('k') => browser.depots_scroll_up(),
-                            KeyCode::Char('\n') | KeyCode::Enter => {
-                                restart_depots::open_files(&mut browser)
-                            }
-                            _ => {}
+                            _ => restart_depots::depots_key(&mut browser, input),
                         }
                     } else if browser.show_move {
                         // Move prompt: type the destination library path, Enter
