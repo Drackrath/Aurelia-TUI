@@ -35,6 +35,7 @@ fn game(id: u32, name: &str, installed: bool, update: bool) -> Game {
         active_branch: None,
         assets: None,
         store_url: None,
+        library: Default::default(),
     })
 }
 
@@ -613,11 +614,12 @@ fn workshop_comment_parses_aliases() {
 #[test]
 fn aurelia_version_minimum() {
     use aurelia_tui::interface::aurelia::version_supported;
-    assert!(version_supported("0.1.40"));
-    assert!(version_supported("0.2.0"));
-    assert!(version_supported("v0.1.41-1"));
-    assert!(!version_supported("0.1.39"));
-    assert!(!version_supported("0.1.37-2"));
+    assert!(version_supported("0.3.1"));
+    assert!(version_supported("0.4.0"));
+    assert!(version_supported("v0.3.2-1"));
+    assert!(!version_supported("0.3.0"));
+    assert!(!version_supported("0.2.6"));
+    assert!(!version_supported("0.1.40"));
     assert!(!version_supported("garbage"));
 }
 
@@ -643,12 +645,12 @@ fn version_badge_sits_in_bottom_right_corner() {
             .collect()
     };
 
-    let rows = render(140, Some("0.1.40"));
-    assert!(rows[1].trim_end().ends_with("aurelia v0.1.40"), "badge is bottom-right");
+    let rows = render(140, Some("0.3.1"));
+    assert!(rows[1].trim_end().ends_with("aurelia v0.3.1"), "badge is bottom-right");
     assert!(rows[1].contains("[q] quit"), "key hints are not covered");
 
     let rows = render(140, Some("0.1.18"));
-    assert!(rows[1].contains("needs >= 0.1.40"), "too-old version is flagged");
+    assert!(rows[1].contains("needs >= 0.3.1"), "too-old version is flagged");
 
     // Too narrow for both on the bottom row: the badge moves up, hints stay whole.
     let rows = render(110, None);

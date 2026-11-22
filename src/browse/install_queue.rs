@@ -185,6 +185,14 @@ impl Browser {
                 self.install_queue.adopted.insert(id);
             }
             if !self.install_controls.contains_key(&id) {
+                if !self.install_opts_choice.contains_key(&id) {
+                    // Backlog platform for fallback installs.
+                    let opts = crate::interface::install_options::InstallOpts {
+                        platform: entry.platform.clone(),
+                        language: None,
+                    };
+                    self.set_install_opts(id, opts);
+                }
                 self.begin_install(id, entry.library.clone());
             }
         }
@@ -230,6 +238,7 @@ impl Browser {
     fn forget_control(&mut self, id: i32) {
         self.install_controls.remove(&id);
         self.install_library_choice.remove(&id);
+        self.install_opts_choice.remove(&id);
     }
 
     /// Resume a paused game install.
@@ -299,6 +308,7 @@ impl Browser {
             control.set(crate::interface::aurelia::InstallAction::Stopped);
         }
         self.install_library_choice.remove(&id);
+        self.install_opts_choice.remove(&id);
         self.install_queue.adopted.remove(&id);
         if let Some(game) = self.queue_game(entry.app_id) {
             set_cell(&game, None);

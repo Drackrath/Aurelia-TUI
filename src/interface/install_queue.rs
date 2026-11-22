@@ -524,6 +524,8 @@ pub fn resume(
         args.push("--library".into());
         args.push(lib);
     }
+    // Keep picker platform and language.
+    args.extend(control.options().args());
     run_install(args, status, control);
 }
 

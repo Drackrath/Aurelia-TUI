@@ -69,6 +69,7 @@ pub fn proton(browser: &Browser) -> List<'static> {
     if browser.selected_proton_uninstallable() {
         title.push_str(" · [u] uninstall");
     }
+    title.push_str(" · [e] EAC · [b] BattlEye");
     title.push(')');
 
     List::new(items)

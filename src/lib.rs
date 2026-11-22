@@ -3,6 +3,8 @@ pub mod browse;
 pub mod client;
 pub mod config;
 pub mod interface;
+pub mod social;
+pub mod restart_depots;
 pub mod theme;
 pub mod ui;
 pub mod util;

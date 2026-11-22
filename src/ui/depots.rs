@@ -22,13 +22,15 @@ pub fn depots(browser: &Browser) -> Paragraph<'static> {
             .depots
             .iter()
             .skip(browser.depots_scroll)
-            .map(|depot| {
+            .enumerate()
+            .map(|(row, depot)| {
                 let label = if depot.name.is_empty() {
                     depot.id.to_string()
                 } else {
                     format!("{} ({})", depot.name, depot.id)
                 };
                 Spans::from(vec![
+                    Span::styled(crate::ui::selection_marker(row == 0), theme::accent()),
                     Span::styled(label, theme::value()),
                     Span::raw("  ".to_string()),
                     Span::styled(convert(depot.size as f64), theme::dim()),
@@ -37,5 +39,8 @@ pub fn depots(browser: &Browser) -> Paragraph<'static> {
             .collect()
     };
 
-    paneled_paragraph(lines, format!("Depots ({})", browser.depots.len()))
+    paneled_paragraph(
+        lines,
+        format!("Depots ({}) [Enter] browse files", browser.depots.len()),
+    )
 }

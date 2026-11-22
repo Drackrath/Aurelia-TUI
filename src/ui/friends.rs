@@ -32,7 +32,10 @@ pub fn friends(browser: &Browser, visible_rows: usize) -> Paragraph<'static> {
 
     // Title: louder and action-hinting while focused, calmer otherwise.
     let title = if focused {
-        format!("● Friends ({}) · chat [t] window", len)
+        format!(
+            "● Friends ({}) · chat [t] window [i] invite [p] profile",
+            len
+        )
     } else {
         format!("Friends ({}) — [F] focus", len)
     };
@@ -107,6 +110,12 @@ pub fn friends(browser: &Browser, visible_rows: usize) -> Paragraph<'static> {
                 Span::styled("● ", dot_style),
                 Span::styled(f.display_name(), name_style),
             ];
+
+            // Non-plain statuses get a dim label.
+            let status = crate::interface::social::persona_state_label(f.persona_state);
+            if !matches!(status, "online" | "offline") {
+                spans.push(Span::styled(format!(" ({status})"), theme::dim()));
+            }
 
             // Append the current game in accent, if any.
             if let Some(game) = f.current_game() {

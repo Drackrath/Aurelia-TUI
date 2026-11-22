@@ -48,6 +48,7 @@ fn game(id: u32, name: &str) -> Game {
         active_branch: None,
         assets: None,
         store_url: None,
+        library: Default::default(),
     })
 }
 
@@ -277,4 +278,14 @@ fn overlay_and_settings_row_render() {
     browser.begin_limit_edit();
     browser.limit_input_pop();
     assert!(ui::install_queue::limit_value(&browser).starts_with("800_  → 100.0 kB/s"));
+}
+
+#[test]
+fn adoption_seeds_backlog_platform() {
+    isolate_config();
+    let mut browser = Browser::new(vec![game(620, "Portal 2")]);
+    browser.apply_queue(entries());
+    let opts = browser.install_opts_for(620);
+    assert_eq!(opts.platform.as_deref(), Some("linux"));
+    assert_eq!(opts.args(), vec!["-p".to_string(), "linux".to_string()]);
 }

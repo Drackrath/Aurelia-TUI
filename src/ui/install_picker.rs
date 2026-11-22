@@ -16,7 +16,8 @@ use crate::theme;
 /// estimated install size, each drive's free space, and the current highlight.
 pub fn install_picker(browser: &Browser) -> Paragraph<'static> {
     let estimate = browser.install_estimate;
-    let mut lines: Vec<Spans<'static>> = Vec::new();
+    let mut lines: Vec<Spans<'static>> =
+        crate::ui::install_options::picker_rows(&browser.install_options);
 
     // Header: the estimated on-disk size this install needs.
     if let Some(est) = estimate {
@@ -77,7 +78,7 @@ pub fn install_picker(browser: &Browser) -> Paragraph<'static> {
 
     Paragraph::new(Text::from(lines))
         .block(theme::panel(
-            "Install into which library?  ([↑/↓] choose · [Enter] install · [Esc] cancel)"
+            "Install into which library?  ([↑/↓] choose · [p] platform · [←/→] language · [Enter] install · [Esc] cancel)"
                 .to_string(),
         ))
         .style(theme::base())

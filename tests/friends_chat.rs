@@ -175,6 +175,7 @@ fn game(id: u32, name: &str) -> Game {
         active_branch: None,
         assets: None,
         store_url: None,
+        library: Default::default(),
     })
 }
 
