@@ -2,30 +2,30 @@
 //! [`crate::browse::Browser`] state plus the shared [`crate::theme`], so the
 //! event loop only has to lay them out.
 
+pub mod account;
+pub mod achievements;
 pub mod actions;
 pub mod aurelia_log;
+pub mod branches;
 pub mod chat;
 pub mod cloud;
 pub mod cloud_sync;
-pub mod achievements;
-pub mod account;
-pub mod branches;
 pub mod collections;
 pub mod config;
 pub mod confirm;
 pub mod depots;
-pub mod engine;
-pub mod game_config;
-pub mod install_picker;
-pub mod install_queue;
-pub mod install_options;
 pub mod detail;
 pub mod dlc;
+pub mod engine;
 pub mod friend_add;
 pub mod friends;
+pub mod game_config;
 pub mod help;
 mod hltb;
 pub mod import;
+pub mod install_options;
+pub mod install_picker;
+pub mod install_queue;
 pub mod inventory;
 pub mod launch;
 pub mod launch_targets;
@@ -109,11 +109,7 @@ pub fn prompt_overlay(label: &str, value: &str, status: &str, title: &str) -> Pa
 /// branches/dlc/proton/running/friends/market-search lists; callers still own the
 /// per-list name styling, since that varies (online/installed/focus-aware).
 pub fn selection_marker(selected: bool) -> &'static str {
-    if selected {
-        "▶ "
-    } else {
-        "  "
-    }
+    if selected { "▶ " } else { "  " }
 }
 
 /// The single dimmed placeholder row a list overlay shows when it has no

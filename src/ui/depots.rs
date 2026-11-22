@@ -16,7 +16,10 @@ use crate::ui::paneled_paragraph;
 /// depots." line when empty.
 pub fn depots(browser: &Browser) -> Paragraph<'static> {
     let lines: Vec<Spans<'static>> = if browser.depots.is_empty() {
-        vec![Spans::from(Span::styled("No depots.".to_string(), theme::dim()))]
+        vec![Spans::from(Span::styled(
+            "No depots.".to_string(),
+            theme::dim(),
+        ))]
     } else {
         browser
             .depots

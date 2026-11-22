@@ -5,8 +5,8 @@ use std::error;
 use std::fmt;
 use std::fmt::Debug;
 use std::io;
-use std::sync::mpsc::SendError;
 use std::sync::PoisonError;
+use std::sync::mpsc::SendError;
 
 #[derive(Debug)]
 pub enum STError {

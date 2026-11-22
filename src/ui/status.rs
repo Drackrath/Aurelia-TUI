@@ -31,11 +31,22 @@ const HINTS: [(&str, &str); 9] = [
 /// Where the version badge fits in a footer `area`: the bottom row when the
 /// key hints leave room for it, else the top (status) row.
 pub fn version_badge_area(area: Rect, version: Option<&str>) -> Rect {
-    let hints: usize = HINTS.iter().map(|(k, d)| k.chars().count() + d.chars().count()).sum();
+    let hints: usize = HINTS
+        .iter()
+        .map(|(k, d)| k.chars().count() + d.chars().count())
+        .sum();
     let badge = version_badge_text(version).0.chars().count();
     let bottom = area.height > 1 && area.width as usize >= hints + badge + 2;
-    let y = if bottom { area.y + area.height - 1 } else { area.y };
-    Rect { y, height: area.height.min(1), ..area }
+    let y = if bottom {
+        area.y + area.height - 1
+    } else {
+        area.y
+    };
+    Rect {
+        y,
+        height: area.height.min(1),
+        ..area
+    }
 }
 
 /// The badge text, and whether it should be drawn as a warning.

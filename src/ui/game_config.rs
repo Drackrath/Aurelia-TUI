@@ -14,7 +14,9 @@ use crate::ui::{paneled_paragraph, selection_marker};
 /// Launch script) show the current value; the highlighted row gets a selection bar. A status/hint line closes it.
 pub fn game_config(browser: &Browser) -> Paragraph<'static> {
     let cfg = browser.game_config.as_ref();
-    let runner = cfg.map(|c| c.runner.clone()).unwrap_or_else(|| "auto".to_string());
+    let runner = cfg
+        .map(|c| c.runner.clone())
+        .unwrap_or_else(|| "auto".to_string());
     let proton = cfg
         .and_then(|c| c.forced_proton_version.clone())
         .unwrap_or_else(|| "(default)".to_string());

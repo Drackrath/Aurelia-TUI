@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use tui::style::Style;
 use tui::widgets::ListState;
 
@@ -19,8 +19,8 @@ use crate::interface::game_status::GameStatus;
 use crate::theme;
 use crate::util::error::STError;
 
-pub mod install_queue;
 pub mod install_options;
+pub mod install_queue;
 mod library_info;
 mod play_settings;
 pub use play_settings::{PLAY_ROWS, ROW_LAUNCH_OPTIONS, ROW_PREFIX};
@@ -142,7 +142,10 @@ pub fn badge(game: &Game) -> Badge {
             style: Style::default().fg(theme::WARN),
             note,
         }
-    } else if state.contains("downloading") || state.contains("processing") || state.contains("verifying") {
+    } else if state.contains("downloading")
+        || state.contains("processing")
+        || state.contains("verifying")
+    {
         // Pull a percentage out of e.g. "downloading 42.0%" if present.
         let note = state
             .split_whitespace()
@@ -165,7 +168,11 @@ pub fn badge(game: &Game) -> Badge {
             style: Style::default().fg(theme::WARN),
             note: Some("update".to_string()),
         }
-    } else if game.installed || state == "installed" || state.contains("Installed") || state.contains("ran") {
+    } else if game.installed
+        || state == "installed"
+        || state.contains("Installed")
+        || state.contains("ran")
+    {
         Badge {
             glyph: "●",
             style: Style::default().fg(theme::ONLINE),
@@ -1138,9 +1145,7 @@ impl Browser {
     pub fn refresh_proton(&mut self) {
         if let Ok(protons) = aurelia::proton_list() {
             self.protons = protons;
-            self.proton_index = self
-                .proton_index
-                .min(self.protons.len().saturating_sub(1));
+            self.proton_index = self.proton_index.min(self.protons.len().saturating_sub(1));
         }
     }
 
@@ -1928,21 +1933,17 @@ impl Browser {
         }
 
         // Adopt a finished price lookup (does not disturb the results list).
-        let price = self
-            .market_price_cell
-            .lock()
-            .ok()
-            .map(|mut slot| {
-                let done = !matches!(
-                    &*slot,
-                    aurelia::MarketPriceState::Idle | aurelia::MarketPriceState::Loading
-                );
-                if done {
-                    std::mem::replace(&mut *slot, aurelia::MarketPriceState::Idle)
-                } else {
-                    aurelia::MarketPriceState::Loading
-                }
-            });
+        let price = self.market_price_cell.lock().ok().map(|mut slot| {
+            let done = !matches!(
+                &*slot,
+                aurelia::MarketPriceState::Idle | aurelia::MarketPriceState::Loading
+            );
+            if done {
+                std::mem::replace(&mut *slot, aurelia::MarketPriceState::Idle)
+            } else {
+                aurelia::MarketPriceState::Loading
+            }
+        });
         match price {
             Some(aurelia::MarketPriceState::Ready(p)) => {
                 self.market_search_status = match p.summary() {
@@ -2092,8 +2093,7 @@ impl Browser {
         self.workshop_searching = true;
         self.workshop_status.clear();
         thread::spawn(move || {
-            let result =
-                aurelia::workshop_browse(app_id, &query).map_err(|e| e.to_string());
+            let result = aurelia::workshop_browse(app_id, &query).map_err(|e| e.to_string());
             if let Ok(mut guard) = slot.lock() {
                 *guard = Some((generation, result));
             }
@@ -2512,20 +2512,25 @@ impl Browser {
             .iter()
             .filter(|g| Browser::passes(g, self.filter, &config))
             .filter(|g| {
-                self.query.is_empty()
-                    || matcher.fuzzy_match(g.raw_name(), &self.query).is_some()
+                self.query.is_empty() || matcher.fuzzy_match(g.raw_name(), &self.query).is_some()
             })
             .collect();
 
         match self.sort {
             Sort::Name => {
-                games.sort_by(|a, b| a.raw_name().to_lowercase().cmp(&b.raw_name().to_lowercase()));
+                games.sort_by(|a, b| {
+                    a.raw_name()
+                        .to_lowercase()
+                        .cmp(&b.raw_name().to_lowercase())
+                });
             }
             Sort::Installed => {
                 games.sort_by(|a, b| {
-                    b.installed
-                        .cmp(&a.installed)
-                        .then_with(|| a.raw_name().to_lowercase().cmp(&b.raw_name().to_lowercase()))
+                    b.installed.cmp(&a.installed).then_with(|| {
+                        a.raw_name()
+                            .to_lowercase()
+                            .cmp(&b.raw_name().to_lowercase())
+                    })
                 });
             }
             Sort::Playtime => library_info::sort_by_playtime(&mut games),
@@ -2626,10 +2631,7 @@ impl Browser {
     /// The library a tracked install of `app_id` was started in, for resuming a
     /// paused download into the same place.
     pub fn install_library_for(&self, app_id: i32) -> Option<String> {
-        self.install_library_choice
-            .get(&app_id)
-            .cloned()
-            .flatten()
+        self.install_library_choice.get(&app_id).cloned().flatten()
     }
 
     /// How the selected game's UI-tracked install currently sits. Reads the live
@@ -3004,63 +3006,238 @@ impl Browser {
 
         const PLAY: &str = "Play & Install";
         if installing {
-            rows.push(ActionRow { action: Action::PauseResume, category: PLAY, label: "Pause / resume install", key: "Space" });
-            rows.push(ActionRow { action: Action::CancelInstall, category: PLAY, label: "Cancel install", key: "c" });
+            rows.push(ActionRow {
+                action: Action::PauseResume,
+                category: PLAY,
+                label: "Pause / resume install",
+                key: "Space",
+            });
+            rows.push(ActionRow {
+                action: Action::CancelInstall,
+                category: PLAY,
+                label: "Cancel install",
+                key: "c",
+            });
         }
         if installed {
-            rows.push(ActionRow { action: Action::Play, category: PLAY, label: "Play", key: "" });
-            rows.push(ActionRow { action: Action::PlayAs, category: PLAY, label: "Play as… (launch target)", key: "" });
-            rows.push(ActionRow { action: Action::PlaySkipShaders, category: PLAY, label: "Play without shader processing", key: "" });
-            rows.push(ActionRow { action: Action::Update, category: PLAY, label: "Update", key: "U" });
-            rows.push(ActionRow { action: Action::Verify, category: PLAY, label: "Verify files", key: "v" });
-            rows.push(ActionRow { action: Action::Uninstall, category: PLAY, label: "Uninstall", key: "x" });
+            rows.push(ActionRow {
+                action: Action::Play,
+                category: PLAY,
+                label: "Play",
+                key: "",
+            });
+            rows.push(ActionRow {
+                action: Action::PlayAs,
+                category: PLAY,
+                label: "Play as… (launch target)",
+                key: "",
+            });
+            rows.push(ActionRow {
+                action: Action::PlaySkipShaders,
+                category: PLAY,
+                label: "Play without shader processing",
+                key: "",
+            });
+            rows.push(ActionRow {
+                action: Action::Update,
+                category: PLAY,
+                label: "Update",
+                key: "U",
+            });
+            rows.push(ActionRow {
+                action: Action::Verify,
+                category: PLAY,
+                label: "Verify files",
+                key: "v",
+            });
+            rows.push(ActionRow {
+                action: Action::Uninstall,
+                category: PLAY,
+                label: "Uninstall",
+                key: "x",
+            });
         } else if !installing {
-            rows.push(ActionRow { action: Action::Install, category: PLAY, label: "Install", key: "d" });
+            rows.push(ActionRow {
+                action: Action::Install,
+                category: PLAY,
+                label: "Install",
+                key: "d",
+            });
         }
-        rows.push(ActionRow { action: Action::InstallQueue, category: PLAY, label: "Install queue", key: "B" });
+        rows.push(ActionRow {
+            action: Action::InstallQueue,
+            category: PLAY,
+            label: "Install queue",
+            key: "B",
+        });
 
         const VERS: &str = "Versions";
-        rows.push(ActionRow { action: Action::Versions, category: VERS, label: "Versions & pinning", key: "V" });
-        rows.push(ActionRow { action: Action::Branches, category: VERS, label: "Beta branches", key: "b" });
+        rows.push(ActionRow {
+            action: Action::Versions,
+            category: VERS,
+            label: "Versions & pinning",
+            key: "V",
+        });
+        rows.push(ActionRow {
+            action: Action::Branches,
+            category: VERS,
+            label: "Beta branches",
+            key: "b",
+        });
         if installed && !installing {
-            rows.push(ActionRow { action: Action::ChangeLanguage, category: VERS, label: "Change language", key: "" });
+            rows.push(ActionRow {
+                action: Action::ChangeLanguage,
+                category: VERS,
+                label: "Change language",
+                key: "",
+            });
         }
 
         const RT: &str = "Runtimes & config";
-        rows.push(ActionRow { action: Action::GameSettings, category: RT, label: "Game settings", key: "" });
-        rows.push(ActionRow { action: Action::Proton, category: RT, label: "Proton runtimes", key: "P" });
-        rows.push(ActionRow { action: Action::Engine, category: RT, label: "Runtime plugins (umu / lux)", key: "E" });
-        rows.push(ActionRow { action: Action::LaunchOptions, category: RT, label: "Launch options", key: "L" });
+        rows.push(ActionRow {
+            action: Action::GameSettings,
+            category: RT,
+            label: "Game settings",
+            key: "",
+        });
+        rows.push(ActionRow {
+            action: Action::Proton,
+            category: RT,
+            label: "Proton runtimes",
+            key: "P",
+        });
+        rows.push(ActionRow {
+            action: Action::Engine,
+            category: RT,
+            label: "Runtime plugins (umu / lux)",
+            key: "E",
+        });
+        rows.push(ActionRow {
+            action: Action::LaunchOptions,
+            category: RT,
+            label: "Launch options",
+            key: "L",
+        });
         if installed {
-            rows.push(ActionRow { action: Action::ProcessShaders, category: RT, label: "Process Vulkan shaders", key: "" });
-            rows.push(ActionRow { action: Action::ProcessShadersForce, category: RT, label: "Process Vulkan shaders (force)", key: "" });
+            rows.push(ActionRow {
+                action: Action::ProcessShaders,
+                category: RT,
+                label: "Process Vulkan shaders",
+                key: "",
+            });
+            rows.push(ActionRow {
+                action: Action::ProcessShadersForce,
+                category: RT,
+                label: "Process Vulkan shaders (force)",
+                key: "",
+            });
         }
 
         const CONTENT: &str = "Content";
         if Config::cached().hltb_enabled {
-            rows.push(ActionRow { action: Action::Hltb, category: CONTENT, label: "HowLongToBeat page", key: ",ct" });
+            rows.push(ActionRow {
+                action: Action::Hltb,
+                category: CONTENT,
+                label: "HowLongToBeat page",
+                key: ",ct",
+            });
         }
-        rows.push(ActionRow { action: Action::Dlc, category: CONTENT, label: "DLC", key: "D" });
-        rows.push(ActionRow { action: Action::Workshop, category: CONTENT, label: "Workshop", key: "W" });
-        rows.push(ActionRow { action: Action::Cloud, category: CONTENT, label: "Cloud saves", key: "C" });
-        rows.push(ActionRow { action: Action::Achievements, category: CONTENT, label: "Achievements", key: "a" });
-        rows.push(ActionRow { action: Action::Depots, category: CONTENT, label: "Depots", key: "o" });
-        rows.push(ActionRow { action: Action::Inventory, category: CONTENT, label: "Inventory", key: "I" });
+        rows.push(ActionRow {
+            action: Action::Dlc,
+            category: CONTENT,
+            label: "DLC",
+            key: "D",
+        });
+        rows.push(ActionRow {
+            action: Action::Workshop,
+            category: CONTENT,
+            label: "Workshop",
+            key: "W",
+        });
+        rows.push(ActionRow {
+            action: Action::Cloud,
+            category: CONTENT,
+            label: "Cloud saves",
+            key: "C",
+        });
+        rows.push(ActionRow {
+            action: Action::Achievements,
+            category: CONTENT,
+            label: "Achievements",
+            key: "a",
+        });
+        rows.push(ActionRow {
+            action: Action::Depots,
+            category: CONTENT,
+            label: "Depots",
+            key: "o",
+        });
+        rows.push(ActionRow {
+            action: Action::Inventory,
+            category: CONTENT,
+            label: "Inventory",
+            key: "I",
+        });
 
         const LIB: &str = "Library";
         if installed {
-            rows.push(ActionRow { action: Action::Move, category: LIB, label: "Move install", key: "M" });
-            rows.push(ActionRow { action: Action::Relink, category: LIB, label: "Relink install", key: "K" });
+            rows.push(ActionRow {
+                action: Action::Move,
+                category: LIB,
+                label: "Move install",
+                key: "M",
+            });
+            rows.push(ActionRow {
+                action: Action::Relink,
+                category: LIB,
+                label: "Relink install",
+                key: "K",
+            });
         }
-        rows.push(ActionRow { action: Action::Import, category: LIB, label: "Import install", key: "N" });
-        rows.push(ActionRow { action: Action::Collections, category: LIB, label: "Collections", key: "O" });
-        rows.push(ActionRow { action: Action::Favourite, category: LIB, label: "Toggle favourite", key: "f" });
-        rows.push(ActionRow { action: Action::Hide, category: LIB, label: "Hide game", key: "H" });
-        rows.push(ActionRow { action: Action::SteamDb, category: LIB, label: "Open on SteamDB", key: "" });
+        rows.push(ActionRow {
+            action: Action::Import,
+            category: LIB,
+            label: "Import install",
+            key: "N",
+        });
+        rows.push(ActionRow {
+            action: Action::Collections,
+            category: LIB,
+            label: "Collections",
+            key: "O",
+        });
+        rows.push(ActionRow {
+            action: Action::Favourite,
+            category: LIB,
+            label: "Toggle favourite",
+            key: "f",
+        });
+        rows.push(ActionRow {
+            action: Action::Hide,
+            category: LIB,
+            label: "Hide game",
+            key: "H",
+        });
+        rows.push(ActionRow {
+            action: Action::SteamDb,
+            category: LIB,
+            label: "Open on SteamDB",
+            key: "",
+        });
 
         const TOOLS: &str = "Aurelia";
-        rows.push(ActionRow { action: Action::AureliaLog, category: TOOLS, label: "Aurelia log", key: "" });
-        rows.push(ActionRow { action: Action::Reconnect, category: TOOLS, label: "Reconnect Steam session", key: "" });
+        rows.push(ActionRow {
+            action: Action::AureliaLog,
+            category: TOOLS,
+            label: "Aurelia log",
+            key: "",
+        });
+        rows.push(ActionRow {
+            action: Action::Reconnect,
+            category: TOOLS,
+            label: "Reconnect Steam session",
+            key: "",
+        });
 
         rows
     }
@@ -3117,7 +3294,9 @@ impl Browser {
 
     /// The action currently highlighted in the (filtered) menu.
     pub fn selected_action(&self) -> Option<Action> {
-        self.filtered_actions().get(self.actions_index).map(|r| r.action)
+        self.filtered_actions()
+            .get(self.actions_index)
+            .map(|r| r.action)
     }
 
     /// Append to the Actions menu filter (typing narrows the list).
@@ -3189,13 +3368,19 @@ impl Browser {
 
     /// Whether the game is currently pinned (so its updates are held).
     pub fn is_pinned(&self) -> bool {
-        self.versions_available.as_ref().map(|a| a.pinned).unwrap_or(false)
+        self.versions_available
+            .as_ref()
+            .map(|a| a.pinned)
+            .unwrap_or(false)
     }
 
     /// Pin the game at its currently-installed depot versions (`aurelia pin`).
     pub fn pin_current(&mut self) {
         self.versions_status = match aurelia::pin(self.versions_app_id) {
-            Ok(p) => format!("Pinned {} depot(s) at the installed version.", p.manifests.len()),
+            Ok(p) => format!(
+                "Pinned {} depot(s) at the installed version.",
+                p.manifests.len()
+            ),
             Err(e) => format!("Pin failed: {e}"),
         };
         self.refresh_available();
@@ -3329,7 +3514,12 @@ impl Browser {
         self.game_script = aurelia::scripts_show(app_id).ok();
         self.game_cloud_sync = crate::interface::cloud_sync::game(app_id).ok();
         self.game_config_protons = aurelia::proton_list()
-            .map(|v| v.into_iter().filter(|p| p.installed).map(|p| p.name).collect())
+            .map(|v| {
+                v.into_iter()
+                    .filter(|p| p.installed)
+                    .map(|p| p.name)
+                    .collect()
+            })
             .unwrap_or_default();
         self.game_config_app_id = app_id;
         self.game_config_index = 0;
@@ -3411,7 +3601,9 @@ impl Browser {
                         },
                     };
                     match next {
-                        Some(i) => aurelia::config_game_set_proton(id, &self.game_config_protons[i]),
+                        Some(i) => {
+                            aurelia::config_game_set_proton(id, &self.game_config_protons[i])
+                        }
                         None => aurelia::config_game_clear_proton(id),
                     }
                 };
@@ -3462,11 +3654,11 @@ impl Browser {
                     Some("PerGame") => "shared",
                     _ => "per-game",
                 };
-                self.game_config_status =
-                    match aurelia::config_game_set_steam_prefix_mode(id, next) {
-                        Ok(()) => format!("Steam prefix set to {next}."),
-                        Err(e) => format!("Failed: {e}"),
-                    };
+                self.game_config_status = match aurelia::config_game_set_steam_prefix_mode(id, next)
+                {
+                    Ok(()) => format!("Steam prefix set to {next}."),
+                    Err(e) => format!("Failed: {e}"),
+                };
             }
             // Steam integration (TUI config).
             6 => self.toggle_steam_integration(),
@@ -3863,10 +4055,16 @@ mod install_tests {
         b.poll_game_refresh();
 
         let updated = b.items.iter().find(|x| x.id == 99).unwrap();
-        assert!(updated.installed, "installed flag adopted from refreshed entry");
+        assert!(
+            updated.installed,
+            "installed flag adopted from refreshed entry"
+        );
         // The transient status was dropped, so the badge now derives from the
         // installed flag (a steady "installed" state, not "Installed!").
-        assert_eq!(updated.get_status().map(|s| s.state).as_deref(), Some("installed"));
+        assert_eq!(
+            updated.get_status().map(|s| s.state).as_deref(),
+            Some("installed")
+        );
     }
 
     #[test]

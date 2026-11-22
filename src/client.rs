@@ -18,7 +18,7 @@ use std::fs;
 use std::io::Write;
 use std::process::{Child, ChildStdin};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -673,7 +673,7 @@ impl Default for Client {
 
 #[cfg(test)]
 mod tests {
-    use crate::client::{run_qr_attempt, Client, State};
+    use crate::client::{Client, State, run_qr_attempt};
     use crate::util::error::STError;
     use std::io::Read;
     use std::process::{Command, Stdio};
@@ -747,7 +747,12 @@ mod tests {
 
     fn output(mut child: std::process::Child) -> String {
         let mut out = String::new();
-        child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut out)
+            .unwrap();
         child.wait().unwrap();
         out
     }

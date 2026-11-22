@@ -44,13 +44,19 @@ pub fn launch_targets(browser: &Browser) -> Paragraph<'static> {
         }
         if !target.available {
             let missing = target.missing.as_deref().unwrap_or("unavailable");
-            spans.push(Span::styled(format!("  (missing: {missing})"), theme::dim()));
+            spans.push(Span::styled(
+                format!("  (missing: {missing})"),
+                theme::dim(),
+            ));
         }
         lines.push(Spans::from(spans));
     }
 
     lines.push(Spans::from(""));
-    lines.push(Spans::from(Span::styled(play_uses(browser), theme::label())));
+    lines.push(Spans::from(Span::styled(
+        play_uses(browser),
+        theme::label(),
+    )));
     if let Some(progress) = browser.launch.runtime.progress_text() {
         lines.push(Spans::from(Span::styled(progress, theme::accent())));
     }

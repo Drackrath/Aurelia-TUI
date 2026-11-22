@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread;
 use std::time::Duration;
@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::util::log::log;
 
 use crossterm::event::{
-    read, Event as CrossEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+    Event as CrossEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind, read,
 };
 
 pub enum Event<I> {
@@ -84,8 +84,7 @@ impl Events {
                             ..
                         }) => {
                             // Let CTRL-c just be q
-                            if kc == KeyCode::Char('c')
-                                && modifiers.contains(KeyModifiers::CONTROL)
+                            if kc == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL)
                             {
                                 Some(KeyCode::Char('q'))
                             } else {
@@ -115,13 +114,15 @@ impl Events {
         };
         let _tick_handle = {
             let stop = stop.clone();
-            thread::spawn(move || loop {
-                if tx.send(Event::Tick).is_err() {
-                    break;
-                }
-                thread::sleep(config.tick_rate);
-                if stop.load(Ordering::Relaxed) {
-                    return;
+            thread::spawn(move || {
+                loop {
+                    if tx.send(Event::Tick).is_err() {
+                        break;
+                    }
+                    thread::sleep(config.tick_rate);
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
                 }
             })
         };

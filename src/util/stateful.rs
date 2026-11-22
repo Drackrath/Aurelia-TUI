@@ -1,5 +1,5 @@
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use tui::widgets::ListState;
 
 pub trait Named {
@@ -135,10 +135,8 @@ mod tests {
         // Select the last row, then narrow the live query so `activated()`
         // shrinks below the stored index. `selected()` must yield `None`
         // instead of panicking (the old `.expect()` would have aborted here).
-        let mut list = StatefulList::with_items(vec![
-            Item("alpha".to_string()),
-            Item("beta".to_string()),
-        ]);
+        let mut list =
+            StatefulList::with_items(vec![Item("alpha".to_string()), Item("beta".to_string())]);
         list.state.select(Some(1));
         list.query = "alpha".to_string(); // now only one item is activated
         assert!(list.selected().is_none());
@@ -148,6 +146,9 @@ mod tests {
     fn selected_in_range_returns_item() {
         let mut list = StatefulList::with_items(vec![Item("alpha".to_string())]);
         list.state.select(Some(0));
-        assert_eq!(list.selected().map(|i| i.0.clone()), Some("alpha".to_string()));
+        assert_eq!(
+            list.selected().map(|i| i.0.clone()),
+            Some("alpha".to_string())
+        );
     }
 }

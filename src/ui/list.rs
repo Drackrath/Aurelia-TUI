@@ -3,7 +3,7 @@
 use tui::text::{Span, Spans};
 use tui::widgets::{List, ListItem};
 
-use crate::browse::{badge, Browser};
+use crate::browse::{Browser, badge};
 use crate::theme;
 use crate::util::stateful::Named;
 
@@ -60,8 +60,7 @@ pub fn list(browser: &Browser, width: u16, marquee_tick: usize) -> List<'static>
                     } else {
                         clip(&raw, name_budget)
                     };
-                    let pad =
-                        content_w.saturating_sub(GLYPH_W + name.chars().count() + pct_w);
+                    let pad = content_w.saturating_sub(GLYPH_W + name.chars().count() + pct_w);
                     return ListItem::new(Spans::from(vec![
                         Span::styled(b.glyph.to_string(), b.style),
                         Span::raw(" ".to_string()),
@@ -81,7 +80,10 @@ pub fn list(browser: &Browser, width: u16, marquee_tick: usize) -> List<'static>
                 .flatten()
                 .map(|n| n.chars().count() + 2)
                 .sum::<usize>()
-                + cloud.as_ref().map(|m| m.content.chars().count()).unwrap_or(0);
+                + cloud
+                    .as_ref()
+                    .map(|m| m.content.chars().count())
+                    .unwrap_or(0);
             // Only the hovered (highlighted) row marquees an over-long name; the
             // rest render normally and let the `List` clip them at the column
             // edge, keeping the list calm.
@@ -174,7 +176,11 @@ mod tests {
         let budget = 6;
 
         let s0 = marquee(name, budget, 0);
-        assert_eq!(s0.chars().count(), budget, "window is exactly the column wide");
+        assert_eq!(
+            s0.chars().count(),
+            budget,
+            "window is exactly the column wide"
+        );
         assert_eq!(s0, "Counte");
 
         // Each tick shifts the window one column to the left.

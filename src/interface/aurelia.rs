@@ -35,7 +35,11 @@ pub fn bin() -> String {
         return chosen;
     }
 
-    let exe = if cfg!(windows) { "aurelia.exe" } else { "aurelia" };
+    let exe = if cfg!(windows) {
+        "aurelia.exe"
+    } else {
+        "aurelia"
+    };
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
     // .../Aurelia-TUI/target/<profile>/aurelia-tui[.exe] -> workspace parent dir.
     if let Ok(cur) = std::env::current_exe() {
@@ -80,7 +84,11 @@ pub fn version() -> Option<String> {
 /// Whether `version` (e.g. `0.3.1`, `0.3.0-2`) is at least [`MIN_VERSION`].
 /// An unparsable version counts as unsupported.
 pub fn version_supported(version: &str) -> bool {
-    let core = version.trim_start_matches('v').split('-').next().unwrap_or("");
+    let core = version
+        .trim_start_matches('v')
+        .split('-')
+        .next()
+        .unwrap_or("");
     let parts: Vec<u32> = core.split('.').filter_map(|p| p.parse().ok()).collect();
     match parts.as_slice() {
         [major, minor, patch] => (*major, *minor, *patch) >= MIN_VERSION,
@@ -393,7 +401,12 @@ impl FriendSearchJson {
 pub struct ChatMessageJson {
     /// SteamID64 of the sender. The CLI emits it as a number, but accept a
     /// string form too for robustness.
-    #[serde(default, alias = "steamid", alias = "from", deserialize_with = "de_steam_id")]
+    #[serde(
+        default,
+        alias = "steamid",
+        alias = "from",
+        deserialize_with = "de_steam_id"
+    )]
     pub sender: u64,
     /// Whether the logged-in user sent this message.
     #[serde(default, alias = "outgoing", alias = "sent")]
@@ -949,8 +962,8 @@ pub fn market_search_async(
 /// into `cell` when it completes. Invoked standalone (`AURELIA_NO_DAEMON`) like
 /// the other threaded calls.
 pub fn market_price_async(app_id: u32, name: String, cell: Arc<Mutex<MarketPriceState>>) {
-    let result = run_json_standalone(&["market", "price", &app_id.to_string(), &name]).and_then(
-        |value| {
+    let result =
+        run_json_standalone(&["market", "price", &app_id.to_string(), &name]).and_then(|value| {
             // A `null` payload is "no data", not a parse error (deserializing
             // `null` into the struct would fail); treat it as an empty result.
             if value.is_null() {
@@ -958,8 +971,7 @@ pub fn market_price_async(app_id: u32, name: String, cell: Arc<Mutex<MarketPrice
             } else {
                 Ok(serde_json::from_value(value)?)
             }
-        },
-    );
+        });
     if let Ok(mut slot) = cell.lock() {
         *slot = match result {
             Ok(price) => MarketPriceState::Ready(price),
@@ -1229,7 +1241,11 @@ pub fn config_show() -> Result<ConfigJson, STError> {
 /// Set the friends/chat presence the daemon announces
 /// (`aurelia config presence online|offline --json`).
 pub fn set_presence(online: bool) -> Result<(), STError> {
-    run_json(&["config", "presence", if online { "online" } else { "offline" }])?;
+    run_json(&[
+        "config",
+        "presence",
+        if online { "online" } else { "offline" },
+    ])?;
     Ok(())
 }
 
@@ -1716,7 +1732,10 @@ pub fn proton_list() -> Result<Vec<ProtonJson>, STError> {
     // Surface any installed runtime missing from the available list (e.g. an old
     // GE build no longer published) so everything on disk is still shown.
     for inst in &parsed.installed {
-        if !protons.iter().any(|p| p.name.eq_ignore_ascii_case(&inst.name)) {
+        if !protons
+            .iter()
+            .any(|p| p.name.eq_ignore_ascii_case(&inst.name))
+        {
             protons.push(ProtonJson {
                 name: inst.name.clone(),
                 label: "(local)".to_string(),
@@ -1966,13 +1985,9 @@ pub fn login_classic_cancellable(
                 continue;
             };
             match event.event.as_deref() {
-                Some("awaiting_confirmation") => {
-                    set_phase(phase, LoginPhase::AwaitingConfirmation)
-                }
+                Some("awaiting_confirmation") => set_phase(phase, LoginPhase::AwaitingConfirmation),
                 Some("guard_required") => match event.guard_type.as_deref() {
-                    Some("device_confirmation") => {
-                        set_phase(phase, LoginPhase::DeviceConfirmation)
-                    }
+                    Some("device_confirmation") => set_phase(phase, LoginPhase::DeviceConfirmation),
                     Some(kind) => {
                         set_phase(phase, LoginPhase::GuardCode(kind.to_string()));
                         // Block until the UI delivers the code, then feed it to
@@ -3092,12 +3107,7 @@ pub fn config_game_set_launch_script(app_id: i32, path: &str) -> Result<(), STEr
 /// Clear a game's per-game launch script, falling back to the auto-detected one
 /// (`aurelia config game <id> --no-launch-script --json`).
 pub fn config_game_clear_launch_script(app_id: i32) -> Result<(), STError> {
-    run_json(&[
-        "config",
-        "game",
-        &app_id.to_string(),
-        "--no-launch-script",
-    ])?;
+    run_json(&["config", "game", &app_id.to_string(), "--no-launch-script"])?;
     Ok(())
 }
 
@@ -3109,7 +3119,6 @@ pub fn play_with(
     opts: PlayOpts,
     status: Arc<Mutex<Option<GameStatus>>>,
 ) -> crate::interface::launch::PlayOutcome {
-
     let id_str = id.to_string();
     let mut args: Vec<&str> = vec!["play", &id_str];
     if let Some(p) = &opts.proton {

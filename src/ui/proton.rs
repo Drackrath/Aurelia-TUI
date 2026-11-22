@@ -45,7 +45,9 @@ pub fn proton(browser: &Browser) -> List<'static> {
                     spans.push(Span::raw("  ".to_string()));
                     spans.push(Span::styled(
                         "[default]".to_string(),
-                        theme::value().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+                        theme::value()
+                            .fg(theme::ACCENT)
+                            .add_modifier(Modifier::BOLD),
                     ));
                 } else if entry.installed {
                     spans.push(Span::raw("  ".to_string()));

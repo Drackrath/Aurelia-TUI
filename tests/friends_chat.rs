@@ -9,12 +9,14 @@
 //! `cargo test --test friends_chat -- --nocapture` to eyeball the layout.
 
 use aurelia_tui::browse::{Browser, View};
-use aurelia_tui::interface::aurelia::{ChatMessageJson, FriendJson, FriendSearchJson, LibraryGameJson};
+use aurelia_tui::interface::aurelia::{
+    ChatMessageJson, FriendJson, FriendSearchJson, LibraryGameJson,
+};
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::ui;
+use tui::Terminal;
 use tui::backend::TestBackend;
 use tui::layout::{Constraint, Direction, Layout, Rect};
-use tui::Terminal;
 
 fn isolate_config() {
     let dir = std::env::temp_dir().join("aurelia-tui-test-config");
@@ -51,7 +53,11 @@ fn render_rows<F: FnOnce(&mut tui::Frame<TestBackend>)>(w: u16, h: u16, draw: F)
     terminal.draw(|f| draw(f)).unwrap();
     let buf = terminal.backend().buffer().clone();
     (0..h)
-        .map(|y| (0..w).map(|x| buf.get(x, y).symbol.clone()).collect::<String>())
+        .map(|y| {
+            (0..w)
+                .map(|x| buf.get(x, y).symbol.clone())
+                .collect::<String>()
+        })
         .collect()
 }
 
@@ -80,7 +86,10 @@ fn friends_panel_focus_aware_and_highlights() {
     });
     let joined = unfocused.join("\n");
     assert!(joined.contains("Friends (3)"), "shows friend count");
-    assert!(joined.contains("[F] focus"), "calm title hints how to focus");
+    assert!(
+        joined.contains("[F] focus"),
+        "calm title hints how to focus"
+    );
     assert!(joined.contains("Alice"), "lists a friend");
     assert!(joined.contains("Dota 2"), "shows the current game");
     print_shot("Friends (unfocused)", &unfocused);
@@ -92,8 +101,14 @@ fn friends_panel_focus_aware_and_highlights() {
     });
     let joined = focused.join("\n");
     assert!(joined.contains("chat"), "focused title advertises chat");
-    assert!(joined.contains("window"), "focused title advertises [t] window");
-    assert!(joined.contains("\u{25b6}"), "highlighted row shows the ▶ marker");
+    assert!(
+        joined.contains("window"),
+        "focused title advertises [t] window"
+    );
+    assert!(
+        joined.contains("\u{25b6}"),
+        "highlighted row shows the ▶ marker"
+    );
     print_shot("Friends (focused)", &focused);
 }
 
@@ -114,7 +129,10 @@ fn friends_whole_list_scrolls_to_keep_highlight_visible() {
     });
     let joined = rows.join("\n");
     assert!(joined.contains("Friend7"), "highlighted friend is visible");
-    assert!(!joined.contains("Friend0"), "early friends scrolled off the top");
+    assert!(
+        !joined.contains("Friend0"),
+        "early friends scrolled off the top"
+    );
     print_shot("Friends (scrolled to #7)", &rows);
 }
 
@@ -124,10 +142,7 @@ fn chat_bottom_anchored_with_per_side_alignment() {
     let mut b = Browser::new(vec![]);
     b.chat_partner = "Alice".to_string();
     b.chat_input = "typing...".to_string();
-    b.chat_messages = vec![
-        msg("hello there", false),
-        msg("hi yourself", true),
-    ];
+    b.chat_messages = vec![msg("hello there", false), msg("hi yourself", true)];
 
     let w = 50u16;
     let h = 14u16;
@@ -136,11 +151,20 @@ fn chat_bottom_anchored_with_per_side_alignment() {
     });
     print_shot("Chat", &rows);
 
-    let other_row = rows.iter().position(|r| r.contains("hello there")).expect("partner msg");
-    let own_row = rows.iter().position(|r| r.contains("hi yourself")).expect("own msg");
+    let other_row = rows
+        .iter()
+        .position(|r| r.contains("hello there"))
+        .expect("partner msg");
+    let own_row = rows
+        .iter()
+        .position(|r| r.contains("hi yourself"))
+        .expect("own msg");
 
     // Newest (own) message sits BELOW the earlier partner message.
-    assert!(own_row > other_row, "newest message is anchored lower (bottom)");
+    assert!(
+        own_row > other_row,
+        "newest message is anchored lower (bottom)"
+    );
 
     // Partner message LEFT-aligned, own message RIGHT-aligned: the own text must
     // start in a much later column than the partner text.
@@ -152,12 +176,21 @@ fn chat_bottom_anchored_with_per_side_alignment() {
     );
 
     // Both messages hug the bottom: they are in the lower half of the panel.
-    assert!(other_row >= (h as usize) / 2, "messages bottom-anchored, not at top");
+    assert!(
+        other_row >= (h as usize) / 2,
+        "messages bottom-anchored, not at top"
+    );
 
     // Composer present: a separator row and the input line with the caret.
     let joined = rows.join("\n");
-    assert!(joined.contains("typing..."), "composer shows the in-progress input");
-    assert!(joined.contains('\u{2500}'), "a separator divides history from input");
+    assert!(
+        joined.contains("typing..."),
+        "composer shows the in-progress input"
+    );
+    assert!(
+        joined.contains('\u{2500}'),
+        "a separator divides history from input"
+    );
     assert!(joined.contains("me:"), "own messages are labelled");
     assert!(joined.contains("Alice:"), "partner messages are labelled");
 }
@@ -198,7 +231,12 @@ fn right_pane_splits_detail_over_friends() {
             .split(right);
         let selected = b.selected();
         f.render_widget(
-            ui::detail::detail(selected.as_ref(), false, 40, split[0].height.saturating_sub(2)),
+            ui::detail::detail(
+                selected.as_ref(),
+                false,
+                40,
+                split[0].height.saturating_sub(2),
+            ),
             split[0],
         );
         let fr_rows = split[1].height.saturating_sub(2) as usize;
@@ -206,10 +244,19 @@ fn right_pane_splits_detail_over_friends() {
     });
     print_shot("Right pane (detail over friends)", &rows);
 
-    let detail_row = rows.iter().position(|r| r.contains("Detail")).expect("detail panel");
-    let friends_row = rows.iter().position(|r| r.contains("Friends")).expect("friends panel");
+    let detail_row = rows
+        .iter()
+        .position(|r| r.contains("Detail"))
+        .expect("detail panel");
+    let friends_row = rows
+        .iter()
+        .position(|r| r.contains("Friends"))
+        .expect("friends panel");
     assert!(detail_row < friends_row, "Detail sits above Friends");
-    assert!(rows.join("\n").contains("Alice"), "friend listed in the panel");
+    assert!(
+        rows.join("\n").contains("Alice"),
+        "friend listed in the panel"
+    );
 }
 
 #[test]
@@ -221,14 +268,26 @@ fn friend_add_overlay_shows_input_and_resolved_preview() {
     b.show_friend_add = true;
     b.friend_add_query = "gabelogannewell".to_string();
     let rows = render_rows(70, 10, |f| {
-        f.render_widget(ui::friend_add::friend_add_overlay(&b), Rect::new(0, 0, 70, 10));
+        f.render_widget(
+            ui::friend_add::friend_add_overlay(&b),
+            Rect::new(0, 0, 70, 10),
+        );
     });
     let joined = rows.join("\n");
     assert!(joined.contains("Add friend"), "overlay titled");
-    assert!(joined.contains("vanity"), "label names the accepted reference forms");
+    assert!(
+        joined.contains("vanity"),
+        "label names the accepted reference forms"
+    );
     assert!(joined.contains("gabelogannewell"), "shows the typed query");
-    assert!(joined.contains("[Enter] search"), "title hints the search key");
-    assert!(joined.contains("[a] send request"), "title hints the add key");
+    assert!(
+        joined.contains("[Enter] search"),
+        "title hints the search key"
+    );
+    assert!(
+        joined.contains("[a] send request"),
+        "title hints the add key"
+    );
     print_shot("Add friend (input)", &rows);
 
     // After a successful `friends search`, a resolved-account preview appears.
@@ -241,13 +300,22 @@ fn friend_add_overlay_shows_input_and_resolved_preview() {
         *status = "Found Rabscuttle".to_string();
     }
     let rows = render_rows(70, 12, |f| {
-        f.render_widget(ui::friend_add::friend_add_overlay(&b), Rect::new(0, 0, 70, 12));
+        f.render_widget(
+            ui::friend_add::friend_add_overlay(&b),
+            Rect::new(0, 0, 70, 12),
+        );
     });
     let joined = rows.join("\n");
     assert!(joined.contains("Resolved:"), "resolved preview present");
     assert!(joined.contains("Rabscuttle"), "preview names the account");
-    assert!(joined.contains("76561197960287930"), "preview shows the SteamID");
-    assert!(joined.contains("send the friend request"), "preview hints the confirm key");
+    assert!(
+        joined.contains("76561197960287930"),
+        "preview shows the SteamID"
+    );
+    assert!(
+        joined.contains("send the friend request"),
+        "preview hints the confirm key"
+    );
     print_shot("Add friend (resolved)", &rows);
 }
 
@@ -257,7 +325,9 @@ fn chat_overflow_keeps_newest() {
     let mut b = Browser::new(vec![]);
     b.chat_partner = "Alice".to_string();
     // More messages than rows: oldest must be dropped, newest kept.
-    b.chat_messages = (0..20).map(|i| msg(&format!("msg{i}"), i % 2 == 0)).collect();
+    b.chat_messages = (0..20)
+        .map(|i| msg(&format!("msg{i}"), i % 2 == 0))
+        .collect();
 
     let w = 40u16;
     let h = 10u16; // small: forces overflow

@@ -9,7 +9,7 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use tui::layout::{Constraint, Direction, Layout, Rect};
 use tui::style::Style;
 use tui::widgets::{Block, Clear};
-use tui::{backend::CrosstermBackend, Terminal};
+use tui::{Terminal, backend::CrosstermBackend};
 
 use tui_image_rgba_updated::{ColorMode, Image};
 
@@ -25,9 +25,9 @@ use aurelia_tui::client::{Client, State};
 use aurelia_tui::config::Config;
 use aurelia_tui::interface::aurelia::{self, LoginPhase};
 use aurelia_tui::interface::cloud_sync;
-use aurelia_tui::interface::{binary, capabilities};
 use aurelia_tui::interface::play_settings::{self, AntiCheat};
 use aurelia_tui::interface::steam_restart::Relocate;
+use aurelia_tui::interface::{binary, capabilities};
 use aurelia_tui::restart_depots;
 use aurelia_tui::util::stateful::Named;
 
@@ -70,7 +70,7 @@ fn cover_resize(
     tw: u32,
     th: u32,
 ) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
-    use image::imageops::{crop_imm, resize, FilterType};
+    use image::imageops::{FilterType, crop_imm, resize};
     let (sw, sh) = (src.width(), src.height());
     if sw == 0 || sh == 0 || tw == 0 || th == 0 {
         return src.clone();
@@ -752,7 +752,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('l') => {
                                 browser.answer_cloud_conflict(Some(cloud_sync::Resolve::Local))
                             }
-                            KeyCode::Esc | KeyCode::Char('n') => browser.answer_cloud_conflict(None),
+                            KeyCode::Esc | KeyCode::Char('n') => {
+                                browser.answer_cloud_conflict(None)
+                            }
                             _ => {}
                         }
                     } else if browser.restart_depots.wants_key() {
@@ -778,9 +780,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                                     browser.confirm_install = true;
                                                 }
                                             }
-                                            Action::PlayAs => {
-                                                browser.open_launch_targets(game.id)
-                                            }
+                                            Action::PlayAs => browser.open_launch_targets(game.id),
                                             Action::Install => {
                                                 if !browser.open_install_picker(game.id) {
                                                     let control =
@@ -801,7 +801,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                             }
                                             Action::InstallQueue => browser.open_install_queue(),
                                             Action::CancelInstall => {
-                                                if browser.install_phase(&game) != InstallPhase::Idle
+                                                if browser.install_phase(&game)
+                                                    != InstallPhase::Idle
                                                 {
                                                     browser.stop_install(game.id);
                                                 }
@@ -853,9 +854,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                             }
                                             Action::Favourite => {
                                                 if config.favorite_games.contains(&game.id) {
-                                                    config
-                                                        .favorite_games
-                                                        .retain(|&x| x != game.id);
+                                                    config.favorite_games.retain(|&x| x != game.id);
                                                 } else {
                                                     config.favorite_games.push(game.id);
                                                 }
@@ -869,11 +868,12 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                             }
                                             Action::AureliaLog => browser.aurelia_log.open(),
                                             Action::Reconnect => {
-                                                browser.notice = Some(if browser.reconnect.start() {
-                                                    "Reconnecting Steam session...".into()
-                                                } else {
-                                                    "Reconnect already running".into()
-                                                });
+                                                browser.notice =
+                                                    Some(if browser.reconnect.start() {
+                                                        "Reconnecting Steam session...".into()
+                                                    } else {
+                                                        "Reconnect already running".into()
+                                                    });
                                             }
                                             Action::SteamDb => browser.open_steamdb(),
                                             Action::PlaySkipShaders => {
@@ -1145,9 +1145,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         // typed into the query.
                         match input {
                             KeyCode::Esc => browser.close_market_search(),
-                            KeyCode::Char('\n') | KeyCode::Enter => {
-                                browser.submit_market_search()
-                            }
+                            KeyCode::Char('\n') | KeyCode::Enter => browser.submit_market_search(),
                             KeyCode::Down => browser.market_result_next(),
                             KeyCode::Up => browser.market_result_previous(),
                             KeyCode::Backspace => browser.market_query_pop(),
@@ -1188,9 +1186,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 KeyCode::Down => browser.workshop_next(),
                                 KeyCode::Up => browser.workshop_previous(),
-                                KeyCode::Tab => {
-                                    browser.workshop_toggle_subscribe_selected()
-                                }
+                                KeyCode::Tab => browser.workshop_toggle_subscribe_selected(),
                                 KeyCode::F(1) => browser.workshop_rate_selected(true),
                                 KeyCode::F(2) => browser.workshop_rate_selected(false),
                                 KeyCode::F(3) => browser.workshop_open_comments(),
@@ -1207,9 +1203,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Down | KeyCode::Char('j') => {
                                     browser.workshop_scroll_down()
                                 }
-                                KeyCode::Up | KeyCode::Char('k') => {
-                                    browser.workshop_scroll_up()
-                                }
+                                KeyCode::Up | KeyCode::Char('k') => browser.workshop_scroll_up(),
                                 _ => {}
                             }
                         }
@@ -1232,15 +1226,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         // Install-location picker: Up/Down choose a library,
                         // Enter installs the selected game into it, Esc cancels.
                         match input {
-                            KeyCode::Esc | KeyCode::Char('q') => {
-                                browser.close_install_picker()
-                            }
-                            KeyCode::Down | KeyCode::Char('j') => {
-                                browser.install_picker_next()
-                            }
-                            KeyCode::Up | KeyCode::Char('k') => {
-                                browser.install_picker_previous()
-                            }
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_install_picker(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.install_picker_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.install_picker_previous(),
                             KeyCode::Char('p') => browser.install_picker_cycle_platform(),
                             KeyCode::Left | KeyCode::Char('h') => {
                                 browser.install_picker_cycle_language(false)
@@ -1263,14 +1251,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                             .to_string(),
                                     );
                                 } else {
-                                    if let (Some(game), Some(library)) = (
-                                        browser.selected(),
-                                        browser.selected_install_library(),
-                                    ) {
+                                    if let (Some(game), Some(library)) =
+                                        (browser.selected(), browser.selected_install_library())
+                                    {
                                         let opts = browser.install_options.opts();
                                         browser.set_install_opts(game.id, opts);
-                                        let control = browser
-                                            .begin_install(game.id, Some(library.clone()));
+                                        let control =
+                                            browser.begin_install(game.id, Some(library.clone()));
                                         client.install(&game, control, Some(library))?;
                                     }
                                     browser.close_install_picker();
@@ -1514,9 +1501,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         if browser.download_limit.input.is_some() {
                             match input {
                                 KeyCode::Esc => browser.cancel_limit_edit(),
-                                KeyCode::Char('\n') | KeyCode::Enter => {
-                                    browser.commit_limit_edit()
-                                }
+                                KeyCode::Char('\n') | KeyCode::Enter => browser.commit_limit_edit(),
                                 KeyCode::Backspace => browser.limit_input_pop(),
                                 KeyCode::Char(c) => browser.limit_input_push(c),
                                 _ => {}
@@ -1558,9 +1543,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         } else if browser.config_proxy_input.is_some() {
                             match input {
                                 KeyCode::Esc => browser.cancel_proxy_edit(),
-                                KeyCode::Char('\n') | KeyCode::Enter => {
-                                    browser.commit_proxy_edit()
-                                }
+                                KeyCode::Char('\n') | KeyCode::Enter => browser.commit_proxy_edit(),
                                 KeyCode::Backspace => browser.proxy_input_pop(),
                                 KeyCode::Char(c) => browser.proxy_input_push(c),
                                 _ => {}
@@ -1655,11 +1638,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         match input {
                             KeyCode::Char(',') => {
                                 hltb_chord = Some(",");
-                                browser.notice = Some("Completion time: press c, then t (Esc cancels)".into());
+                                browser.notice =
+                                    Some("Completion time: press c, then t (Esc cancels)".into());
                             }
                             KeyCode::Char('c') if hltb_prefix == Some(",") => {
                                 hltb_chord = Some(",c");
-                                browser.notice = Some("Completion time: press t (Esc cancels)".into());
+                                browser.notice =
+                                    Some("Completion time: press t (Esc cancels)".into());
                             }
                             KeyCode::Char('t') if hltb_prefix == Some(",c") => browser.open_hltb(),
                             KeyCode::Char('q') => break,
@@ -2076,7 +2061,42 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
             browser.notice = Some(notice);
         }
 
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install && !browser.show_actions && !browser.show_versions && !browser.show_game_config && !browser.show_launch_targets && !browser.show_collections && !browser.show_engine && browser.language_picker.is_none() && !browser.install_queue.show && !browser.aurelia_log.open {
+        if app.mode == Mode::Browse
+            && !browser.show_help
+            && !browser.show_dlc
+            && !browser.show_account
+            && !browser.show_config
+            && !browser.show_achievements
+            && !browser.show_cloud
+            && !browser.show_branches
+            && !browser.show_depots
+            && !browser.show_chat
+            && !browser.show_inventory
+            && !browser.show_launch
+            && !browser.show_market
+            && !browser.show_market_search
+            && !browser.show_move
+            && !browser.show_relink
+            && !browser.show_import
+            && !browser.show_proton
+            && !browser.show_running
+            && !browser.show_wallet
+            && !browser.show_workshop
+            && !browser.show_friend_add
+            && !browser.confirm_friend_remove
+            && !browser.confirm_uninstall
+            && !browser.show_install_picker
+            && !browser.confirm_install
+            && !browser.show_actions
+            && !browser.show_versions
+            && !browser.show_game_config
+            && !browser.show_launch_targets
+            && !browser.show_collections
+            && !browser.show_engine
+            && browser.language_picker.is_none()
+            && !browser.install_queue.show
+            && !browser.aurelia_log.open
+        {
             let selected = browser.selected();
             let cur_sel = selected.as_ref().map(|g| g.id);
             if cur_sel != artwork_sel_id {
@@ -2158,15 +2178,13 @@ fn chat_entry(steamid: u64, name: String) -> Result<(), Box<dyn std::error::Erro
         })?;
 
         match events.next()? {
-            Event::Input(input) => {
-                match input {
-                    KeyCode::Esc => break,
-                    KeyCode::Char('\n') | KeyCode::Enter => browser.chat_send(),
-                    KeyCode::Backspace => browser.chat_pop(),
-                    KeyCode::Char(c) => browser.chat_push(c),
-                    _ => {}
-                }
-            }
+            Event::Input(input) => match input {
+                KeyCode::Esc => break,
+                KeyCode::Char('\n') | KeyCode::Enter => browser.chat_send(),
+                KeyCode::Backspace => browser.chat_pop(),
+                KeyCode::Char(c) => browser.chat_push(c),
+                _ => {}
+            },
             Event::Tick => {
                 ticks = ticks.wrapping_add(1);
                 if ticks % 12 == 0 {

@@ -365,7 +365,10 @@ fn search_discovery_learns_the_build_id_before_fetching_its_first_match() {
     steps.extend([
         auth(),
         Step::post(results(&[7230])),
-        Step::get("/_next/data/homepage-build/game/7230.json", json_page(game())),
+        Step::get(
+            "/_next/data/homepage-build/game/7230.json",
+            json_page(game()),
+        ),
     ]);
     let server = Server::start(steps);
     let mut provider = Provider::new(&server.base, None).unwrap();

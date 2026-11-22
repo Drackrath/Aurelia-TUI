@@ -25,11 +25,7 @@ fn library_loads_and_maps_to_games() {
     let raw = aurelia::fetch_library().expect("list --json should parse");
     assert!(!raw.is_empty(), "expected a non-empty library");
 
-    let games: Vec<_> = raw
-        .iter()
-        .cloned()
-        .map(game::Game::from_library)
-        .collect();
+    let games: Vec<_> = raw.iter().cloned().map(game::Game::from_library).collect();
     assert_eq!(games.len(), raw.len());
 
     // The mapped Game should preserve identity and install state.
@@ -66,8 +62,12 @@ fn classic_login_rejects_bad_credentials() {
 
     let phase = Arc::new(Mutex::new(LoginPhase::Idle));
     let (_tx, rx) = channel();
-    let result =
-        aurelia::login_classic("not_a_real_user_xyz", "definitely-wrong-password", &phase, rx);
+    let result = aurelia::login_classic(
+        "not_a_real_user_xyz",
+        "definitely-wrong-password",
+        &phase,
+        rx,
+    );
 
     assert!(result.is_err(), "bad credentials should not log in");
     let final_phase = phase.lock().unwrap().clone();

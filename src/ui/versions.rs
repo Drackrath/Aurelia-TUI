@@ -49,7 +49,10 @@ pub fn versions(browser: &Browser) -> Paragraph<'static> {
             theme::dim(),
         )));
     } else {
-        let pinned_map = browser.versions_available.as_ref().map(|a| &a.pinned_manifests);
+        let pinned_map = browser
+            .versions_available
+            .as_ref()
+            .map(|a| &a.pinned_manifests);
         for (i, m) in browser.versions_manifests.iter().enumerate() {
             let selected = i == browser.versions_index;
             let style = if selected {
@@ -106,7 +109,8 @@ pub fn versions(browser: &Browser) -> Paragraph<'static> {
         } else if let Some(busy) = browser.downgrade_busy_text() {
             busy
         } else {
-            "[p] pin  [u] unpin  [d] downgrade selected  [s] SteamDB manifests  [Esc] close".to_string()
+            "[p] pin  [u] unpin  [d] downgrade selected  [s] SteamDB manifests  [Esc] close"
+                .to_string()
         };
         lines.push(Spans::from(Span::styled(status, theme::dim())));
     }

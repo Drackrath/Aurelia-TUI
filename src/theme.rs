@@ -47,7 +47,10 @@ pub fn canvas() -> Style {
 
 /// Panel/window title (accent, bold).
 pub fn title_style() -> Style {
-    Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(ACCENT)
+        .bg(BG)
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Detail-table label (accent).
@@ -101,7 +104,9 @@ pub fn accent() -> Style {
 
 /// Bright key-cap / emphasis text.
 pub fn key() -> Style {
-    Style::default().fg(ACCENT_BRIGHT).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(ACCENT_BRIGHT)
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Active filter tab (dark text on a bright accent chip).
