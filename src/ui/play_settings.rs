@@ -9,16 +9,20 @@ use crate::theme;
 use crate::ui::scroll::window;
 use crate::ui::selection_marker;
 
-/// Value text, or the input with caret.
-fn editable(browser: &Browser, row: usize, value: String) -> String {
+/// Value text, or input tail with caret.
+fn editable(browser: &Browser, row: usize, label: &str, width: usize, value: String) -> String {
     match &browser.game_config_input {
-        Some(input) if browser.game_config_index == row => format!("{input}_"),
+        Some(input) if browser.game_config_index == row => {
+            // Marker, label and ": ".
+            let room = width.saturating_sub(2 + label.chars().count() + 2);
+            crate::ui::input_tail(input, room)
+        }
         _ => value,
     }
 }
 
 /// Launch options and prefix rows.
-pub fn game_config_rows(browser: &Browser) -> Vec<(&'static str, String)> {
+pub fn game_config_rows(browser: &Browser, width: usize) -> Vec<(&'static str, String)> {
     let launch = browser.game_config.as_ref().map(|c| &c.launch);
     let options = match launch.map(|l| l.launch_options.as_str()) {
         Some(line) if !line.is_empty() => line.to_string(),
@@ -30,9 +34,18 @@ pub fn game_config_rows(browser: &Browser) -> Vec<(&'static str, String)> {
     vec![
         (
             "Launch options",
-            editable(browser, ROW_LAUNCH_OPTIONS, options),
+            editable(
+                browser,
+                ROW_LAUNCH_OPTIONS,
+                "Launch options",
+                width,
+                options,
+            ),
         ),
-        ("Wine prefix", editable(browser, ROW_PREFIX, prefix)),
+        (
+            "Wine prefix",
+            editable(browser, ROW_PREFIX, "Wine prefix", width, prefix),
+        ),
     ]
 }
 

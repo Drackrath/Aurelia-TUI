@@ -1,6 +1,6 @@
 //! Play overlays at 120x40 and 80x24.
 
-use aurelia_tui::browse::{Browser, ProtonConfirm, ROW_LAUNCH_OPTIONS};
+use aurelia_tui::browse::{Browser, ProtonConfirm, ROW_LAUNCH_OPTIONS, ROW_PREFIX};
 use aurelia_tui::interface::aurelia::{LibraryGameJson, ProtonJson};
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::interface::play_settings::{self as ps, AntiCheat};
@@ -117,6 +117,34 @@ fn launch_options_hint_fits() {
             "example fits at {w}x{h}"
         );
         assert!(has(&rows, "[Esc] cancel"), "keys fit at {w}x{h}");
+    }
+}
+
+#[test]
+fn long_inputs_keep_caret_visible() {
+    isolate_config();
+    let long_opts = format!("PROTON_LOG=1 {} %command% -windowed-END", "-x".repeat(60));
+    let long_dir = format!("~/{}/LastDir", "deep/".repeat(30));
+    for (w, h) in SIZES {
+        for (row, value, tail) in [
+            (ROW_LAUNCH_OPTIONS, &long_opts, "-windowed-END_"),
+            (ROW_PREFIX, &long_dir, "/LastDir_"),
+        ] {
+            let mut b = settings_browser();
+            while b.game_config_index != row {
+                b.game_config_next();
+            }
+            b.game_config_input = Some(value.clone());
+            let area = ui::centered_rect(58, 60, Rect::new(0, 0, w, h));
+            let rows = lines(w, h, |f| {
+                f.render_widget(ui::game_config::game_config(&b, area), area)
+            });
+            let line = rows
+                .iter()
+                .find(|r| r.contains(tail))
+                .unwrap_or_else(|| panic!("caret end {tail} visible at {w}x{h}"));
+            assert!(line.contains('…'), "leading ellipsis at {w}x{h}");
+        }
     }
 }
 
