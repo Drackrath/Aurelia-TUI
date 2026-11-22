@@ -171,3 +171,37 @@ fn unavailable_target_cannot_be_saved() {
     );
     assert_eq!(browser.launch.saved, None);
 }
+
+#[test]
+fn status_line_replaces_and_clears_on_move() {
+    let mut browser = browser_with(targets());
+    browser.launch_targets_index = 2;
+    browser.launch_target_set_default();
+    assert!(
+        browser
+            .launch_targets_status
+            .starts_with("Play now uses your choice")
+    );
+    browser.launch_target_set_automatic();
+    assert_eq!(
+        browser.launch_targets_status,
+        "Play picks the target automatically."
+    );
+    for (w, h) in SIZES {
+        let rows = render(&browser, w, h);
+        let screen = rows.join("\n");
+        assert!(!has(&rows, "Play now uses your choice"), "{screen}");
+        assert!(
+            has(&rows, "Play picks the target automatically."),
+            "{screen}"
+        );
+    }
+    browser.launch_targets_next();
+    assert!(browser.launch_targets_status.is_empty());
+    browser.launch_target_set_default();
+    browser.launch_targets_previous();
+    assert!(browser.launch_targets_status.is_empty());
+    let rows = render(&browser, 80, 24);
+    assert!(!has(&rows, "Play now uses"));
+    browser.launch_target_set_automatic();
+}
