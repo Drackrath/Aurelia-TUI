@@ -57,9 +57,9 @@ pub fn bin() -> String {
 }
 
 /// The oldest `aurelia` release this TUI supports.
-pub const MIN_VERSION: (u32, u32, u32) = (0, 1, 40);
+pub const MIN_VERSION: (u32, u32, u32) = (0, 3, 1);
 
-/// The installed `aurelia` version (`aurelia --version` prints `aurelia 0.1.40`),
+/// The installed `aurelia` version (`aurelia --version` prints `aurelia 0.3.1`),
 /// or `None` when the binary can't be run.
 pub fn version() -> Option<String> {
     let output = process::Command::new(bin())
@@ -72,7 +72,7 @@ pub fn version() -> Option<String> {
     stdout.split_whitespace().last().map(str::to_string)
 }
 
-/// Whether `version` (e.g. `0.1.40`, `0.1.37-2`) is at least [`MIN_VERSION`].
+/// Whether `version` (e.g. `0.3.1`, `0.3.0-2`) is at least [`MIN_VERSION`].
 /// An unparsable version counts as unsupported.
 pub fn version_supported(version: &str) -> bool {
     let core = version.trim_start_matches('v').split('-').next().unwrap_or("");

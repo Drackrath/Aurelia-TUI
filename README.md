@@ -24,7 +24,7 @@ heavy lifting — authentication, library listing, downloads, and launching
 
 ## Requirements
 
-- The [`aurelia`](https://github.com/Drackrath/Aurelia) CLI, **version `>= 0.1.40`**
+- The [`aurelia`](https://github.com/Drackrath/Aurelia) CLI, **version `>= 0.3.1`**
   (on Arch: the [`aurelia`](https://aur.archlinux.org/packages/aurelia) AUR
   package; otherwise build it from source).
 - A Steam account (logging in is described below).
@@ -38,7 +38,7 @@ Aurelia TUI looks for the `aurelia` binary in this order:
 
 If none of these resolve, the sign-in screen tells you the binary couldn't be
 found. The detected `aurelia` version is shown in the bottom-right corner of the
-library footer, in the warning colour if it is older than 0.1.40 or missing.
+library footer, in the warning colour if it is older than 0.3.1 or missing.
 
 ## Building
 

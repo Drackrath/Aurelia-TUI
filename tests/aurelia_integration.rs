@@ -1,5 +1,5 @@
 //! End-to-end checks against a real `aurelia` binary. Ignored by default
-//! because they require the `aurelia` CLI (>= 0.1.40) on PATH (or via
+//! because they require the `aurelia` CLI (>= 0.3.1) on PATH (or via
 //! `AURELIA_BIN`) and an authenticated session. Run explicitly with:
 //!
 //! ```text
