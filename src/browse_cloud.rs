@@ -5,8 +5,59 @@ use crate::interface::aurelia::CloudDirection;
 use crate::interface::cloud_status;
 use crate::interface::cloud_sync::{self, ConflictPrompt, GameCloudSync, Resolve};
 use crate::util::stateful::Named;
+use crossterm::event::KeyCode;
+
+/// Cloud overlay cursor and confirm.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CloudView {
+    /// Highlighted file row.
+    pub index: usize,
+    /// Direction awaiting a y-confirm.
+    pub confirm: Option<CloudDirection>,
+}
+
+/// Rows a page key jumps.
+const PAGE: usize = 10;
 
 impl Browser {
+    /// Handle a key in the overlay.
+    pub fn cloud_key(&mut self, key: KeyCode) {
+        if let Some(direction) = self.cloud_view.confirm.take() {
+            if key == KeyCode::Char('y') {
+                self.cloud_sync_selected(direction);
+            } else {
+                self.cloud_status = "Cancelled.".to_string();
+            }
+            return;
+        }
+        let last = self.cloud_files.len().saturating_sub(1);
+        let index = &mut self.cloud_view.index;
+        match key {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.cloud_view = CloudView::default();
+                self.close_cloud();
+            }
+            KeyCode::Char('s') => self.cloud_sync_selected(CloudDirection::Both),
+            KeyCode::Char('d') => self.cloud_view.confirm = Some(CloudDirection::Down),
+            KeyCode::Char('u') => self.cloud_view.confirm = Some(CloudDirection::Up),
+            KeyCode::Down | KeyCode::Char('j') => *index = (*index + 1).min(last),
+            KeyCode::Up | KeyCode::Char('k') => *index = index.saturating_sub(1),
+            KeyCode::PageDown => *index = (*index + PAGE).min(last),
+            KeyCode::PageUp => *index = index.saturating_sub(PAGE),
+            KeyCode::Char('g') | KeyCode::Home => *index = 0,
+            KeyCode::Char('G') | KeyCode::End => *index = last,
+            _ => {}
+        }
+    }
+
+    fn cloud_sync_selected(&mut self, direction: CloudDirection) {
+        if let Some(game) = self.selected() {
+            self.sync_cloud(game.id, direction);
+            let last = self.cloud_files.len().saturating_sub(1);
+            self.cloud_view.index = self.cloud_view.index.min(last);
+        }
+    }
+
     /// Manual sync from the overlay.
     pub fn run_cloud_sync(
         &mut self,
@@ -68,7 +119,7 @@ impl Browser {
             .map(|c| c.enable_cloud_sync)
             .unwrap_or(true);
         if let Err(err) = cloud_sync::set_global(!on) {
-            self.notice = Some(format!("Cloud sync setting: {err}"));
+            self.notice = Some(format!("Aurelia Steam Cloud sync: {err}"));
         }
         let _ = self.open_config();
     }
@@ -83,7 +134,7 @@ pub fn cycle_game_cloud(app_id: i32, current: &mut Option<GameCloudSync>) -> Str
         .next();
     match cloud_sync::set_game(app_id, next) {
         Ok(state) => {
-            let msg = format!("Cloud sync set to {}.", state.label());
+            let msg = format!("Aurelia Steam Cloud sync set to {}.", state.label());
             *current = Some(state);
             msg
         }

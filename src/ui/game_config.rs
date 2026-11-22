@@ -55,7 +55,7 @@ pub fn game_config(browser: &Browser) -> Paragraph<'static> {
         ("Steam integration", browser.steam_integration_label()),
     ];
     rows.extend(crate::ui::play_settings::game_config_rows(browser));
-    rows.push(("Cloud sync", cloud));
+    rows.push(("Aurelia Steam Cloud sync", cloud));
 
     let mut lines: Vec<Spans<'static>> = Vec::new();
     for (i, (label, value)) in rows.iter().enumerate() {

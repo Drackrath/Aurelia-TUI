@@ -130,7 +130,7 @@ fn entries() -> Vec<Entry> {
         Entry::Binding("Install: h / l", "cycle language"),
         Entry::Binding("DLC: e / x", "enable / disable"),
         Entry::Binding("Branches: s", "switch branch"),
-        Entry::Binding("Cloud: s d u", "sync / down / up"),
+        Entry::Binding("Cloud: s d u", "sync / down / up (y)"),
         Entry::Binding("Depot files: /", "filter"),
         Entry::Binding("Depot files: b d", "branch / download"),
         Entry::Binding("Workshop: b", "browse / search"),
