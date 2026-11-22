@@ -185,6 +185,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         browser.poll_friends_ops();
         browser.poll_hltb();
         browser.poll_library_info();
+        browser.poll_launch_runtime();
+        browser.poll_launch_notices();
 
         // Drain any finished off-thread Workshop browse/search/subscribe worker
         // before rendering, so its result lands on the next frame. Runs on every
@@ -862,6 +864,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_launch_targets(),
                             KeyCode::Down | KeyCode::Char('j') => browser.launch_targets_next(),
                             KeyCode::Up | KeyCode::Char('k') => browser.launch_targets_previous(),
+                            KeyCode::Char('d') => browser.launch_target_set_default(),
+                            KeyCode::Char('a') => browser.launch_target_set_automatic(),
+                            KeyCode::Char('i') => browser.launch_target_install_runtime(),
                             KeyCode::Char('\n') | KeyCode::Enter => {
                                 if let Some(opts) = browser.selected_launch_target() {
                                     browser.close_launch_targets();

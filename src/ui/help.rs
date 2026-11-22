@@ -98,6 +98,7 @@ fn entries() -> Vec<Entry> {
         Entry::Binding("H", "hide game"),
         Entry::Binding("C", "cloud saves (s/d/u)"),
         Entry::Binding("L", "launch options"),
+        Entry::Binding("Play as… d/a/i", "save / auto / runtime"),
         Entry::Binding("r", "refresh library"),
         Entry::Binding("A", "account"),
         Entry::Binding("p", "settings"),

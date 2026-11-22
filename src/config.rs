@@ -5,6 +5,7 @@ use crate::interface::binary::BinarySignature;
 use crate::interface::game::GameType;
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::sync::RwLock;
 
@@ -38,6 +39,12 @@ pub struct Config {
     /// Store text language; `None` = Aurelia's.
     #[serde(default)]
     pub info_language: Option<String>,
+    /// Saved launch target per game.
+    #[serde(default)]
+    pub launch_targets: BTreeMap<i32, String>,
+    /// Games launched with `--steam`.
+    #[serde(default)]
+    pub steam_integration: Vec<i32>,
 }
 
 fn default_hltb_enabled() -> bool {
@@ -56,6 +63,8 @@ impl Default for Config {
             aurelia_bin: None,
             last_binary: None,
             info_language: None,
+            launch_targets: BTreeMap::new(),
+            steam_integration: vec![],
         }
     }
 }

@@ -7,7 +7,7 @@ use crate::interface::play_settings as ps;
 /// Game settings rows added here.
 pub const PLAY_ROWS: usize = 2;
 /// First play row's index.
-pub const FIRST_PLAY_ROW: usize = 6;
+pub const FIRST_PLAY_ROW: usize = 7;
 /// Row: launch options.
 pub const ROW_LAUNCH_OPTIONS: usize = FIRST_PLAY_ROW;
 /// Row: custom Wine prefix.

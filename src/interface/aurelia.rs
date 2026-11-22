@@ -2418,40 +2418,11 @@ pub fn update(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
 
 /// Launch a game and wait for it to exit (`aurelia play <id> --json`).
 /// Intended to be run on a dedicated thread.
-pub fn play(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
-    set_status(&status, "launching...");
-
-    let output = process::Command::new(bin())
-        .args(["play", &id.to_string(), "--json"])
-        .stdin(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .output();
-
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            match serde_json::from_str::<serde_json::Value>(stdout.trim()) {
-                Ok(value) => {
-                    if let Some(err) = json_error(&value) {
-                        set_status(&status, &format!("Failed: {}", err));
-                    } else {
-                        set_status(&status, "ran (finished)");
-                    }
-                }
-                Err(_) => {
-                    if output.status.success() {
-                        set_status(&status, "ran (finished)");
-                    } else {
-                        set_status(&status, "Failed to launch");
-                    }
-                }
-            }
-        }
-        Err(err) => {
-            set_status(&status, &format!("failed to launch: {}", err));
-            log!("Failed to spawn aurelia play", id, err);
-        }
-    }
+pub fn play(
+    id: i32,
+    status: Arc<Mutex<Option<GameStatus>>>,
+) -> crate::interface::launch::PlayOutcome {
+    crate::interface::launch::play_saved(id, status)
 }
 
 // ===========================================================================
@@ -3247,8 +3218,11 @@ pub fn config_game_clear_launch_script(app_id: i32) -> Result<(), STError> {
 /// Launch a game with extra options (`aurelia play <id> [flags] --json`),
 /// mirroring [`play`] but appending the flags set in `opts`. Intended to be run
 /// on a dedicated thread.
-pub fn play_with(id: i32, opts: PlayOpts, status: Arc<Mutex<Option<GameStatus>>>) {
-    set_status(&status, "launching...");
+pub fn play_with(
+    id: i32,
+    opts: PlayOpts,
+    status: Arc<Mutex<Option<GameStatus>>>,
+) -> crate::interface::launch::PlayOutcome {
 
     let id_str = id.to_string();
     let mut args: Vec<&str> = vec!["play", &id_str];
@@ -3290,36 +3264,5 @@ pub fn play_with(id: i32, opts: PlayOpts, status: Arc<Mutex<Option<GameStatus>>>
         args.push("--skip-shaders");
     }
     args.push("--json");
-
-    let output = process::Command::new(bin())
-        .args(&args)
-        .stdin(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .output();
-
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            match serde_json::from_str::<serde_json::Value>(stdout.trim()) {
-                Ok(value) => {
-                    if let Some(err) = json_error(&value) {
-                        set_status(&status, &format!("Failed: {}", err));
-                    } else {
-                        set_status(&status, "ran (finished)");
-                    }
-                }
-                Err(_) => {
-                    if output.status.success() {
-                        set_status(&status, "ran (finished)");
-                    } else {
-                        set_status(&status, "Failed to launch");
-                    }
-                }
-            }
-        }
-        Err(err) => {
-            set_status(&status, &format!("failed to launch: {}", err));
-            log!("Failed to spawn aurelia play", id, err);
-        }
-    }
+    crate::interface::launch::run_play(id, &args, &status)
 }

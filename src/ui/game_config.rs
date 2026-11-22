@@ -44,6 +44,7 @@ pub fn game_config(browser: &Browser) -> Paragraph<'static> {
         ("Steam runtime", steam_runtime),
         ("Steam prefix", steam_prefix),
         ("Launch script", script),
+        ("Steam integration", browser.steam_integration_label()),
     ];
     rows.extend(crate::ui::play_settings::game_config_rows(browser));
 

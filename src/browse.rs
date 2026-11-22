@@ -23,6 +23,8 @@ pub mod install_options;
 mod library_info;
 mod play_settings;
 pub use play_settings::{PLAY_ROWS, ROW_LAUNCH_OPTIONS, ROW_PREFIX};
+#[path = "browse_launch.rs"]
+mod launch_ui;
 
 /// The quick-filter tabs along the top of the library.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -588,6 +590,8 @@ pub struct Browser {
     pub launch_targets_index: usize,
     /// A transient status line (fetch error, unavailable target).
     pub launch_targets_status: String,
+    /// Saved target and runtime install.
+    pub launch: crate::interface::launch::LaunchUi,
 }
 
 /// A single entry in the per-game Actions menu. Selecting one runs the same
@@ -812,6 +816,7 @@ impl Browser {
             launch_targets: Vec::new(),
             launch_targets_index: 0,
             launch_targets_status: String::new(),
+            launch: Default::default(),
         };
         browser.reset_selection();
         browser
@@ -3252,18 +3257,7 @@ impl Browser {
     /// overlay, highlighting the target plain `play` would pick.
     pub fn open_launch_targets(&mut self, app_id: i32) {
         self.launch_targets_status.clear();
-        self.launch_targets = match aurelia::launch_targets(app_id) {
-            Ok(targets) => targets,
-            Err(e) => {
-                self.launch_targets_status = format!("Failed: {e}");
-                Vec::new()
-            }
-        };
-        self.launch_targets_index = self
-            .launch_targets
-            .iter()
-            .position(|t| t.default)
-            .unwrap_or(0);
+        self.fetch_launch_targets(app_id);
         self.show_launch_targets = true;
     }
 
@@ -3299,14 +3293,15 @@ impl Browser {
             self.launch_targets_status = format!("Unavailable (missing: {missing}).");
             return None;
         }
-        Some(target.play_opts())
+        let steam = launch_ui::steam_flag(self.launch.app_id);
+        Some(crate::interface::launch::play_target_opts(target, steam))
     }
 
     // --- Game settings overlay (per-game config overrides + launch script) ---
 
     /// Number of editable rows in the game-settings overlay: Runner, Forced
     /// Proton, Platform, Steam runtime, Steam prefix, Launch script.
-    pub const GAME_CONFIG_ROWS: usize = 6 + PLAY_ROWS;
+    pub const GAME_CONFIG_ROWS: usize = 7 + PLAY_ROWS;
 
     /// Fetch the game's per-game config, launch-script state, and the installed
     /// Proton list (for cycling the forced runtime) and open the overlay.
@@ -3448,6 +3443,8 @@ impl Browser {
                         Err(e) => format!("Failed: {e}"),
                     };
             }
+            // Steam integration (TUI config).
+            6 => self.toggle_steam_integration(),
             // Launch script: create one if none, else clear the per-game override.
             5 => {
                 let has_script = self.game_script.as_ref().map(|s| s.exists).unwrap_or(false);
