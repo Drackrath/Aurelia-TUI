@@ -167,6 +167,9 @@ pub struct ConfigJson {
     /// Whether the optional luxtorpeda native-engine plugin is enabled.
     #[serde(default)]
     pub luxtorpeda_enabled: bool,
+    /// Shader and anti-cheat settings.
+    #[serde(flatten)]
+    pub play: crate::interface::play_settings::PlayConfigJson,
 }
 
 impl ConfigJson {
@@ -1184,7 +1187,7 @@ fn json_error(value: &serde_json::Value) -> Option<String> {
 ///
 /// Errors surface as `{"error": "..."}` on stdout; that is translated into an
 /// `STError::Problem`. stderr (tracing/diagnostics) is discarded.
-fn run_json(args: &[&str]) -> Result<serde_json::Value, STError> {
+pub(crate) fn run_json(args: &[&str]) -> Result<serde_json::Value, STError> {
     let output = process::Command::new(bin())
         .args(args)
         .arg("--json")
@@ -2593,6 +2596,9 @@ pub struct GameConfigJson {
     /// How the master Steam prefix backs this game: `"Shared"` or `"PerGame"`.
     #[serde(default)]
     pub steam_prefix_mode: Option<String>,
+    /// Launch options and Wine prefix.
+    #[serde(flatten)]
+    pub launch: crate::interface::play_settings::GameLaunchJson,
 }
 
 /// Extra launch flags for [`play_with`], mirroring `aurelia play`'s options.
@@ -2621,6 +2627,8 @@ pub struct PlayOpts {
     pub steam_mode: Option<String>,
     /// Skip the pre-launch update check (`--no-update`).
     pub no_update: bool,
+    /// Skip Vulkan shaders (`--skip-shaders`).
+    pub skip_shaders: bool,
 }
 
 /// One way an installed game can be started, from `aurelia launch-targets <id>
@@ -3235,6 +3243,9 @@ pub fn play_with(id: i32, opts: PlayOpts, status: Arc<Mutex<Option<GameStatus>>>
     }
     if opts.no_update {
         args.push("--no-update");
+    }
+    if opts.skip_shaders {
+        args.push("--skip-shaders");
     }
     args.push("--json");
 

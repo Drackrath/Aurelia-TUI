@@ -29,6 +29,7 @@ pub mod list;
 pub mod market;
 pub mod market_search;
 pub mod move_game;
+pub mod play_settings;
 pub mod proton;
 pub mod relink;
 pub mod running;

@@ -24,6 +24,7 @@ use aurelia_tui::app::{App, Mode};
 use aurelia_tui::client::{Client, State};
 use aurelia_tui::config::Config;
 use aurelia_tui::interface::aurelia::{self, LoginPhase};
+use aurelia_tui::interface::play_settings::{self, AntiCheat};
 use aurelia_tui::util::stateful::Named;
 
 /// Blend `img` toward `bg` so the top-aligned cover art reads as a translucent
@@ -780,6 +781,22 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                                 Config::save(&config)?;
                                                 browser.refresh();
                                             }
+                                            Action::PlaySkipShaders => {
+                                                let opts = aurelia::PlayOpts {
+                                                    skip_shaders: true,
+                                                    ..Default::default()
+                                                };
+                                                client.run_with(&game, opts)?;
+                                            }
+                                            Action::ProcessShaders
+                                            | Action::ProcessShadersForce => {
+                                                let force = action == Action::ProcessShadersForce;
+                                                play_settings::spawn_shaders(
+                                                    game.id,
+                                                    force,
+                                                    game.status_counter(),
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -822,6 +839,16 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                             }
+                            _ => {}
+                        }
+                    } else if browser.show_game_config && browser.game_config_editing() {
+                        match input {
+                            KeyCode::Esc => browser.game_config_input_cancel(),
+                            KeyCode::Char('\n') | KeyCode::Enter => {
+                                browser.game_config_input_commit()
+                            }
+                            KeyCode::Backspace => browser.game_config_input_pop(),
+                            KeyCode::Char(c) => browser.game_config_input_push(c),
                             _ => {}
                         }
                     } else if browser.show_game_config {
@@ -1227,6 +1254,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                             }
+                            KeyCode::Char('e') => browser.install_anticheat(AntiCheat::Eac),
+                            KeyCode::Char('b') => browser.install_anticheat(AntiCheat::BattlEye),
                             KeyCode::Char('u') => {
                                 // Only custom (installed GE) runtimes are removable.
                                 if browser.selected_proton_uninstallable() {
@@ -1342,6 +1371,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 KeyCode::Char('e') => browser.begin_proxy_edit(),
                                 KeyCode::Char('c') => browser.clear_proxy(),
+                                KeyCode::Char('s') => browser.toggle_shader_precache(),
+                                KeyCode::Char('a') => browser.toggle_anticheat_auto_install(),
                                 _ => {}
                             }
                         }

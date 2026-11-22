@@ -75,6 +75,8 @@ pub fn config(browser: &Browser) -> Table<'static> {
         ],
         None => vec![row("Launcher", "Unavailable".into())],
     });
+    let play = crate::ui::play_settings::settings_rows(browser);
+    rows.extend(play.into_iter().map(|(label, value)| row(label, value)));
     // Keep the inline editor visible if the launcher read failed. Otherwise its
     // title would invite typing while the edited URL itself was hidden.
     if browser.config_info.is_none() && browser.config_proxy_input.is_some() {
@@ -84,7 +86,8 @@ pub fn config(browser: &Browser) -> Table<'static> {
     let title = if browser.config_proxy_input.is_some() {
         "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
     } else {
-        "Settings ([h] HLTB · [o] presence · [e] edit proxy · [c] clear proxy)".to_string()
+        "Settings ([h] HLTB · [o] presence · [e]/[c] proxy · [s] shaders · [a] anti-cheat)"
+            .to_string()
     };
 
     Table::new(rows)
