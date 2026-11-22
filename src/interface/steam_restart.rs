@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::process;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -94,7 +93,7 @@ pub fn is_never_pulled_error(message: &str) -> bool {
 fn error_message(value: &serde_json::Value) -> Option<String> {
     let err = value.get("error").and_then(|e| e.as_str())?;
     match value.get("hint").and_then(|h| h.as_str()) {
-        Some(hint) if !hint.is_empty() => Some(format!("{err} ({hint})")),
+        Some(hint) if !hint.is_empty() => Some(format!("{err} — {hint}")),
         _ => Some(err.to_string()),
     }
 }
@@ -125,14 +124,7 @@ pub fn parse_output(stdout: &str, args: &[&str]) -> Result<serde_json::Value, ST
 
 /// Run `aurelia <args> --json`.
 pub fn run(args: &[&str]) -> Result<serde_json::Value, STError> {
-    let output = process::Command::new(aurelia::bin())
-        .args(args)
-        .arg("--json")
-        .stdin(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .output()
-        .map_err(STError::Process)?;
-    parse_output(&String::from_utf8_lossy(&output.stdout), args)
+    aurelia::run_json(args)
 }
 
 /// Argument list for a relocation.

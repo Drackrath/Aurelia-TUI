@@ -1,6 +1,6 @@
 //! Install platform, language and set-language.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::Read;
 use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -187,7 +187,7 @@ pub fn set_language(id: i32, language: String, status: Arc<Mutex<Option<GameStat
     });
 
     if let Some(stderr) = child.stderr.take() {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        for line in crate::interface::aurelia_log::tee(&format!("set-language {id}"), stderr) {
             if let Some(msg) = progress_line(line.trim()) {
                 set_status(&status, &msg);
             }

@@ -1,6 +1,6 @@
 //! Launch options, prefix, shaders, anti-cheat.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::Read;
 use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -293,7 +293,9 @@ fn stream(
         buf
     });
     if let Some(stderr) = child.stderr.take() {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let label = crate::interface::aurelia_log::label(&refs);
+        for line in crate::interface::aurelia_log::tee(&label, stderr) {
             if let Some(msg) = on_line(&line) {
                 set_status(&status, &msg);
             }
