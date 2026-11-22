@@ -1,0 +1,10 @@
+{
+  "steam_library_path": "/home/user/Games/Steam",
+  "proton_version": "GE-Proton10-1",
+  "chat_presence": "offline",
+  "steam_runtime_runner": "",
+  "steam_prefix_mode": "Shared",
+  "enable_cloud_sync": true,
+  "use_shared_compat_data": false,
+  "persona_wait_secs": 45
+}

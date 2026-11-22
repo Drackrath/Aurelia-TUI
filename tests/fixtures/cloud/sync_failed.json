@@ -1,0 +1,1 @@
+{"app_id":620,"direction":"both","remote_root":"/r","status":"failed","downloaded":["a.sav"],"uploaded":[],"conflicts":[],"skipped":[{"filename":"%LinuxXdgDataHome%/x.sav","root_token":"LinuxXdgDataHome","reason":"unmapped root token"}],"skipped_root_tokens":["LinuxXdgDataHome"],"failed":[{"filename":"b.sav","direction":"down","error":"HTTP 503"}],"wine_prefix":"/pfx"}

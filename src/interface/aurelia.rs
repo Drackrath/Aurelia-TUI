@@ -21,7 +21,8 @@ use crate::util::log::log;
 
 /// The `aurelia` binary to invoke.
 ///
-/// Resolution order: `AURELIA_BIN` (explicit override) → a sibling `Aurelia`
+/// Resolution order: `AURELIA_BIN` (explicit override) → the Settings path →
+/// a sibling `Aurelia`
 /// build next to this project (dev convenience, so the TUI works without
 /// installing `aurelia` first) → bare `aurelia` (resolved on `PATH`).
 pub fn bin() -> String {
@@ -29,6 +30,9 @@ pub fn bin() -> String {
         if !explicit.is_empty() {
             return explicit;
         }
+    }
+    if let Some(chosen) = crate::interface::binary::configured() {
+        return chosen;
     }
 
     let exe = if cfg!(windows) { "aurelia.exe" } else { "aurelia" };
@@ -58,9 +62,9 @@ pub fn bin() -> String {
 }
 
 /// The oldest `aurelia` release this TUI supports.
-pub const MIN_VERSION: (u32, u32, u32) = (0, 1, 40);
+pub const MIN_VERSION: (u32, u32, u32) = (0, 3, 1);
 
-/// The installed `aurelia` version (`aurelia --version` prints `aurelia 0.1.40`),
+/// The installed `aurelia` version (`aurelia --version` prints `aurelia 0.3.1`),
 /// or `None` when the binary can't be run.
 pub fn version() -> Option<String> {
     let output = process::Command::new(bin())
@@ -73,7 +77,7 @@ pub fn version() -> Option<String> {
     stdout.split_whitespace().last().map(str::to_string)
 }
 
-/// Whether `version` (e.g. `0.1.40`, `0.1.37-2`) is at least [`MIN_VERSION`].
+/// Whether `version` (e.g. `0.3.1`, `0.3.0-2`) is at least [`MIN_VERSION`].
 /// An unparsable version counts as unsupported.
 pub fn version_supported(version: &str) -> bool {
     let core = version.trim_start_matches('v').split('-').next().unwrap_or("");
@@ -122,6 +126,9 @@ pub struct AccountJson {
     pub authed_machines: u32,
     #[serde(default)]
     pub vac_bans: u32,
+    /// Daemon's Steam logon id (v0.2.0).
+    #[serde(default)]
+    pub daemon_logon_id: Option<u32>,
 }
 
 impl AccountJson {
@@ -150,6 +157,9 @@ pub struct ConfigJson {
     /// Friends/chat presence the daemon announces (`"online"` / `"offline"`).
     #[serde(default)]
     pub chat_presence: Option<String>,
+    /// `user` status wait, seconds.
+    #[serde(default)]
+    pub persona_wait_secs: Option<u64>,
     /// How per-game Wine prefixes / compat data are laid out (e.g. `"Shared"`).
     #[serde(default)]
     pub steam_prefix_mode: Option<String>,
@@ -168,6 +178,9 @@ pub struct ConfigJson {
     /// Whether the optional luxtorpeda native-engine plugin is enabled.
     #[serde(default)]
     pub luxtorpeda_enabled: bool,
+    /// Shader and anti-cheat settings.
+    #[serde(flatten)]
+    pub play: crate::interface::play_settings::PlayConfigJson,
 }
 
 impl ConfigJson {
@@ -232,6 +245,9 @@ pub struct LibraryGameJson {
     pub assets: Option<AssetsJson>,
     #[serde(default)]
     pub store_url: Option<String>,
+    /// Playtime, queued update, size.
+    #[serde(flatten)]
+    pub library: crate::interface::library_info::LibraryInfoJson,
 }
 
 /// One Steam Cloud file, from `aurelia cloud list <id> --json`. The CLI emits
@@ -264,6 +280,9 @@ pub struct InfoJson {
     pub description: String,
     #[serde(default)]
     pub reviews: Option<String>,
+    /// Present with `--extended`.
+    #[serde(default)]
+    pub extended: Option<crate::interface::library_info::ExtendedInfoJson>,
 }
 
 /// One achievement entry from `aurelia achievements <id> --json` (an item of
@@ -324,9 +343,9 @@ impl FriendJson {
             .unwrap_or_else(|| self.steam_id.to_string())
     }
 
-    /// Whether the friend is currently online (any non-offline persona state).
+    /// Online: not offline or invisible.
     pub fn is_online(&self) -> bool {
-        !matches!(self.persona_state, None | Some(0))
+        !matches!(self.persona_state, None | Some(0) | Some(7))
     }
 
     /// The game the friend is currently playing, if any (name, else `app <id>`).
@@ -1126,23 +1145,23 @@ struct LoginEvent {
 /// Progress events are emitted on **stderr**; the terminal result object goes
 /// to **stdout**.
 #[derive(Debug, Deserialize)]
-struct ProgressJson {
+pub(crate) struct ProgressJson {
     #[serde(default)]
-    event: Option<String>,
+    pub(crate) event: Option<String>,
     #[serde(default)]
-    state: Option<String>,
+    pub(crate) state: Option<String>,
     #[serde(default)]
-    percent: Option<f64>,
+    pub(crate) percent: Option<f64>,
     /// Estimated seconds remaining, or `None` when not yet estimable (the CLI
     /// emits `eta_seconds: null` early in a transfer).
     #[serde(default)]
-    eta_seconds: Option<u64>,
+    pub(crate) eta_seconds: Option<u64>,
 }
 
 /// Format a download ETA into a compact " · ETA 3m 12s" suffix to sit next to
 /// the State value. Empty when the time is not yet estimable, so a status line
 /// without an estimate is unchanged.
-fn eta_suffix(eta_seconds: Option<u64>) -> String {
+pub(crate) fn eta_suffix(eta_seconds: Option<u64>) -> String {
     let Some(secs) = eta_seconds else {
         return String::new();
     };
@@ -1158,7 +1177,7 @@ fn eta_suffix(eta_seconds: Option<u64>) -> String {
 }
 
 /// "message — hint" of an error payload.
-fn json_error(value: &serde_json::Value) -> Option<String> {
+pub(crate) fn json_error(value: &serde_json::Value) -> Option<String> {
     crate::util::error::CliError::from_json(value).map(|e| e.summary())
 }
 
@@ -1255,11 +1274,10 @@ pub fn config_proxy_clear() -> Result<(), STError> {
     Ok(())
 }
 
-/// Log out of the current Steam session (`aurelia logout --json`). The returned
-/// value (`{"logged_out":true}`) is ignored; only errors are propagated.
-pub fn logout() -> Result<(), STError> {
-    run_json(&["logout"])?;
-    Ok(())
+/// `logout --json` with token revocation (v0.2.1).
+pub fn logout() -> Result<crate::interface::session::LogoutJson, STError> {
+    let value = run_json(&["logout"])?;
+    Ok(serde_json::from_value(value)?)
 }
 
 /// Fetch the Steam Wallet balance (`aurelia wallet --json`).
@@ -1300,9 +1318,21 @@ pub fn install_estimate(id: i32) -> Result<u64, STError> {
     Ok(value.get("disk_size").and_then(|v| v.as_u64()).unwrap_or(0))
 }
 
-/// Fetch store metadata for a single app (`aurelia info <id> --json`).
+/// Store metadata via plain `info`.
 pub fn fetch_info(id: i32) -> Result<InfoJson, STError> {
-    let value = run_json(&["info", &id.to_string()])?;
+    fetch_info_with(id, false)
+}
+
+/// Store metadata via `info --extended`.
+pub fn fetch_info_extended(id: i32) -> Result<InfoJson, STError> {
+    fetch_info_with(id, true)
+}
+
+fn fetch_info_with(id: i32, extended: bool) -> Result<InfoJson, STError> {
+    use crate::interface::library_info::info_args;
+    let id = id.to_string();
+    let lang = crate::config::Config::cached().info_language;
+    let value = run_json(&info_args(&id, lang.as_deref(), extended))?;
     Ok(serde_json::from_value(value)?)
 }
 
@@ -1986,7 +2016,7 @@ pub fn login_classic_cancellable(
 }
 
 /// Update a shared status cell, preserving any previously-known install dir/size.
-fn set_status(status: &Arc<Mutex<Option<GameStatus>>>, msg: &str) {
+pub(crate) fn set_status(status: &Arc<Mutex<Option<GameStatus>>>, msg: &str) {
     if let Ok(mut guard) = status.lock() {
         let next = GameStatus::msg(&guard, msg);
         *guard = Some(next);
@@ -2013,13 +2043,28 @@ pub enum InstallAction {
 #[derive(Debug, Clone)]
 pub struct InstallControl {
     action: Arc<Mutex<InstallAction>>,
+    /// Platform and language flags.
+    options: crate::interface::install_options::InstallOpts,
 }
 
 impl InstallControl {
     pub fn new() -> Self {
         Self {
             action: Arc::new(Mutex::new(InstallAction::Running)),
+            options: Default::default(),
         }
+    }
+
+    /// A control carrying install flags.
+    pub fn with_options(options: crate::interface::install_options::InstallOpts) -> Self {
+        Self {
+            options,
+            ..Self::new()
+        }
+    }
+
+    pub fn options(&self) -> &crate::interface::install_options::InstallOpts {
+        &self.options
     }
 
     pub fn set(&self, action: InstallAction) {
@@ -2051,20 +2096,6 @@ pub fn install_stop(app_id: i32) -> Result<(), STError> {
     Ok(())
 }
 
-/// Freeze the status cell at "paused" (carrying the last-seen percent, if any),
-/// preserving the install dir/size.
-fn set_status_paused(status: &Arc<Mutex<Option<GameStatus>>>) {
-    if let Ok(mut guard) = status.lock() {
-        let pct = guard
-            .as_ref()
-            .and_then(|s| s.state.split_whitespace().find(|t| t.ends_with('%')))
-            .map(|p| format!("paused {p}"))
-            .unwrap_or_else(|| "paused".to_string());
-        let next = GameStatus::msg(&guard, &pct);
-        *guard = Some(next);
-    }
-}
-
 /// Install a game (`aurelia install <id> --json`), streaming progress into the
 /// shared status cell. Blocks until the install finishes; intended to be run on
 /// a dedicated thread. `control` lets the UI pause (resumable) or stop (cancel)
@@ -2085,100 +2116,22 @@ pub fn install(
         args.push("--library");
         args.push(library);
     }
-    let spawned = process::Command::new(bin())
-        .args(&args)
-        .stdin(process::Stdio::null())
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn();
-
-    let mut child = match spawned {
-        Ok(child) => child,
-        Err(err) => {
-            set_status(&status, &format!("Failed: {}", err));
-            log!("Failed to spawn aurelia install", id, err);
-            return;
-        }
-    };
-
-    // Drain stdout (the small terminal result object) on a helper thread so the
-    // child never blocks writing it while we consume the larger stderr stream.
-    let stdout = child.stdout.take();
-    let result_handle = thread::spawn(move || {
-        let mut buf = String::new();
-        if let Some(mut out) = stdout {
-            let _ = out.read_to_string(&mut buf);
-        }
-        buf
-    });
-
-    if let Some(stderr) = child.stderr.take() {
-        for line in aurelia_log::tee(&format!("install {id}"), stderr) {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Ok(event) = serde_json::from_str::<ProgressJson>(line) {
-                if event.event.as_deref() == Some("progress") {
-                    let label = match event.state.as_deref() {
-                        Some("verifying") => "verifying",
-                        Some("moving") => "moving",
-                        Some("queued") => "queued",
-                        _ => "downloading",
-                    };
-                    set_status(
-                        &status,
-                        &format!(
-                            "{} {:.1}%{}",
-                            label,
-                            event.percent.unwrap_or(0.0),
-                            eta_suffix(event.eta_seconds)
-                        ),
-                    );
-                }
-            }
-        }
-    }
-
-    let result = result_handle.join().unwrap_or_default();
-    let _ = child.wait();
-
-    // If the user paused/stopped, the process exited because the daemon aborted
-    // the download — finalise on the user's intent, not the aborted result.
-    match control.get() {
-        InstallAction::Paused => {
-            set_status_paused(&status);
-            return;
-        }
-        InstallAction::Stopped => {
-            if let Ok(mut guard) = status.lock() {
-                *guard = None;
-            }
-            return;
-        }
-        InstallAction::Running => {}
-    }
-
-    match serde_json::from_str::<serde_json::Value>(result.trim()) {
-        Ok(value) => {
-            if let Some(err) = json_error(&value) {
-                set_status(&status, &format!("Failed: {}", err));
-            } else if value.get("status").and_then(|s| s.as_str()) == Some("installed") {
-                set_status(&status, "Installed!");
-            } else {
-                set_status(&status, "done");
-            }
-        }
-        // No parseable result line: fall back on the exit status we already waited on.
-        Err(_) => set_status(&status, "Installed!"),
-    }
+    let extra = control.options().args();
+    args.extend(extra.iter().map(String::as_str));
+    let args = args.into_iter().map(String::from).collect();
+    crate::interface::install_queue::run_install(args, status, control);
 }
 
-/// Uninstall a game (`aurelia uninstall <id> --json`). The game's Wine prefix /
-/// compat data is left in place (no `--delete-prefix`). Blocks until the CLI
+/// Uninstall a game (`aurelia uninstall <id> --json`). Blocks until the CLI
 /// reports the result; the parsed value is ignored beyond error detection.
-pub fn uninstall(app_id: i32) -> Result<(), STError> {
-    run_json(&["uninstall", &app_id.to_string()])?;
+/// `delete_prefix` adds `--delete-prefix`.
+pub fn uninstall(app_id: i32, delete_prefix: bool) -> Result<(), STError> {
+    let id = app_id.to_string();
+    let mut args = vec!["uninstall", id.as_str()];
+    if delete_prefix {
+        args.push("--delete-prefix");
+    }
+    run_json(&args)?;
     Ok(())
 }
 
@@ -2351,41 +2304,11 @@ pub fn update(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
 
 /// Launch a game and wait for it to exit (`aurelia play <id> --json`).
 /// Intended to be run on a dedicated thread.
-pub fn play(id: i32, status: Arc<Mutex<Option<GameStatus>>>) {
-    set_status(&status, "launching...");
-
-    let output = aurelia_log::output(
-        process::Command::new(bin())
-            .args(["play", &id.to_string(), "--json"])
-            .stdin(process::Stdio::null()),
-        &format!("play {id}"),
-    );
-
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            match serde_json::from_str::<serde_json::Value>(stdout.trim()) {
-                Ok(value) => {
-                    if let Some(err) = json_error(&value) {
-                        set_status(&status, &format!("Failed: {}", err));
-                    } else {
-                        set_status(&status, "ran (finished)");
-                    }
-                }
-                Err(_) => {
-                    if output.status.success() {
-                        set_status(&status, "ran (finished)");
-                    } else {
-                        set_status(&status, "Failed to launch");
-                    }
-                }
-            }
-        }
-        Err(err) => {
-            set_status(&status, &format!("failed to launch: {}", err));
-            log!("Failed to spawn aurelia play", id, err);
-        }
-    }
+pub fn play(
+    id: i32,
+    status: Arc<Mutex<Option<GameStatus>>>,
+) -> crate::interface::launch::PlayOutcome {
+    crate::interface::launch::play_saved(id, status)
 }
 
 // ===========================================================================
@@ -2572,6 +2495,9 @@ pub struct GameConfigJson {
     /// How the master Steam prefix backs this game: `"Shared"` or `"PerGame"`.
     #[serde(default)]
     pub steam_prefix_mode: Option<String>,
+    /// Launch options and Wine prefix.
+    #[serde(flatten)]
+    pub launch: crate::interface::play_settings::GameLaunchJson,
 }
 
 /// Extra launch flags for [`play_with`], mirroring `aurelia play`'s options.
@@ -2600,6 +2526,8 @@ pub struct PlayOpts {
     pub steam_mode: Option<String>,
     /// Skip the pre-launch update check (`--no-update`).
     pub no_update: bool,
+    /// Skip Vulkan shaders (`--skip-shaders`).
+    pub skip_shaders: bool,
 }
 
 /// One way an installed game can be started, from `aurelia launch-targets <id>
@@ -3176,8 +3104,11 @@ pub fn config_game_clear_launch_script(app_id: i32) -> Result<(), STError> {
 /// Launch a game with extra options (`aurelia play <id> [flags] --json`),
 /// mirroring [`play`] but appending the flags set in `opts`. Intended to be run
 /// on a dedicated thread.
-pub fn play_with(id: i32, opts: PlayOpts, status: Arc<Mutex<Option<GameStatus>>>) {
-    set_status(&status, "launching...");
+pub fn play_with(
+    id: i32,
+    opts: PlayOpts,
+    status: Arc<Mutex<Option<GameStatus>>>,
+) -> crate::interface::launch::PlayOutcome {
 
     let id_str = id.to_string();
     let mut args: Vec<&str> = vec!["play", &id_str];
@@ -3215,38 +3146,9 @@ pub fn play_with(id: i32, opts: PlayOpts, status: Arc<Mutex<Option<GameStatus>>>
     if opts.no_update {
         args.push("--no-update");
     }
-    args.push("--json");
-
-    let output = aurelia_log::output(
-        process::Command::new(bin())
-            .args(&args)
-            .stdin(process::Stdio::null()),
-        &format!("play {id}"),
-    );
-
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            match serde_json::from_str::<serde_json::Value>(stdout.trim()) {
-                Ok(value) => {
-                    if let Some(err) = json_error(&value) {
-                        set_status(&status, &format!("Failed: {}", err));
-                    } else {
-                        set_status(&status, "ran (finished)");
-                    }
-                }
-                Err(_) => {
-                    if output.status.success() {
-                        set_status(&status, "ran (finished)");
-                    } else {
-                        set_status(&status, "Failed to launch");
-                    }
-                }
-            }
-        }
-        Err(err) => {
-            set_status(&status, &format!("failed to launch: {}", err));
-            log!("Failed to spawn aurelia play", id, err);
-        }
+    if opts.skip_shaders {
+        args.push("--skip-shaders");
     }
+    args.push("--json");
+    crate::interface::launch::run_play(id, &args, &status)
 }

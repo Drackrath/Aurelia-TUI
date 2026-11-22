@@ -1,0 +1,14 @@
+{
+  "app_id": 620,
+  "forced_proton_version": null,
+  "platform_preference": null,
+  "runner": "auto",
+  "launch_script": null,
+  "steam_runtime_policy": "Auto",
+  "steam_prefix_mode": "Shared",
+  "launch_options": "",
+  "cloud_sync": null,
+  "cloud_sync_effective": true,
+  "prefix_dir": null,
+  "wine_prefix": "/home/user/.local/share/Steam/steamapps/compatdata/620/pfx"
+}

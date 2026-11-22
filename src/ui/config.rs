@@ -7,6 +7,7 @@ use tui::widgets::{Cell, Row, Table};
 
 use crate::browse::Browser;
 use crate::config::Config;
+use crate::interface::binary;
 use crate::theme;
 
 /// One key-value row in the settings table.
@@ -42,17 +43,51 @@ fn proxy_value(browser: &Browser) -> String {
     }
 }
 
+/// Presence, noting offline means invisible.
+fn presence_value(value: &Option<String>) -> String {
+    match value.as_deref() {
+        Some("offline") => "offline (invisible)".to_string(),
+        _ => opt(value),
+    }
+}
+
+/// Persona wait, or live edit.
+fn persona_wait_value(browser: &Browser, secs: Option<u64>) -> String {
+    if let Some(input) = &browser.social.wait_input {
+        return format!("{input}_ s");
+    }
+    let secs = secs.unwrap_or(crate::interface::social::PERSONA_WAIT_DEFAULT);
+    format!("{secs}s (profile status wait)")
+}
+
 /// Build the settings overlay content from the fetched launcher configuration.
 pub fn config(browser: &Browser) -> Table<'static> {
     // Local preferences must remain visible without a working launcher. Keep
     // the switch first so it is also reachable in shorter settings panels.
-    let mut rows = vec![row(
-        "HowLongToBeat",
-        yes_no(Config::cached().hltb_enabled),
-    )];
+    let mut rows = vec![
+        row("HowLongToBeat", yes_no(Config::cached().hltb_enabled)),
+        row(
+            "Auto cloud sync (TUI)",
+            yes_no(Config::cached().auto_cloud_sync),
+        ),
+        row(
+            "Aurelia binary",
+            binary::describe(browser.config_binary_input.as_deref()),
+        ),
+        row(
+            "Store language",
+            crate::interface::library_info::language_label(
+                Config::cached().info_language.as_deref(),
+            ),
+        ),
+    ];
     rows.extend(match &browser.config_info {
         Some(info) => vec![
-            row("Presence", opt(&info.chat_presence)),
+            row("Presence", presence_value(&info.chat_presence)),
+            row(
+                "Persona wait",
+                persona_wait_value(browser, info.persona_wait_secs),
+            ),
             row("Proton", opt(&info.proton_version)),
             row("Library", opt(&info.steam_library_path)),
             row("Prefix mode", opt(&info.steam_prefix_mode)),
@@ -75,16 +110,27 @@ pub fn config(browser: &Browser) -> Table<'static> {
         ],
         None => vec![row("Launcher", "Unavailable".into())],
     });
+    let play = crate::ui::play_settings::settings_rows(browser);
+    rows.extend(play.into_iter().map(|(label, value)| row(label, value)));
+    rows.push(row(
+        "Download limit [d]",
+        crate::ui::install_queue::limit_value(browser),
+    ));
     // Keep the inline editor visible if the launcher read failed. Otherwise its
     // title would invite typing while the edited URL itself was hidden.
     if browser.config_info.is_none() && browser.config_proxy_input.is_some() {
         rows.push(row("Proxy", proxy_value(browser)));
     }
 
-    let title = if browser.config_proxy_input.is_some() {
+    let title = if browser.config_binary_input.is_some() {
+        "Settings — aurelia path ([Enter] save · [Esc] cancel · empty = auto)".to_string()
+    } else if browser.social.wait_input.is_some() {
+        "Settings — persona wait, 1-300 s ([Enter] save · [Esc] cancel)".to_string()
+    } else if browser.config_proxy_input.is_some() {
         "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
     } else {
-        "Settings ([h] HLTB · [o] presence · [e] edit proxy · [c] clear proxy)".to_string()
+        "Settings ([h] HLTB · [b] binary · [l] language · [o] presence · [w] persona wait · [e]/[c] proxy · [s] shaders · [a] anti-cheat · [g] cloud sync · [t] TUI cloud)"
+            .to_string()
     };
 
     Table::new(rows)

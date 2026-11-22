@@ -1,0 +1,10 @@
+{
+  "app_id": 70,
+  "platform": "windows",
+  "download_size": 5368709120,
+  "disk_size": 9663676416,
+  "depot_count": 2,
+  "languages": ["english", "german", "schinese"],
+  "default_language": "german",
+  "installed_language": null
+}

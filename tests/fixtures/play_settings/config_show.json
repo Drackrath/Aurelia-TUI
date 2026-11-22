@@ -1,0 +1,12 @@
+{
+  "steam_library_path": "/home/user/.local/share/Steam",
+  "proton_version": "GE-Proton9-20",
+  "chat_presence": "online",
+  "enable_cloud_sync": true,
+  "luxtorpeda_enabled": false,
+  "game_configs": {},
+  "install_resume": "manual",
+  "shader_precache": "off",
+  "hide_uninstalled_launch_options": true,
+  "anticheat_auto_install": false
+}

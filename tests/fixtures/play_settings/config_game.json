@@ -1,0 +1,14 @@
+{
+  "app_id": 1245620,
+  "forced_proton_version": "GE-Proton9-20",
+  "platform_preference": "windows",
+  "runner": "auto",
+  "launch_script": null,
+  "steam_runtime_policy": "Auto",
+  "steam_prefix_mode": "Shared",
+  "launch_options": "PROTON_LOG=1 nice -n 5 %command% -windowed",
+  "cloud_sync": null,
+  "cloud_sync_effective": true,
+  "prefix_dir": "/home/user/Games/Elden",
+  "wine_prefix": "/home/user/Games/Elden/pfx"
+}
