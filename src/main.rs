@@ -24,6 +24,7 @@ use aurelia_tui::app::{App, Mode};
 use aurelia_tui::client::{Client, State};
 use aurelia_tui::config::Config;
 use aurelia_tui::interface::aurelia::{self, LoginPhase};
+use aurelia_tui::interface::cloud_sync;
 use aurelia_tui::util::stateful::Named;
 
 /// Blend `img` toward `bg` so the top-aligned cover art reads as a translucent
@@ -188,6 +189,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // any targeted single-game refresh that landed — so `installed` (which
         // gates uninstall) tracks reality without a full-screen reload.
         browser.poll_install_completions();
+        for id in aurelia_tui::interface::cloud_play::take_refresh_requests() {
+            browser.request_game_refresh(id);
+        }
         browser.poll_game_refresh();
 
         // A just-finished Proton install flips a runtime to [installed]; pick
@@ -583,6 +587,21 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         );
                     }
                 }
+
+                // Cloud conflict prompt floats above everything.
+                if let Some(prompt) = cloud_sync::prompt_view() {
+                    let name = browser.cloud_game_name(prompt.app_id);
+                    let area = ui::centered_rect(64, 50, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(
+                        ui::cloud_sync::conflict(
+                            &prompt,
+                            name.as_deref(),
+                            aurelia_tui::interface::cloud_status::now(),
+                        ),
+                        area,
+                    );
+                }
             } else {
                 // Login / loading / terminated screens use the simple two-pane layout.
                 let layout = App::build_layout();
@@ -670,7 +689,19 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     // Any keypress dismisses a transient notice from the prior
                     // action (it is set again below if this action also fails).
                     browser.notice = None;
-                    if browser.show_actions {
+                    if cloud_sync::prompt_pending() {
+                        // Cloud conflict prompt is modal.
+                        match input {
+                            KeyCode::Char('c') => {
+                                browser.answer_cloud_conflict(Some(cloud_sync::Resolve::Cloud))
+                            }
+                            KeyCode::Char('l') => {
+                                browser.answer_cloud_conflict(Some(cloud_sync::Resolve::Local))
+                            }
+                            KeyCode::Esc | KeyCode::Char('n') => browser.answer_cloud_conflict(None),
+                            _ => {}
+                        }
+                    } else if browser.show_actions {
                         // Per-game Actions menu (command palette): arrows move,
                         // typing filters, Enter runs the highlighted action via
                         // the SAME code path as its base-keymap accelerator.
@@ -1342,6 +1373,18 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 KeyCode::Char('e') => browser.begin_proxy_edit(),
                                 KeyCode::Char('c') => browser.clear_proxy(),
+                                KeyCode::Char('s') => browser.toggle_cloud_sync_global(),
+                                KeyCode::Char('a') => {
+                                    let mut updated = config.clone();
+                                    updated.auto_cloud_sync = !updated.auto_cloud_sync;
+                                    match updated.save() {
+                                        Ok(()) => config = updated,
+                                        Err(error) => {
+                                            browser.notice =
+                                                Some(format!("Cloud sync setting: {error}"));
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
                         }

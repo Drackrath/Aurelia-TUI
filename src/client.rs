@@ -4,6 +4,7 @@
 //! client so the UI event loop is unchanged.
 
 use crate::interface::aurelia::{self, LoginPhase};
+use crate::interface::cloud_play;
 use crate::interface::game::{self, Game};
 use crate::interface::game_status::GameStatus;
 
@@ -268,10 +269,16 @@ fn execute(
                 thread::spawn(move || aurelia::update(id, status));
             }
             Command::Run(id, status) => {
-                thread::spawn(move || aurelia::play(id, status));
+                thread::spawn(move || {
+                    cloud_play::around_play(id, &status.clone(), || aurelia::play(id, status))
+                });
             }
             Command::RunWith(id, opts, status) => {
-                thread::spawn(move || aurelia::play_with(id, opts, status));
+                thread::spawn(move || {
+                    cloud_play::around_play(id, &status.clone(), || {
+                        aurelia::play_with(id, opts, status)
+                    })
+                });
             }
             Command::ProtonInstall(name, status) => {
                 thread::spawn(move || aurelia::proton_install(name, status));

@@ -50,6 +50,10 @@ pub fn config(browser: &Browser) -> Table<'static> {
         "HowLongToBeat",
         yes_no(Config::cached().hltb_enabled),
     )];
+    rows.push(row(
+        "Auto cloud sync (TUI)",
+        yes_no(Config::cached().auto_cloud_sync),
+    ));
     rows.extend(match &browser.config_info {
         Some(info) => vec![
             row("Presence", opt(&info.chat_presence)),
@@ -84,7 +88,7 @@ pub fn config(browser: &Browser) -> Table<'static> {
     let title = if browser.config_proxy_input.is_some() {
         "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
     } else {
-        "Settings ([h] HLTB · [o] presence · [e] edit proxy · [c] clear proxy)".to_string()
+        "Settings ([h] HLTB · [a] TUI cloud · [s] cloud sync · [o] presence · [e] edit proxy · [c] clear proxy)".to_string()
     };
 
     Table::new(rows)

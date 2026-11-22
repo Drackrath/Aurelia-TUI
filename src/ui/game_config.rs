@@ -37,13 +37,20 @@ pub fn game_config(browser: &Browser) -> Paragraph<'static> {
         _ => "(none)".to_string(),
     };
 
-    let rows: [(&str, String); 6] = [
+    let cloud = browser
+        .game_cloud_sync
+        .as_ref()
+        .map(|c| c.label())
+        .unwrap_or_else(|| "(unknown)".to_string());
+
+    let rows: [(&str, String); 7] = [
         ("Runner", runner),
         ("Forced Proton", proton),
         ("Platform", platform),
         ("Steam runtime", steam_runtime),
         ("Steam prefix", steam_prefix),
         ("Launch script", script),
+        ("Cloud sync", cloud),
     ];
 
     let mut lines: Vec<Spans<'static>> = Vec::new();

@@ -127,6 +127,16 @@ fn build_content(
                 );
             }
 
+            if let Some(cloud) = super::cloud_sync::detail_value(g.id) {
+                push(
+                    Row::new(vec![
+                        Cell::from(Span::styled("Cloud", theme::label())),
+                        Cell::from(Span::styled(cloud, theme::value())),
+                    ]),
+                    1,
+                );
+            }
+
             // Check the preference at render time too: an in-flight lookup may
             // finish after disabling, but its result must stay hidden.
             if crate::config::Config::cached().hltb_enabled

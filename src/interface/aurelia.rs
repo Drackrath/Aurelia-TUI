@@ -1184,7 +1184,7 @@ fn json_error(value: &serde_json::Value) -> Option<String> {
 ///
 /// Errors surface as `{"error": "..."}` on stdout; that is translated into an
 /// `STError::Problem`. stderr (tracing/diagnostics) is discarded.
-fn run_json(args: &[&str]) -> Result<serde_json::Value, STError> {
+pub(crate) fn run_json(args: &[&str]) -> Result<serde_json::Value, STError> {
     let output = process::Command::new(bin())
         .args(args)
         .arg("--json")

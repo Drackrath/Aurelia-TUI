@@ -522,6 +522,8 @@ pub struct Browser {
     game_config_app_id: i32,
     /// A transient status line for the settings overlay.
     pub game_config_status: String,
+    /// Cloud switch of that game.
+    pub game_cloud_sync: Option<crate::interface::cloud_sync::GameCloudSync>,
 
     // --- Collections overlay ---
     /// Whether the collections overlay is open.
@@ -761,6 +763,7 @@ impl Browser {
             game_config_index: 0,
             game_config_app_id: 0,
             game_config_status: String::new(),
+            game_cloud_sync: None,
             show_collections: false,
             collections: Vec::new(),
             collections_index: 0,
@@ -1226,20 +1229,7 @@ impl Browser {
     /// Sync the game's Steam Cloud saves in `direction` (blocking), then re-fetch
     /// the list. `Both` syncs down then up; `Down`/`Up` restrict the transfer.
     pub fn sync_cloud(&mut self, app_id: i32, direction: aurelia::CloudDirection) {
-        self.cloud_status = "syncing...".to_string();
-        if let Err(err) = aurelia::cloud_sync(app_id, direction) {
-            self.cloud_status = format!("Failed: {}", err);
-            return;
-        }
-        self.refresh_cloud(app_id);
-        if self.cloud_status.is_empty() {
-            self.cloud_status = match direction {
-                aurelia::CloudDirection::Both => "synced",
-                aurelia::CloudDirection::Down => "downloaded",
-                aurelia::CloudDirection::Up => "uploaded",
-            }
-            .to_string();
-        }
+        self.run_cloud_sync(app_id, direction, None);
     }
 
     /// Close the Steam Cloud overlay and drop its state.
@@ -3256,14 +3246,17 @@ impl Browser {
     // --- Game settings overlay (per-game config overrides + launch script) ---
 
     /// Number of editable rows in the game-settings overlay: Runner, Forced
-    /// Proton, Platform, Steam runtime, Steam prefix, Launch script.
-    pub const GAME_CONFIG_ROWS: usize = 6;
+    /// Proton, Platform, Steam runtime, Steam prefix, Launch script, Cloud sync.
+    pub const GAME_CONFIG_ROWS: usize = 7;
+    /// Row index of "Cloud sync".
+    pub const GAME_CONFIG_CLOUD_ROW: usize = 6;
 
     /// Fetch the game's per-game config, launch-script state, and the installed
     /// Proton list (for cycling the forced runtime) and open the overlay.
     pub fn open_game_config(&mut self, app_id: i32) {
         self.game_config = aurelia::config_game_show(app_id).ok();
         self.game_script = aurelia::scripts_show(app_id).ok();
+        self.game_cloud_sync = crate::interface::cloud_sync::game(app_id).ok();
         self.game_config_protons = aurelia::proton_list()
             .map(|v| v.into_iter().filter(|p| p.installed).map(|p| p.name).collect())
             .unwrap_or_default();
@@ -3302,6 +3295,11 @@ impl Browser {
     /// Activate (Enter) the highlighted settings row, cycling its value.
     pub fn game_config_activate(&mut self) {
         let id = self.game_config_app_id;
+        if self.game_config_index == Self::GAME_CONFIG_CLOUD_ROW {
+            self.game_config_status =
+                crate::browse_cloud::cycle_game_cloud(id, &mut self.game_cloud_sync);
+            return;
+        }
         match self.game_config_index {
             // Runner: auto → umu → luxtorpeda → auto.
             0 => {

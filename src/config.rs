@@ -28,9 +28,16 @@ pub struct Config {
     /// existing enabled behavior without resetting favourites or hidden games.
     #[serde(default = "default_hltb_enabled")]
     pub hltb_enabled: bool,
+    /// Sync saves around play.
+    #[serde(default = "default_auto_cloud_sync")]
+    pub auto_cloud_sync: bool,
 }
 
 fn default_hltb_enabled() -> bool {
+    true
+}
+
+fn default_auto_cloud_sync() -> bool {
     true
 }
 
@@ -43,6 +50,7 @@ impl Default for Config {
             allowed_games: vec![GameType::Game, GameType::DLC],
             highlight: theme::ACCENT,
             hltb_enabled: default_hltb_enabled(),
+            auto_cloud_sync: default_auto_cloud_sync(),
         }
     }
 }
