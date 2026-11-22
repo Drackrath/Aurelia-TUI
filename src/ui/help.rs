@@ -106,6 +106,8 @@ fn entries() -> Vec<Entry> {
         Entry::Binding("t", "chat in new window"),
         Entry::Binding("a", "add friend (Friends)"),
         Entry::Binding("x", "remove friend (Friends)"),
+        Entry::Binding("i", "invite to game (Friends)"),
+        Entry::Binding("p / m", "friend / own profile"),
         Entry::Binding("A then o", "log out"),
         Entry::Binding("w", "wallet balance"),
         Entry::Binding("l", "sign in again"),

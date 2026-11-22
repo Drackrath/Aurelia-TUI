@@ -42,6 +42,23 @@ fn proxy_value(browser: &Browser) -> String {
     }
 }
 
+/// Presence, noting offline means invisible.
+fn presence_value(value: &Option<String>) -> String {
+    match value.as_deref() {
+        Some("offline") => "offline (invisible)".to_string(),
+        _ => opt(value),
+    }
+}
+
+/// Persona wait, or live edit.
+fn persona_wait_value(browser: &Browser, secs: Option<u64>) -> String {
+    if let Some(input) = &browser.social.wait_input {
+        return format!("{input}_ s");
+    }
+    let secs = secs.unwrap_or(crate::interface::social::PERSONA_WAIT_DEFAULT);
+    format!("{secs}s (profile status wait)")
+}
+
 /// Build the settings overlay content from the fetched launcher configuration.
 pub fn config(browser: &Browser) -> Table<'static> {
     // Local preferences must remain visible without a working launcher. Keep
@@ -52,7 +69,11 @@ pub fn config(browser: &Browser) -> Table<'static> {
     )];
     rows.extend(match &browser.config_info {
         Some(info) => vec![
-            row("Presence", opt(&info.chat_presence)),
+            row("Presence", presence_value(&info.chat_presence)),
+            row(
+                "Persona wait",
+                persona_wait_value(browser, info.persona_wait_secs),
+            ),
             row("Proton", opt(&info.proton_version)),
             row("Library", opt(&info.steam_library_path)),
             row("Prefix mode", opt(&info.steam_prefix_mode)),
@@ -81,10 +102,12 @@ pub fn config(browser: &Browser) -> Table<'static> {
         rows.push(row("Proxy", proxy_value(browser)));
     }
 
-    let title = if browser.config_proxy_input.is_some() {
+    let title = if browser.social.wait_input.is_some() {
+        "Settings — persona wait, 1-300 s ([Enter] save · [Esc] cancel)".to_string()
+    } else if browser.config_proxy_input.is_some() {
         "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
     } else {
-        "Settings ([h] HLTB · [o] presence · [e] edit proxy · [c] clear proxy)".to_string()
+        "Settings ([h] HLTB · [o] presence · [w] persona wait · [e] edit proxy · [c] clear proxy)".to_string()
     };
 
     Table::new(rows)
