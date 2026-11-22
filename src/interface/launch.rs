@@ -578,7 +578,40 @@ pub struct LaunchUi {
     pub saved: Option<String>,
     /// Off-thread Steam runtime install.
     pub runtime: RuntimeInstall,
+    /// Awaiting `y` for runtime install.
+    pub confirm_runtime: bool,
 }
+
+/// Short tag for missing piece.
+pub fn missing_short(target: &LaunchTargetJson) -> String {
+    match target.missing.as_deref() {
+        Some("build") => "no build".to_string(),
+        Some("steam-runtime") => "needs Steam runtime".to_string(),
+        Some("host-steam") => "needs host Steam".to_string(),
+        Some(other) => format!("needs {other}"),
+        None => "unavailable".to_string(),
+    }
+}
+
+/// Full sentence for a missing piece.
+pub fn missing_long(target: &LaunchTargetJson) -> String {
+    let build = match target.platform.as_str() {
+        "linux" => "Linux",
+        "windows" => "Windows",
+        other => other,
+    };
+    match target.missing.as_deref() {
+        Some("build") => format!("the {build} build is not installed."),
+        Some("steam-runtime") => "the Steam runtime (in-Wine Steam) is not installed.".to_string(),
+        Some("host-steam") => "Steam is not installed on this system.".to_string(),
+        Some(other) => format!("{other} is missing."),
+        None => "it can't be launched right now.".to_string(),
+    }
+}
+
+/// Confirm prompt for the runtime install.
+pub const RUNTIME_CONFIRM: &str = "Install the Steam runtime (in-Wine Steam)? \
+     Steam downloads its client; size unknown. [y] install, any other key cancels.";
 
 /// Progress line with a spinner.
 pub fn runtime_progress_text(elapsed: Duration) -> String {

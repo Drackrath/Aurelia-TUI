@@ -273,16 +273,13 @@ fn launch_targets_overlay_renders_targets() {
     ];
     let text = render(70, 10, |f| {
         f.render_widget(
-            ui::launch_targets::launch_targets(&browser),
+            ui::launch_targets::launch_targets(&browser, Rect::new(0, 0, 70, 10)),
             Rect::new(0, 0, 70, 10),
         );
     });
     assert!(text.contains("Linux (native)"), "native target renders");
-    assert!(text.contains("[default]"), "default target is tagged");
-    assert!(
-        text.contains("missing: build"),
-        "unavailable target says why"
-    );
+    assert!(text.contains("[auto]"), "default target is tagged");
+    assert!(text.contains("(no build)"), "unavailable target says why");
 
     // The unavailable target refuses to launch and says so.
     browser.launch_targets_index = 1;
