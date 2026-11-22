@@ -190,6 +190,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         browser.poll_social();
         browser.poll_hltb();
         browser.poll_library_info();
+        browser.poll_account();
         browser.poll_launch_runtime();
         browser.poll_launch_notices();
 
@@ -348,12 +349,17 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     detail_area,
                 );
 
-                frame.render_widget(
-                    ui::status::status_bar(&browser, client.get_account().as_deref()),
-                    chunks[2],
-                );
                 // Bottom-right corner, right of the key hints.
                 let aurelia_version = capabilities::version();
+                frame.render_widget(
+                    ui::status::status_bar_fit(
+                        &browser,
+                        client.get_account().as_deref(),
+                        chunks[2],
+                        aurelia_version.as_deref(),
+                    ),
+                    chunks[2],
+                );
                 frame.render_widget(
                     ui::status::version_badge(aurelia_version.as_deref()),
                     ui::status::version_badge_area(chunks[2], aurelia_version.as_deref()),
@@ -407,9 +413,10 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Help overlay floats above everything.
                 if browser.show_help {
-                    let area = ui::centered_rect(64, 84, frame.size());
+                    let area = ui::centered_rect(90, 90, frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::help::help(browser.help_scroll), area);
+                    let help = ui::help::help_in(browser.help_scroll, area.width, area.height);
+                    frame.render_widget(help, area);
                 }
 
                 // Steam Cloud overlay floats above everything.
@@ -434,7 +441,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Settings overlay floats above everything.
                 if browser.show_config {
-                    let area = ui::centered_rect(55, 60, frame.size());
+                    let area = ui::centered_rect(80, 80, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::config::config_in(&browser, area.height), area);
                 }
@@ -455,9 +462,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Per-game Actions menu (command palette) floats above the library.
                 if browser.show_actions {
-                    let area = ui::centered_rect(60, 78, frame.size());
+                    let area = ui::centered_rect(70, 84, frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::actions::actions(&browser), area);
+                    frame.render_widget(ui::actions::actions_in(&browser, area.height), area);
+                }
+                if browser.confirm_reconnect {
+                    let area = ui::centered_rect(50, 30, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::confirm::confirm_reconnect(), area);
                 }
 
                 // Versions & pinning overlay floats above everything.
@@ -860,14 +872,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                                 browser.refresh();
                                             }
                                             Action::AureliaLog => browser.aurelia_log.open(),
-                                            Action::Reconnect => {
-                                                browser.notice =
-                                                    Some(if browser.reconnect.start() {
-                                                        "Reconnecting Steam session...".into()
-                                                    } else {
-                                                        "Reconnect already running".into()
-                                                    });
-                                            }
+                                            // Logs on again; ask first.
+                                            Action::Reconnect => browser.confirm_reconnect = true,
                                             Action::SteamDb => browser.open_steamdb(),
                                             Action::PlaySkipShaders => {
                                                 let opts = aurelia::PlayOpts {
@@ -888,9 +894,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                             Action::Settings => {
                                                 let _ = browser.open_config();
                                             }
-                                            Action::Account => {
-                                                let _ = browser.open_account();
-                                            }
+                                            Action::Account => browser.open_account(),
                                             Action::Wallet => {
                                                 let _ = browser.open_wallet();
                                             }
@@ -914,6 +918,15 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             KeyCode::Char(c) => browser.actions_filter_push(c),
                             _ => {}
+                        }
+                    } else if browser.confirm_reconnect {
+                        browser.confirm_reconnect = false;
+                        if matches!(input, KeyCode::Char('y') | KeyCode::Char('Y')) {
+                            browser.notice = Some(if browser.reconnect.start() {
+                                "Reconnecting Steam session...".into()
+                            } else {
+                                "Reconnect already running".into()
+                            });
                         }
                     } else if browser.aurelia_log.open {
                         browser.aurelia_log.handle_key(input);
@@ -1493,9 +1506,20 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => browser.help_scroll_up(),
                             _ => {}
                         }
+                        // Clamp to the real popup.
+                        let size = terminal.size()?;
+                        let area = ui::centered_rect(90, 90, size);
+                        let max = ui::help::max_scroll(area.width, area.height);
+                        browser.help_scroll = browser.help_scroll.min(max);
                     } else if browser.show_account {
                         // `o` then `y` logs out.
                         match input {
+                            _ if browser.confirm_logout
+                                && !matches!(input, KeyCode::Char('y') | KeyCode::Char('Y')) =>
+                            {
+                                browser.confirm_logout = false
+                            }
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_account(),
                             KeyCode::Char('o') if !browser.confirm_logout => {
                                 browser.confirm_logout = true;
                             }
@@ -1507,18 +1531,19 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     Err(error) => format!("Logout failed: {error}"),
                                 };
                                 client.set_last_error(Some(status));
-                                browser.show_account = false;
+                                browser.close_account();
                                 app.mode = Mode::Login;
                             }
-                            // Cancels a pending logout first.
-                            _ if browser.confirm_logout => browser.confirm_logout = false,
-                            _ => browser.show_account = false,
+                            // Only Esc/q close it.
+                            _ => {}
                         }
                     } else if browser.show_config {
                         // Settings overlay. While editing the proxy URL, keys edit
                         // that input; otherwise dismiss / toggle presence / edit or
                         // clear the proxy, or toggle TUI-owned HLTB lookups in place.
-                        if browser.download_limit.input.is_some() {
+                        if browser.config_language_pick.is_some() {
+                            settings::language_key(&mut browser, &mut config, input);
+                        } else if browser.download_limit.input.is_some() {
                             match input {
                                 KeyCode::Esc => browser.cancel_limit_edit(),
                                 KeyCode::Char('\n') | KeyCode::Enter => browser.commit_limit_edit(),
@@ -1530,13 +1555,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             match input {
                                 KeyCode::Esc => browser.config_binary_input = None,
                                 KeyCode::Char('\n') | KeyCode::Enter => {
-                                    let typed =
-                                        browser.config_binary_input.take().unwrap_or_default();
-                                    browser.notice =
-                                        match binary::set_configured(&mut config, &typed) {
-                                            Ok(notice) => notice,
-                                            Err(error) => Some(error),
-                                        };
+                                    settings::commit_binary(&mut browser, &mut config)
                                 }
                                 KeyCode::Backspace => {
                                     if let Some(s) = browser.config_binary_input.as_mut() {
@@ -1623,11 +1642,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 browser.help_scroll = 0;
                                 browser.show_help = true;
                             }
-                            KeyCode::Char('A') => {
-                                // Fetch the account (blocking) and open the overlay;
-                                // ignore failures so a missing session is non-fatal.
-                                let _ = browser.open_account();
-                            }
+                            // Opens at once, loads off-thread.
+                            KeyCode::Char('A') => browser.open_account(),
                             KeyCode::Char('p') => {
                                 // Fetch the launcher configuration (blocking) and
                                 // open the settings overlay; ignore failures.

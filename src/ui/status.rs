@@ -79,67 +79,105 @@ pub fn version_badge(version: Option<&str>) -> Paragraph<'static> {
     Paragraph::new(Spans::from(Span::styled(text, style))).alignment(Alignment::Right)
 }
 
-/// Build the footer status bar (a borderless two-line footer).
+/// Footer status bar, unclipped.
 pub fn status_bar(browser: &Browser, account: Option<&str>) -> Paragraph<'static> {
-    let c = browser.counts();
+    status_bar_in(browser, account, usize::MAX)
+}
 
-    // --- Line 1: status ---
-    let mut line1: Vec<Span<'static>> = Vec::new();
-
-    // A transient notice (e.g. a failed action) takes the front of the line in
-    // the warning colour until the next keypress clears it.
-    if let Some(notice) = &browser.notice {
-        line1.push(Span::styled(
-            notice.clone(),
-            Style::default().fg(theme::WARN),
-        ));
-        line1.push(sep());
+/// Footer fitted to `area`, beside the badge.
+pub fn status_bar_fit(
+    browser: &Browser,
+    account: Option<&str>,
+    area: Rect,
+    version: Option<&str>,
+) -> Paragraph<'static> {
+    let badge = version_badge_area(area, version);
+    let mut width = usize::from(area.width);
+    if badge.y == area.y {
+        // Badge shares the top row.
+        width = width.saturating_sub(version_badge_text(version).0.chars().count() + 2);
     }
+    status_bar_in(browser, account, width)
+}
 
-    // Live query, shown prominently when filtering or a query is present.
+/// One status part; lower rank drops first.
+struct Part {
+    rank: u8,
+    text: String,
+    style: Style,
+}
+
+/// Status line parts by priority.
+fn parts(browser: &Browser, account: Option<&str>) -> Vec<Part> {
+    let c = browser.counts();
+    let mut parts = Vec::new();
+    let mut add = |rank, text: String, style| parts.push(Part { rank, text, style });
+    if let Some(notice) = &browser.notice {
+        add(9, notice.clone(), Style::default().fg(theme::WARN));
+    }
     if browser.filtering || !browser.query.is_empty() {
         let mut q = format!("/{}", browser.query);
         if browser.filtering {
             q.push('▏');
         }
-        line1.push(Span::styled(q, theme::accent()));
-        line1.push(sep());
+        add(8, q, theme::accent());
     }
-
-    line1.push(Span::styled(
+    add(
+        7,
         format!("{}/{} shown", c.visible, c.total),
         Style::default().fg(theme::TEXT),
-    ));
-
-    line1.push(sep());
-    line1.push(Span::styled(
+    );
+    add(
+        3,
         format!("● {} installed", c.installed),
         Style::default().fg(theme::ONLINE),
-    ));
-
-    line1.push(sep());
-    line1.push(Span::styled(
+    );
+    add(
+        4,
         format!("▲ {} updates", c.updates),
         Style::default().fg(theme::WARN),
-    ));
-
+    );
     if c.downloading > 0 {
-        line1.push(sep());
-        line1.push(Span::styled(
+        add(
+            6,
             format!("⬇ {} downloading", c.downloading),
             Style::default().fg(theme::ACCENT_BRIGHT),
-        ));
+        );
+    }
+    add(2, format!("sort: {}", browser.sort.label()), theme::dim());
+    if let Some(a) = account {
+        add(1, format!("steam: {}", a), theme::accent());
+    }
+    parts
+}
+
+/// Width of parts joined by separators.
+fn joined_width(parts: &[Part]) -> usize {
+    let text: usize = parts.iter().map(|p| p.text.chars().count()).sum();
+    text + parts.len().saturating_sub(1) * 5
+}
+
+/// Status bar whose top line fits `width`.
+pub fn status_bar_in(browser: &Browser, account: Option<&str>, width: usize) -> Paragraph<'static> {
+    let mut parts = parts(browser, account);
+    // Drop low-priority parts until it fits.
+    while joined_width(&parts) > width && parts.len() > 1 {
+        let lowest = (0..parts.len()).min_by_key(|&i| parts[i].rank).unwrap_or(0);
+        parts.remove(lowest);
+    }
+    if let Some(only) = parts.first_mut()
+        && joined_width(std::slice::from_ref(only)) > width
+    {
+        let keep = width.saturating_sub(1);
+        only.text = only.text.chars().take(keep).collect::<String>() + "…";
     }
 
-    line1.push(sep());
-    line1.push(Span::styled(
-        format!("sort: {}", browser.sort.label()),
-        theme::dim(),
-    ));
-
-    if let Some(a) = account {
-        line1.push(sep());
-        line1.push(Span::styled(format!("steam: {}", a), theme::accent()));
+    let mut line1: Vec<Span<'static>> = Vec::new();
+    for (i, part) in parts.into_iter().enumerate() {
+        if i > 0 {
+            line1.push(sep());
+        }
+        line1.push(Span::styled(part.text, part.style));
     }
 
     // --- Line 2: key hints ---

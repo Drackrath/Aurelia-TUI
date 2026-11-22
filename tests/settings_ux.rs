@@ -84,13 +84,12 @@ fn without_launcher_only_local_rows() {
 }
 
 #[test]
-fn selection_wraps_and_shows_help() {
+fn selection_clamps_and_shows_help() {
     isolate_config();
     let mut b = launcher_browser();
     assert_eq!(settings::selected(&b), Some(Setting::Hltb));
     settings::previous(&mut b);
-    assert_eq!(settings::selected(&b), Some(Setting::Proxy));
-    settings::next(&mut b);
+    assert_eq!(settings::selected(&b), Some(Setting::Hltb), "no wrap up");
     settings::next(&mut b);
     assert_eq!(settings::selected(&b), Some(Setting::AutoCloudSync));
     let out = render(&b, 100, 40);

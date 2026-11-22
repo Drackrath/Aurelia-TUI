@@ -14,10 +14,10 @@ enum Entry {
     Blank,
 }
 
-/// Width of a single column (the half the overlay devotes to one entry).
-const COL_WIDTH: usize = 46;
-/// Width of the key field within a binding column.
-const KEY_WIDTH: usize = 18;
+/// Width of one help column.
+pub const COL_WIDTH: usize = 48;
+/// Key field width, gap included.
+const KEY_WIDTH: usize = 20;
 
 /// Render a single entry into the spans for one half of a row.
 fn entry_spans(entry: &Entry) -> Vec<Span<'static>> {
@@ -29,7 +29,7 @@ fn entry_spans(entry: &Entry) -> Vec<Span<'static>> {
                 .add_modifier(Modifier::BOLD),
         )],
         Entry::Binding(keys, desc) => {
-            let keys_field = format!("  {:<16}", keys);
+            let keys_field = format!("  {:<17} ", keys);
             // Clamp the description to whatever space remains in the column so
             // the two columns stay aligned regardless of entry length.
             let desc_width = COL_WIDTH.saturating_sub(KEY_WIDTH);
@@ -170,39 +170,75 @@ fn entries() -> Vec<Entry> {
     ]
 }
 
-/// The number of rendered rows (each row pairs two entries side by side).
+/// Rows in the single-column layout.
 pub fn row_count() -> u16 {
-    entries().len().div_ceil(2) as u16
+    entries().len() as u16
 }
 
-/// Build the help overlay content as a two-column paragraph.
-///
-/// `scroll` is the vertical row offset applied so the overlay can be scrolled
-/// when the bindings overflow the popup.
-pub fn help(scroll: u16) -> Paragraph<'static> {
+/// Split index starting a group, near half.
+fn split_point(entries: &[Entry]) -> usize {
+    let half = entries.len() / 2;
+    (1..entries.len())
+        .filter(|&i| matches!(entries[i], Entry::Header(_)))
+        .min_by_key(|&i| i.abs_diff(half))
+        .unwrap_or(entries.len())
+}
+
+/// Help lines for an inner `width`.
+pub fn lines(width: usize) -> Vec<Spans<'static>> {
     let entries = entries();
-
-    // Split the entries into two roughly equal halves shown side by side.
-    let half = entries.len().div_ceil(2);
-    let (left, right) = entries.split_at(half);
-
-    let mut lines: Vec<Spans<'static>> = Vec::with_capacity(half);
-    for row in 0..half {
-        let mut spans = entry_spans(&left[row]);
-        spans.push(Span::raw("  "));
-        if let Some(entry) = right.get(row) {
-            spans.extend(entry_spans(entry));
-        }
-        lines.push(Spans::from(spans));
+    if width < COL_WIDTH * 2 + 2 {
+        return entries
+            .iter()
+            .map(|e| Spans::from(entry_spans(e)))
+            .collect();
     }
+    // Groups never split across columns.
+    let split = split_point(&entries);
+    let (left, right) = entries.split_at(split);
+    let left: Vec<&Entry> = {
+        let mut l: Vec<&Entry> = left.iter().collect();
+        while matches!(l.last(), Some(Entry::Blank)) {
+            l.pop();
+        }
+        l
+    };
+    let rows = left.len().max(right.len());
+    (0..rows)
+        .map(|row| {
+            let mut spans = match left.get(row) {
+                Some(entry) => entry_spans(entry),
+                None => entry_spans(&Entry::Blank),
+            };
+            spans.push(Span::raw("  "));
+            if let Some(entry) = right.get(row) {
+                spans.extend(entry_spans(entry));
+            }
+            Spans::from(spans)
+        })
+        .collect()
+}
 
-    let text = Text::from(lines);
+/// Largest useful scroll for a popup.
+pub fn max_scroll(width: u16, height: u16) -> u16 {
+    let lines = lines(usize::from(width).saturating_sub(2)).len();
+    lines.saturating_sub(usize::from(height).saturating_sub(2)) as u16
+}
 
-    Paragraph::new(text)
+/// Help overlay, unclipped.
+pub fn help(scroll: u16) -> Paragraph<'static> {
+    help_in(scroll, u16::MAX, u16::MAX)
+}
+
+/// Help overlay fitted to a popup.
+pub fn help_in(scroll: u16, width: u16, height: u16) -> Paragraph<'static> {
+    let lines = lines(usize::from(width).saturating_sub(2));
+    let max = max_scroll(width, height);
+    Paragraph::new(Text::from(lines))
         .block(theme::panel(
             "Help \u{2014} j/k scroll \u{00b7} Esc/q/? close".to_string(),
         ))
         .style(theme::base())
         .alignment(Alignment::Left)
-        .scroll((scroll, 0))
+        .scroll((scroll.min(max), 0))
 }

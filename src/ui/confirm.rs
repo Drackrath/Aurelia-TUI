@@ -17,6 +17,11 @@ pub fn confirm_remove_friend(friend_name: &str) -> Paragraph<'static> {
     confirm(format!("Remove {}?", friend_name))
 }
 
+/// Reconnect prompt; reconnecting logs on again.
+pub fn confirm_reconnect() -> Paragraph<'static> {
+    confirm("Reconnect Steam? (new logon)".to_string())
+}
+
 /// Build the "not installed — install now?" prompt shown when the user tries to
 /// launch a game the listing marks as not installed.
 pub fn confirm_install(game_name: &str) -> Paragraph<'static> {

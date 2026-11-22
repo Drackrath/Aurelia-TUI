@@ -43,17 +43,18 @@ pub fn account(browser: &Browser) -> Table<'static> {
                     .map_or_else(|| "— (no daemon)".to_string(), |id| id.to_string()),
             ),
         ],
-        None => vec![Row::new(vec![Cell::from(Span::styled(
-            "No account information",
-            theme::value(),
-        ))])],
+        None => match (&browser.account_load.error, browser.account_load.loading) {
+            (Some(error), _) => vec![row("Failed", error.clone())],
+            (None, true) => vec![row("Loading…", "persona lookup may take 30 s".into())],
+            (None, false) => vec![row("Account", "No account information".into())],
+        },
     };
 
     Table::new(rows)
         .block(theme::panel(if browser.confirm_logout {
-            "Log out of Steam? [y] yes · any other key cancels".to_string()
+            "Log out? [y] yes · other key cancels".to_string()
         } else {
-            "Account ([o] log out · any other key closes)".to_string()
+            "Account — [o] log out · [Esc] close".to_string()
         }))
         .style(theme::base())
         .widths(&[Constraint::Percentage(28), Constraint::Percentage(72)])

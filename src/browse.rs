@@ -19,6 +19,7 @@ use crate::interface::game_status::GameStatus;
 use crate::theme;
 use crate::util::error::STError;
 
+mod account;
 pub mod install_options;
 pub mod install_queue;
 mod library_info;
@@ -213,6 +214,8 @@ pub struct Browser {
     pub show_account: bool,
     /// The fetched account details, shown by the account overlay.
     pub account_info: Option<AccountJson>,
+    /// Background account fetch.
+    pub account_load: account::AccountLoad,
     /// Whether the config (settings) overlay is open.
     pub show_config: bool,
     /// The fetched launcher configuration, shown by the config overlay.
@@ -227,8 +230,12 @@ pub struct Browser {
     pub config_binary_input: Option<String>,
     /// Highlighted Settings row.
     pub config_index: usize,
+    /// Store-language picker highlight, if open.
+    pub config_language_pick: Option<usize>,
     /// Account overlay awaits logout confirmation.
     pub confirm_logout: bool,
+    /// Reconnect awaits y/n.
+    pub confirm_reconnect: bool,
     /// Whether the Steam Wallet overlay is open.
     pub show_wallet: bool,
     /// The fetched wallet balance, shown by the wallet overlay.
@@ -708,13 +715,16 @@ impl Browser {
             cloud_view: Default::default(),
             show_account: false,
             account_info: None,
+            account_load: Default::default(),
             show_config: false,
             config_info: None,
             config_proxy: None,
             config_proxy_input: None,
             config_binary_input: None,
             config_index: 0,
+            config_language_pick: None,
             confirm_logout: false,
+            confirm_reconnect: false,
             show_wallet: false,
             wallet_info: None,
             expand_description: false,
@@ -2412,15 +2422,6 @@ impl Browser {
         self.workshop_comments_scroll = self.workshop_comments_scroll.saturating_sub(1);
     }
 
-    /// Fetch the logged-in account (`aurelia account`) and open the overlay.
-    /// Blocking; returns the backend error if the call fails.
-    pub fn open_account(&mut self) -> Result<(), STError> {
-        self.account_info = Some(aurelia::account()?);
-        self.confirm_logout = false;
-        self.show_account = true;
-        Ok(())
-    }
-
     /// Open local preferences even if the launcher's settings cannot be read.
     /// Launcher fetches remain blocking, matching this overlay's existing path;
     /// a failure is reported but cannot make the local HLTB switch unreachable.
@@ -2448,6 +2449,7 @@ impl Browser {
         self.config_proxy = None;
         self.config_proxy_input = None;
         self.config_binary_input = None;
+        self.config_language_pick = None;
     }
 
     /// Re-fetch just the proxy setting (after an edit/clear), keeping the overlay
@@ -3333,7 +3335,8 @@ impl Browser {
             self.actions_index = 0;
             return;
         }
-        self.actions_index = (self.actions_index + 1) % n;
+        // Stop at the end, no wrap.
+        self.actions_index = (self.actions_index + 1).min(n - 1);
     }
 
     pub fn actions_previous(&mut self) {
@@ -3342,11 +3345,7 @@ impl Browser {
             self.actions_index = 0;
             return;
         }
-        self.actions_index = if self.actions_index == 0 {
-            n - 1
-        } else {
-            self.actions_index - 1
-        };
+        self.actions_index = self.actions_index.min(n - 1).saturating_sub(1);
     }
 
     /// The action currently highlighted in the (filtered) menu.
