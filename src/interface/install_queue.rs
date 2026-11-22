@@ -346,12 +346,13 @@ pub fn progress_status(p: &ProgressEvent) -> String {
     let pct = percent(p.bytes_downloaded, p.total_bytes)
         .or(p.percent.map(|v| v.min(100.0)))
         .unwrap_or(0.0);
+    // Most useful first; narrow panels clip.
     let mut out = format!("{label} {pct:.1}%");
-    if let Some(speed) = p.speed_bps.filter(|&s| s > 0) {
-        out.push_str(&format!(" · {}/s", human_bytes(speed)));
-    }
     if let Some(eta) = p.eta_seconds {
         out.push_str(&format!(" · ETA {}", format_eta(eta)));
+    }
+    if let Some(speed) = p.speed_bps.filter(|&s| s > 0) {
+        out.push_str(&format!(" · {}/s", human_bytes(speed)));
     }
     if p.reused_bytes > 0 {
         out.push_str(&format!(" · {} reused", human_bytes(p.reused_bytes)));
@@ -427,7 +428,7 @@ pub fn paused_text(previous: &str, suffix: Option<&str>) -> String {
         .map(|p| format!("paused {p}"))
         .unwrap_or_else(|| "paused".to_string());
     if let Some(s) = suffix.filter(|s| !s.is_empty()) {
-        out.push_str(&format!(" · {s}"));
+        out.push_str(&format!(" ({s})"));
     }
     out
 }

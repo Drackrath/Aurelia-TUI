@@ -13,6 +13,13 @@ use crate::interface::install_queue::{self as iq, ControlOutcome, ErrorKind, Que
 /// How often to re-read the queue.
 const REFRESH: Duration = Duration::from_secs(2);
 
+/// Destructive queue actions needing `y`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueConfirm {
+    Stop(u32),
+    Forget { app_id: u32, delete_files: bool },
+}
+
 type Slot = Arc<Mutex<Option<Result<Vec<QueueEntry>, String>>>>;
 
 /// Queue overlay state.
@@ -23,8 +30,8 @@ pub struct InstallQueue {
     pub index: usize,
     /// Footer line for results.
     pub status: String,
-    /// Pending delete-files confirmation.
-    pub confirm_delete: Option<u32>,
+    /// Action waiting for `y`.
+    pub pending: Option<QueueConfirm>,
     /// Whether one list arrived.
     pub loaded: bool,
     slot: Slot,
@@ -58,16 +65,14 @@ pub fn entry_status(entry: &QueueEntry) -> Option<String> {
     if !entry.is_resumable() {
         return None;
     }
-    let mut suffix: Vec<String> = Vec::new();
-    if entry.state != "paused" {
-        suffix.push(entry.state.clone());
-    }
-    if let Some(kind) = entry.error_type.as_deref().map(ErrorKind::parse)
-        && kind != ErrorKind::Unknown
-    {
-        suffix.push(kind.title().to_string());
-    }
-    Some(iq::paused_text(&pct, Some(&suffix.join(" · "))))
+    // One short reason; fits 80 cols.
+    let kind = entry.error_type.as_deref().map(ErrorKind::parse);
+    let suffix = match kind {
+        Some(k) if k != ErrorKind::Unknown => k.title().to_lowercase(),
+        _ if entry.state != "paused" => entry.state.clone(),
+        _ => String::new(),
+    };
+    Some(iq::paused_text(&pct, Some(&suffix)))
 }
 
 fn set_cell(game: &Game, text: Option<String>) {
@@ -87,13 +92,13 @@ impl Browser {
     /// Open the queue and fetch it.
     pub fn open_install_queue(&mut self) {
         self.install_queue.show = true;
-        self.install_queue.confirm_delete = None;
+        self.install_queue.pending = None;
         self.install_queue.last_fetch = None;
     }
 
     pub fn close_install_queue(&mut self) {
         self.install_queue.show = false;
-        self.install_queue.confirm_delete = None;
+        self.install_queue.pending = None;
         self.install_queue.status.clear();
     }
 
@@ -102,13 +107,13 @@ impl Browser {
         if q.index + 1 < q.entries.len() {
             q.index += 1;
         }
-        q.confirm_delete = None;
+        q.pending = None;
     }
 
     pub fn install_queue_previous(&mut self) {
         let q = &mut self.install_queue;
         q.index = q.index.saturating_sub(1);
-        q.confirm_delete = None;
+        q.pending = None;
     }
 
     /// Start a fetch soon.
@@ -298,8 +303,83 @@ impl Browser {
         self.install_queue.status = format!("Resuming {}", entry.label());
     }
 
+    /// Ask before stopping the selection.
+    pub fn queue_ask_stop(&mut self) {
+        if let Some(entry) = self.install_queue.selected() {
+            self.install_queue.pending = Some(QueueConfirm::Stop(entry.app_id));
+        }
+    }
+
+    /// Ask before forgetting the selection.
+    pub fn queue_ask_forget(&mut self, delete_files: bool) {
+        let Some(entry) = self.install_queue.selected().cloned() else {
+            return;
+        };
+        if entry.is_running() {
+            self.install_queue.status = format!("Stop {} before forgetting it", entry.label());
+            return;
+        }
+        self.install_queue.pending = Some(QueueConfirm::Forget {
+            app_id: entry.app_id,
+            delete_files,
+        });
+    }
+
+    /// Prompt text for the pending action.
+    pub fn queue_prompt(&self) -> Option<String> {
+        let q = &self.install_queue;
+        let pending = q.pending?;
+        let id = match pending {
+            QueueConfirm::Stop(id) | QueueConfirm::Forget { app_id: id, .. } => id,
+        };
+        let entry = q.entries.iter().find(|e| e.app_id == id)?;
+        let name = entry.label();
+        Some(match pending {
+            QueueConfirm::Stop(_) => {
+                format!("Stop {name}? It stays in the queue as aborted. [y]")
+            }
+            QueueConfirm::Forget {
+                delete_files: false,
+                ..
+            } => format!("Forget {name}? Downloaded files stay on disk. [y]"),
+            QueueConfirm::Forget { .. } => format!(
+                "Forget {name} and delete {} of partial files? [y]",
+                iq::human_bytes(entry.downloaded_bytes)
+            ),
+        })
+    }
+
+    /// `y` runs it; else cancel.
+    pub fn queue_answer(&mut self, yes: bool) {
+        let Some(pending) = self.install_queue.pending.take() else {
+            return;
+        };
+        if !yes {
+            self.install_queue.status = "Cancelled".to_string();
+            return;
+        }
+        let id = match pending {
+            QueueConfirm::Stop(id) | QueueConfirm::Forget { app_id: id, .. } => id,
+        };
+        // Selection may have moved; re-find.
+        if let Some(i) = self
+            .install_queue
+            .entries
+            .iter()
+            .position(|e| e.app_id == id)
+        {
+            self.install_queue.index = i;
+        } else {
+            return;
+        }
+        match pending {
+            QueueConfirm::Stop(_) => self.queue_stop(),
+            QueueConfirm::Forget { delete_files, .. } => self.queue_forget(delete_files),
+        }
+    }
+
     /// `install stop` on the selection.
-    pub fn queue_stop(&mut self) {
+    fn queue_stop(&mut self) {
         let Some(entry) = self.install_queue.selected().cloned() else {
             return;
         };
@@ -321,8 +401,8 @@ impl Browser {
         self.queue_refetch();
     }
 
-    /// `install forget`; delete asks twice.
-    pub fn queue_forget(&mut self, delete_files: bool) {
+    /// `install forget` on the selection.
+    fn queue_forget(&mut self, delete_files: bool) {
         let Some(entry) = self.install_queue.selected().cloned() else {
             return;
         };
@@ -330,15 +410,6 @@ impl Browser {
             self.install_queue.status = format!("Stop {} before forgetting it", entry.label());
             return;
         }
-        if delete_files && self.install_queue.confirm_delete != Some(entry.app_id) {
-            self.install_queue.confirm_delete = Some(entry.app_id);
-            self.install_queue.status = format!(
-                "Press F again to forget {} and delete its partial files",
-                entry.label()
-            );
-            return;
-        }
-        self.install_queue.confirm_delete = None;
         let id = entry.app_id as i32;
         self.install_queue.status = match iq::install_forget(entry.app_id, delete_files) {
             Ok(ControlOutcome::Forgotten(Some(dir))) => {
