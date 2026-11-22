@@ -179,7 +179,7 @@ pub fn chat(browser: &Browser, width: u16, height: u16) -> Paragraph<'static> {
     } else {
         for m in &browser.chat_messages {
             rendered.extend(render_message(
-                &m.message,
+                &crate::interface::social::chat_display_text(&m.message),
                 m.from_self,
                 &browser.chat_partner,
                 content_w,
