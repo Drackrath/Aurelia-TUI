@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use super::Browser;
 use crate::interface::aurelia::{self, AccountJson};
@@ -17,14 +18,30 @@ pub struct AccountLoad {
     pub loading: bool,
     /// Last fetch error.
     pub error: Option<String>,
+    /// When `account_info` was fetched.
+    fetched_at: Option<Instant>,
 }
 
+/// Cached account stays fresh this long.
+pub const ACCOUNT_TTL: Duration = Duration::from_secs(600);
+
 impl Browser {
-    /// Open now; fetch account in background.
+    /// Open now; reuse a fresh cache.
     pub fn open_account(&mut self) {
         self.show_account = true;
         self.confirm_logout = false;
-        self.account_info = None;
+        let fresh = self
+            .account_load
+            .fetched_at
+            .is_some_and(|t| t.elapsed() < ACCOUNT_TTL);
+        if (fresh && self.account_info.is_some()) || self.account_load.loading {
+            return;
+        }
+        self.refresh_account();
+    }
+
+    /// Refetch the account in background.
+    pub fn refresh_account(&mut self) {
         let load = &mut self.account_load;
         load.generation = load.generation.wrapping_add(1);
         load.loading = true;
@@ -54,7 +71,10 @@ impl Browser {
         }
         self.account_load.loading = false;
         match result {
-            Ok(info) => self.account_info = Some(info),
+            Ok(info) => {
+                self.account_info = Some(info);
+                self.account_load.fetched_at = Some(Instant::now());
+            }
             Err(error) => {
                 self.notice = Some(format!("Account: {error}"));
                 self.account_load.error = Some(error);
@@ -62,12 +82,24 @@ impl Browser {
         }
     }
 
-    /// Close and drop a pending fetch.
+    /// Close; a running fetch still lands.
     pub fn close_account(&mut self) {
         self.show_account = false;
         self.confirm_logout = false;
+    }
+
+    /// Drop the cache, e.g. on logout.
+    pub fn forget_account(&mut self) {
+        self.account_info = None;
+        self.account_load.fetched_at = None;
         self.account_load.generation = self.account_load.generation.wrapping_add(1);
         self.account_load.loading = false;
+    }
+
+    /// Age the cache (tests only).
+    #[doc(hidden)]
+    pub fn expire_account_for_test(&mut self) {
+        self.account_load.fetched_at = Instant::now().checked_sub(ACCOUNT_TTL);
     }
 
     /// Install a finished result (tests only).

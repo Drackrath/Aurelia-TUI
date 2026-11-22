@@ -434,7 +434,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Account overlay floats above everything.
                 if browser.show_account {
-                    let area = ui::centered_rect(50, 55, frame.size());
+                    let area = ui::centered_rect(64, 55, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::account::account(&browser), area);
                 }
@@ -443,7 +443,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 if browser.show_config {
                     let area = ui::centered_rect(80, 80, frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::config::config_in(&browser, area.height), area);
+                    frame.render_widget(ui::config::config_sized(&browser, area.width, area.height), area);
                 }
 
                 // Install queue overlay.
@@ -1507,6 +1507,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             {
                                 browser.confirm_logout = false
                             }
+                            KeyCode::Char('r') if !browser.account_load.loading => {
+                                browser.refresh_account()
+                            }
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_account(),
                             KeyCode::Char('o') if !browser.confirm_logout => {
                                 browser.confirm_logout = true;
@@ -1520,6 +1523,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 };
                                 client.set_last_error(Some(status));
                                 browser.close_account();
+                                browser.forget_account();
                                 app.mode = Mode::Login;
                             }
                             // Only Esc/q close it.

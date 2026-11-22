@@ -153,7 +153,7 @@ fn account_opens_at_once_and_reports_errors() {
         assert!(b.show_account && b.account_load.loading);
         let draw = |b: &Browser| {
             let mut t = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
-            let area = ui::centered_rect(50, 55, Rect::new(0, 0, size.0, size.1));
+            let area = ui::centered_rect(64, 55, Rect::new(0, 0, size.0, size.1));
             t.draw(|f| f.render_widget(ui::account::account(b), area))
                 .unwrap();
             t.backend()

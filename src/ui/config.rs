@@ -11,8 +11,10 @@ use crate::settings::{self, Setting};
 use crate::theme;
 use crate::ui::{paneled_paragraph, selection_marker};
 
-/// Label column width.
-const LABEL_WIDTH: usize = 26;
+/// Label column width, longest label fits.
+const LABEL_WIDTH: usize = 28;
+/// Marker, label gap and key widths.
+const LEAD: usize = 2 + LABEL_WIDTH + 1 + 4;
 
 /// The short default title.
 pub const TITLE: &str = "Settings — [j/k] select · [Enter] change · [Esc] close";
@@ -148,10 +150,19 @@ fn line(
     let key_style = if selected { style } else { theme::dim() };
     Spans::from(vec![
         Span::styled(selection_marker(selected).to_string(), style),
-        Span::styled(format!("{label:<LABEL_WIDTH$}"), label_style),
+        Span::styled(format!("{label:<LABEL_WIDTH$} "), label_style),
         Span::styled(key, key_style),
         Span::styled(value, style),
     ])
+}
+
+/// Raw text of a long open input.
+fn editing(browser: &Browser, setting: Setting) -> Option<&str> {
+    match setting {
+        Setting::Binary => browser.config_binary_input.as_deref(),
+        Setting::Proxy => browser.config_proxy_input.as_deref(),
+        _ => None,
+    }
 }
 
 /// Append a titled group of rows.
@@ -161,6 +172,7 @@ fn group(
     browser: &Browser,
     title: &str,
     rows: Vec<Setting>,
+    room: usize,
 ) {
     if !lines.is_empty() {
         lines.push(Spans::from(""));
@@ -172,20 +184,25 @@ fn group(
         if selected {
             *at = lines.len();
         }
-        let value = value(browser, setting);
+        // Long inputs keep the caret visible.
+        let value = match editing(browser, setting) {
+            Some(raw) => crate::ui::input_tail(raw, room),
+            None => value(browser, setting),
+        };
         let key = Some(setting.shortcut());
         lines.push(line(setting.label(), key, value, selected, false));
     }
 }
 
 /// Body lines and the selected line index.
-fn body(browser: &Browser) -> (Vec<Spans<'static>>, usize) {
+fn body(browser: &Browser, width: usize) -> (Vec<Spans<'static>>, usize) {
     let mut lines = Vec::new();
     let mut at = 0;
+    let room = width.saturating_sub(LEAD).max(8);
     let tui = settings::TUI_ROWS.to_vec();
-    group(&mut lines, &mut at, browser, "TUI", tui);
+    group(&mut lines, &mut at, browser, "TUI", tui, room);
     let steam = settings::steam_rows(browser);
-    group(&mut lines, &mut at, browser, "Steam / Aurelia", steam);
+    group(&mut lines, &mut at, browser, "Steam / Aurelia", steam, room);
     lines.push(Spans::from(""));
     lines.push(header("Info (read-only)"));
     for (label, value) in info_rows(browser) {
@@ -218,10 +235,16 @@ pub fn config(browser: &Browser) -> Paragraph<'static> {
 
 /// Settings overlay sized to `height` rows.
 pub fn config_in(browser: &Browser, height: u16) -> Paragraph<'static> {
+    config_sized(browser, u16::MAX, height)
+}
+
+/// Settings overlay for a `width` x `height` popup.
+pub fn config_sized(browser: &Browser, width: u16, height: u16) -> Paragraph<'static> {
     if let Some(pick) = browser.config_language_pick {
         return language_picker(pick, height, title(browser));
     }
-    let (lines, at) = body(browser);
+    let inner = usize::from(width).saturating_sub(2);
+    let (lines, at) = body(browser, inner);
     // Border plus blank and help.
     let room = usize::from(height).saturating_sub(4).max(1);
     let start = if at < room {
