@@ -231,6 +231,9 @@ pub struct LibraryGameJson {
     pub assets: Option<AssetsJson>,
     #[serde(default)]
     pub store_url: Option<String>,
+    /// Playtime, queued update, size.
+    #[serde(flatten)]
+    pub library: crate::interface::library_info::LibraryInfoJson,
 }
 
 /// One Steam Cloud file, from `aurelia cloud list <id> --json`. The CLI emits
@@ -263,6 +266,9 @@ pub struct InfoJson {
     pub description: String,
     #[serde(default)]
     pub reviews: Option<String>,
+    /// Present with `--extended`.
+    #[serde(default)]
+    pub extended: Option<crate::interface::library_info::ExtendedInfoJson>,
 }
 
 /// One achievement entry from `aurelia achievements <id> --json` (an item of
@@ -1331,9 +1337,14 @@ pub fn install_estimate(id: i32) -> Result<u64, STError> {
     Ok(value.get("disk_size").and_then(|v| v.as_u64()).unwrap_or(0))
 }
 
-/// Fetch store metadata for a single app (`aurelia info <id> --json`).
+/// Store metadata via `info --extended`.
 pub fn fetch_info(id: i32) -> Result<InfoJson, STError> {
-    let value = run_json(&["info", &id.to_string()])?;
+    use crate::interface::library_info::info_args;
+    let id = id.to_string();
+    let lang = crate::config::Config::cached().info_language;
+    // Extended first; plain on failure.
+    let value = run_json(&info_args(&id, lang.as_deref(), true))
+        .or_else(|_| run_json(&info_args(&id, lang.as_deref(), false)))?;
     Ok(serde_json::from_value(value)?)
 }
 

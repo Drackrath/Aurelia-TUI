@@ -1,0 +1,80 @@
+[
+  {
+    "app_id": 620,
+    "name": "Portal 2",
+    "playtime_forever_minutes": 754,
+    "is_installed": true,
+    "install_path": "/home/user/.local/share/Steam/steamapps/common/Portal 2",
+    "local_manifest_ids": { "621": 1234567890123456789 },
+    "update_available": false,
+    "steam_config_mismatch": false,
+    "update_queued": true,
+    "active_branch": "public",
+    "is_owned": true,
+    "is_family_shared": false,
+    "online_required": false,
+    "platform": "linux",
+    "from_windows_steam": false,
+    "size_on_disk": 13421772800,
+    "assets": {
+      "header": "https://cdn.cloudflare.steamstatic.com/steam/apps/620/header.jpg",
+      "capsule": "https://cdn.cloudflare.steamstatic.com/steam/apps/620/library_600x900.jpg",
+      "hero": "https://cdn.cloudflare.steamstatic.com/steam/apps/620/library_hero.jpg",
+      "logo": "https://cdn.cloudflare.steamstatic.com/steam/apps/620/logo.png"
+    },
+    "store_url": "https://store.steampowered.com/app/620/",
+    "collections": []
+  },
+  {
+    "app_id": 730,
+    "name": "Counter-Strike 2",
+    "playtime_forever_minutes": 12000,
+    "is_installed": false,
+    "install_path": null,
+    "local_manifest_ids": {},
+    "update_available": false,
+    "steam_config_mismatch": false,
+    "update_queued": false,
+    "active_branch": "public",
+    "is_owned": true,
+    "is_family_shared": false,
+    "online_required": true,
+    "platform": null,
+    "from_windows_steam": false,
+    "size_on_disk": null,
+    "assets": {
+      "header": "https://cdn.cloudflare.steamstatic.com/steam/apps/730/header.jpg",
+      "capsule": "https://cdn.cloudflare.steamstatic.com/steam/apps/730/library_600x900.jpg",
+      "hero": "https://cdn.cloudflare.steamstatic.com/steam/apps/730/library_hero.jpg",
+      "logo": "https://cdn.cloudflare.steamstatic.com/steam/apps/730/logo.png"
+    },
+    "store_url": "https://store.steampowered.com/app/730/",
+    "collections": ["Shooters"]
+  },
+  {
+    "app_id": 400,
+    "name": "Portal",
+    "playtime_forever_minutes": null,
+    "is_installed": true,
+    "install_path": "/games/Portal",
+    "local_manifest_ids": {},
+    "update_available": false,
+    "steam_config_mismatch": false,
+    "update_queued": false,
+    "active_branch": "public",
+    "is_owned": false,
+    "is_family_shared": true,
+    "online_required": null,
+    "platform": "windows",
+    "from_windows_steam": false,
+    "size_on_disk": 4294967296,
+    "assets": {
+      "header": "https://cdn.cloudflare.steamstatic.com/steam/apps/400/header.jpg",
+      "capsule": "https://cdn.cloudflare.steamstatic.com/steam/apps/400/library_600x900.jpg",
+      "hero": "https://cdn.cloudflare.steamstatic.com/steam/apps/400/library_hero.jpg",
+      "logo": "https://cdn.cloudflare.steamstatic.com/steam/apps/400/logo.png"
+    },
+    "store_url": "https://store.steampowered.com/app/400/",
+    "collections": []
+  }
+]

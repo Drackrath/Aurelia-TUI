@@ -178,6 +178,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // roster refreshes after an add/remove) before drawing this frame.
         browser.poll_friends_ops();
         browser.poll_hltb();
+        browser.poll_library_info();
 
         // Drain any finished off-thread Workshop browse/search/subscribe worker
         // before rendering, so its result lands on the next frame. Runs on every
@@ -780,6 +781,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                                 Config::save(&config)?;
                                                 browser.refresh();
                                             }
+                                            Action::SteamDb => browser.open_steamdb(),
                                         }
                                     }
                                 }
@@ -806,6 +808,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Char('p') => browser.pin_current(),
                                 KeyCode::Char('u') => browser.unpin_current(),
                                 KeyCode::Char('d') => browser.begin_downgrade_input(),
+                                KeyCode::Char('s') => browser.open_steamdb_depot(),
                                 _ => {}
                             }
                         }
@@ -1342,6 +1345,24 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 KeyCode::Char('e') => browser.begin_proxy_edit(),
                                 KeyCode::Char('c') => browser.clear_proxy(),
+                                KeyCode::Char('l') => {
+                                    // Cycle store language, refetch info.
+                                    let mut updated = config.clone();
+                                    updated.info_language =
+                                        aurelia_tui::interface::library_info::next_language(
+                                            updated.info_language.as_deref(),
+                                        );
+                                    match updated.save() {
+                                        Ok(()) => {
+                                            config = updated;
+                                            browser.reset_store_info();
+                                        }
+                                        Err(error) => {
+                                            browser.notice =
+                                                Some(format!("Language setting: {error}"));
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
                         }

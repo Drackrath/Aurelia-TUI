@@ -25,6 +25,7 @@ pub mod import;
 pub mod inventory;
 pub mod launch;
 pub mod launch_targets;
+pub mod library_info;
 pub mod list;
 pub mod market;
 pub mod market_search;

@@ -28,6 +28,9 @@ pub struct Config {
     /// existing enabled behavior without resetting favourites or hidden games.
     #[serde(default = "default_hltb_enabled")]
     pub hltb_enabled: bool,
+    /// Store text language; `None` = Aurelia's.
+    #[serde(default)]
+    pub info_language: Option<String>,
 }
 
 fn default_hltb_enabled() -> bool {
@@ -43,6 +46,7 @@ impl Default for Config {
             allowed_games: vec![GameType::Game, GameType::DLC],
             highlight: theme::ACCENT,
             hltb_enabled: default_hltb_enabled(),
+            info_language: None,
         }
     }
 }
