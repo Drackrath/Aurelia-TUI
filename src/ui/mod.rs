@@ -39,6 +39,7 @@ pub mod proton;
 pub mod relink;
 pub mod restart_depots;
 pub mod running;
+pub mod scroll;
 pub mod social;
 pub mod status;
 pub mod tabs;
