@@ -2,7 +2,7 @@
 
 use tui::layout::Rect;
 use tui::text::{Span, Spans};
-use tui::widgets::{Paragraph, Wrap};
+use tui::widgets::Paragraph;
 
 use crate::browse::{Browser, ROW_LAUNCH_OPTIONS, ROW_PREFIX};
 use crate::theme;
@@ -134,12 +134,6 @@ pub fn picker(browser: &Browser, area: Rect) -> Paragraph<'static> {
         lines.push(Spans::from(Span::styled(h, theme::dim())));
     }
     crate::ui::paneled_paragraph(lines, p.title.clone())
-}
-
-/// The play confirm popup, if pending.
-pub fn confirm_prompt(browser: &Browser) -> Option<Paragraph<'static>> {
-    let prompt = browser.play_confirm_prompt()?;
-    Some(crate::ui::confirm::confirm(prompt).wrap(Wrap { trim: true }))
 }
 
 /// Global Settings rows from `config show`.

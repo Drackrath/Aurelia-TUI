@@ -25,7 +25,9 @@ pub mod install_queue;
 mod library_info;
 pub use library_info::{VersionRow, VersionsConfirm};
 mod play_settings;
-pub use play_settings::{ChoicePicker, PLAY_ROWS, PlayUi, ROW_LAUNCH_OPTIONS, ROW_PREFIX};
+pub use play_settings::{
+    ChoicePicker, PLAY_ROWS, PlayUi, ProtonConfirm, ROW_LAUNCH_OPTIONS, ROW_PREFIX,
+};
 #[path = "browse_launch.rs"]
 mod launch_ui;
 
@@ -1182,6 +1184,7 @@ impl Browser {
         self.show_proton = false;
         self.confirm_proton_uninstall = false;
         self.play.confirm_anticheat = None;
+        self.play.confirm_proton = None;
         self.protons.clear();
         self.proton_index = 0;
     }

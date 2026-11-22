@@ -1,6 +1,6 @@
 //! Play overlays at 120x40 and 80x24.
 
-use aurelia_tui::browse::{Browser, ROW_LAUNCH_OPTIONS};
+use aurelia_tui::browse::{Browser, ProtonConfirm, ROW_LAUNCH_OPTIONS};
 use aurelia_tui::interface::aurelia::{LibraryGameJson, ProtonJson};
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::interface::play_settings::{self as ps, AntiCheat};
@@ -198,24 +198,70 @@ fn proton_overlay_scrolls_and_shows_default() {
     }
 }
 
+/// Draw the pending prompt, return rows.
+fn confirm_rows(b: &Browser, w: u16, h: u16) -> Vec<String> {
+    let prompt = b.play_confirm_prompt().expect("prompt pending");
+    lines(w, h, |f| ui::confirm::draw(f, prompt))
+}
+
+fn assert_hints(rows: &[String], what: &str, w: u16, h: u16) {
+    assert!(has(rows, "[y] confirm"), "{what}: [y] at {w}x{h}");
+    assert!(has(rows, "[n] cancel"), "{what}: [n] at {w}x{h}");
+}
+
 #[test]
 fn play_confirms_render_and_cancel() {
     isolate_config();
     for (w, h) in SIZES {
         let mut b = Browser::new(vec![game(7)]);
         b.ask_shaders(7, false);
-        let area = ui::centered_rect(50, 25, Rect::new(0, 0, w, h));
-        let prompt = ui::play_settings::confirm_prompt(&b).unwrap();
-        let rows = lines(w, h, |f| f.render_widget(prompt, area));
+        let rows = confirm_rows(&b, w, h);
         assert!(has(&rows, "Vulkan"), "question shown at {w}x{h}");
-        assert!(has(&rows, "[y]"), "confirm key at {w}x{h}");
+        assert_hints(&rows, "shaders", w, h);
         b.answer_play_confirm(false);
         assert!(b.play_confirm_prompt().is_none(), "n cancels");
 
         b.ask_anticheat(AntiCheat::BattlEye);
-        assert!(b.play_confirm_prompt().unwrap().contains("BattlEye"));
+        let rows = confirm_rows(&b, w, h);
+        assert!(has(&rows, "BattlEye"));
+        assert_hints(&rows, "anti-cheat", w, h);
         b.answer_play_confirm(false);
         assert!(b.play.confirm_anticheat.is_none());
+    }
+}
+
+#[test]
+fn proton_install_and_default_ask_first() {
+    isolate_config();
+    for (w, h) in SIZES {
+        let mut b = Browser::new(vec![game(1)]);
+        b.show_proton = true;
+        b.protons = vec![proton("GE-Proton10-25", false), proton("Proton 9.0", true)];
+
+        b.ask_proton_install();
+        assert_eq!(
+            b.play.confirm_proton,
+            Some(ProtonConfirm::Install("GE-Proton10-25".into()))
+        );
+        let rows = confirm_rows(&b, w, h);
+        assert!(
+            has(&rows, "Install GE-Proton10-25 (download)?"),
+            "at {w}x{h}"
+        );
+        assert_hints(&rows, "install", w, h);
+        b.answer_play_confirm(false);
+        assert!(b.play.confirm_proton.is_none(), "n cancels install");
+
+        b.proton_index = 1;
+        b.ask_proton_install();
+        assert!(b.play.confirm_proton.is_none(), "installed: no prompt");
+
+        b.ask_proton_default();
+        let rows = confirm_rows(&b, w, h);
+        assert!(has(&rows, "Make Proton 9.0 the default"), "at {w}x{h}");
+        assert_hints(&rows, "default", w, h);
+        b.answer_play_confirm(false);
+        assert!(b.play.confirm_proton.is_none(), "n cancels default");
     }
 }
 

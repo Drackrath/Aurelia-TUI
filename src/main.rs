@@ -589,11 +589,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                // Shader / anti-cheat confirm.
-                if let Some(prompt) = ui::play_settings::confirm_prompt(&browser) {
-                    let area = ui::centered_rect(50, 25, frame.size());
-                    frame.render_widget(Clear, area);
-                    frame.render_widget(prompt, area);
+                // Proton, shader, anti-cheat confirms.
+                if let Some(prompt) = browser.play_confirm_prompt() {
+                    ui::confirm::draw(frame, prompt);
                 }
 
                 // Aurelia log overlay.
@@ -1399,29 +1397,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Esc | KeyCode::Char('q') => browser.close_proton(),
                             KeyCode::Down | KeyCode::Char('j') => browser.proton_next(),
                             KeyCode::Up | KeyCode::Char('k') => browser.proton_previous(),
-                            KeyCode::Char('d') => {
-                                if let Some(p) = browser.selected_proton() {
-                                    let _ = aurelia::proton_default(&p.name);
-                                    // Re-fetch so the [default] marker updates,
-                                    // keeping the current row highlighted.
-                                    let keep = browser.proton_index;
-                                    if browser.open_proton().is_ok() {
-                                        browser.proton_index =
-                                            keep.min(browser.protons.len().saturating_sub(1));
-                                    }
-                                }
-                            }
-                            KeyCode::Char('i') => {
-                                // Queue a (long-running) download off the UI thread;
-                                // progress streams into the proton status cell.
-                                if let Some(p) = browser.selected_proton() {
-                                    if !p.installed {
-                                        browser.clear_proton_status();
-                                        let _ = client
-                                            .proton_install(&p.name, browser.proton_status.clone());
-                                    }
-                                }
-                            }
+                            KeyCode::Char('d') => browser.ask_proton_default(),
+                            KeyCode::Char('i') => browser.ask_proton_install(),
                             KeyCode::Char('e') => browser.ask_anticheat(AntiCheat::Eac),
                             KeyCode::Char('b') => browser.ask_anticheat(AntiCheat::BattlEye),
                             KeyCode::Char('u') => {

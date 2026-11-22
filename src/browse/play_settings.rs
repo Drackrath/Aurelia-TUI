@@ -123,6 +123,51 @@ impl Browser {
         }
     }
 
+    /// Ask before installing the highlighted runtime.
+    pub fn ask_proton_install(&mut self) {
+        match self.selected_proton() {
+            Some(p) if !p.installed => {
+                self.play.confirm_proton = Some(ProtonConfirm::Install(p.name.clone()));
+            }
+            Some(p) => self.notice = Some(format!("{} is already installed.", p.name)),
+            None => {}
+        }
+    }
+
+    /// Ask before changing the global default.
+    pub fn ask_proton_default(&mut self) {
+        if let Some(p) = self.selected_proton() {
+            self.play.confirm_proton = Some(ProtonConfirm::Default(p.name.clone()));
+        }
+    }
+
+    /// Answer the Proton install/default prompt.
+    pub fn answer_proton(&mut self, yes: bool) {
+        let Some(ask) = self.play.confirm_proton.take() else {
+            return;
+        };
+        if !yes {
+            return;
+        }
+        match ask {
+            ProtonConfirm::Install(name) => {
+                self.clear_proton_status();
+                let status = self.proton_status.clone();
+                std::thread::spawn(move || aurelia::proton_install(name, status));
+            }
+            ProtonConfirm::Default(name) => {
+                if let Err(e) = aurelia::proton_default(&name) {
+                    self.notice = Some(format!("Proton default: {e}"));
+                }
+                // Keep highlight across re-fetch.
+                let keep = self.proton_index;
+                if self.load_protons().is_ok() {
+                    self.proton_index = keep.min(self.protons.len().saturating_sub(1));
+                }
+            }
+        }
+    }
+
     /// Ask before processing a game's shaders.
     pub fn ask_shaders(&mut self, app_id: i32, force: bool) {
         self.play.confirm_shaders = Some((app_id, force));
@@ -143,7 +188,9 @@ impl Browser {
 
     /// Answer whichever play prompt is open.
     pub fn answer_play_confirm(&mut self, yes: bool) {
-        if self.play.confirm_anticheat.is_some() {
+        if self.play.confirm_proton.is_some() {
+            self.answer_proton(yes);
+        } else if self.play.confirm_anticheat.is_some() {
             self.answer_anticheat(yes);
         } else {
             self.answer_shaders(yes);
@@ -152,6 +199,15 @@ impl Browser {
 
     /// The pending confirm question, if any.
     pub fn play_confirm_prompt(&self) -> Option<String> {
+        match &self.play.confirm_proton {
+            Some(ProtonConfirm::Install(name)) => {
+                return Some(format!("Install {name} (download)?"));
+            }
+            Some(ProtonConfirm::Default(name)) => {
+                return Some(format!("Make {name} the default for all games?"));
+            }
+            None => {}
+        }
         if let Some(kind) = self.play.confirm_anticheat {
             return Some(format!("Install the Proton {}?", kind.label()));
         }
@@ -332,10 +388,18 @@ pub struct ChoicePicker {
 pub struct PlayUi {
     pub picker: Option<ChoicePicker>,
     pub confirm_anticheat: Option<ps::AntiCheat>,
+    pub confirm_proton: Option<ProtonConfirm>,
     /// App id and force flag.
     pub confirm_shaders: Option<(i32, bool)>,
     /// Configured default Proton name.
     pub proton_default: String,
     /// Row the default resolves to.
     pub proton_default_row: Option<String>,
+}
+
+/// A pending Proton overlay action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProtonConfirm {
+    Install(String),
+    Default(String),
 }
