@@ -3528,12 +3528,14 @@ impl Browser {
     }
 
     pub fn launch_targets_next(&mut self) {
+        self.launch_targets_status.clear();
         if !self.launch_targets.is_empty() {
             self.launch_targets_index = (self.launch_targets_index + 1) % self.launch_targets.len();
         }
     }
 
     pub fn launch_targets_previous(&mut self) {
+        self.launch_targets_status.clear();
         if !self.launch_targets.is_empty() {
             self.launch_targets_index = if self.launch_targets_index == 0 {
                 self.launch_targets.len() - 1
