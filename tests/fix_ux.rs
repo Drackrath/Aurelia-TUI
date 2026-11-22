@@ -14,7 +14,11 @@ use tui::widgets::Paragraph;
 
 const SIZES: [(u16, u16); 2] = [(120, 40), (80, 24)];
 
-fn isolate_config() {
+/// Serializes tests sharing the config.
+static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn isolate_config() -> std::sync::MutexGuard<'static, ()> {
+    let guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("fix-ux-config");
     // SAFETY: set before Config::cached().
     unsafe {
@@ -22,6 +26,7 @@ fn isolate_config() {
         std::env::set_var("AURELIA_TUI_CACHE_DIR", &dir);
         std::env::set_var("AURELIA_BIN", dir.join("missing-aurelia"));
     }
+    guard
 }
 
 fn game(id: i32, name: &str) -> Game {
@@ -57,7 +62,7 @@ fn popup(
 
 #[test]
 fn actions_scroll_to_end_without_wrap() {
-    isolate_config();
+    let _lock = isolate_config();
     for size in SIZES {
         let mut b = Browser::new(vec![game(1, "Alpha")]);
         b.open_actions();
@@ -141,7 +146,7 @@ fn help_fits_and_keeps_groups() {
 
 #[test]
 fn account_opens_at_once_and_reports_errors() {
-    isolate_config();
+    let _lock = isolate_config();
     for size in SIZES {
         let mut b = Browser::new(vec![]);
         b.open_account();
@@ -183,7 +188,7 @@ fn launcher_browser() -> Browser {
 
 #[test]
 fn settings_fit_both_sizes() {
-    isolate_config();
+    let _lock = isolate_config();
     for size in SIZES {
         let mut b = launcher_browser();
         for _ in 0..40 {
@@ -202,7 +207,7 @@ fn settings_fit_both_sizes() {
 
 #[test]
 fn store_language_picker_saves_on_enter_only() {
-    isolate_config();
+    let _lock = isolate_config();
     let mut config = Config::default();
     config.save().unwrap();
     let mut b = launcher_browser();
@@ -232,7 +237,7 @@ fn store_language_picker_saves_on_enter_only() {
 
 #[test]
 fn binary_input_prefills_and_keeps_unchanged() {
-    isolate_config();
+    let _lock = isolate_config();
     let mut config = Config {
         aurelia_bin: Some("/opt/aurelia".into()),
         ..Config::default()
@@ -248,7 +253,7 @@ fn binary_input_prefills_and_keeps_unchanged() {
 
 #[test]
 fn limit_input_hint_once() {
-    isolate_config();
+    let _lock = isolate_config();
     let mut b = launcher_browser();
     b.download_limit.input = Some("9".into());
     let value = ui::install_queue::limit_value(&b);
@@ -257,7 +262,7 @@ fn limit_input_hint_once() {
 
 #[test]
 fn status_bar_drops_low_priority_parts() {
-    isolate_config();
+    let _lock = isolate_config();
     let mut b = Browser::new(vec![game(1, "Alpha")]);
     b.notice = Some("x".repeat(30));
     for (w, _) in SIZES {
