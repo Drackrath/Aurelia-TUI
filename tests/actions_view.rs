@@ -206,7 +206,7 @@ fn game_settings_overlay_renders_rows() {
     });
     let text = render(70, 12, |f| {
         f.render_widget(
-            ui::game_config::game_config(&browser),
+            ui::game_config::game_config(&browser, Rect::new(0, 0, 70, 12)),
             Rect::new(0, 0, 70, 12),
         );
     });

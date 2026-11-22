@@ -25,7 +25,7 @@ use aurelia_tui::client::{Client, State};
 use aurelia_tui::config::Config;
 use aurelia_tui::interface::aurelia::{self, LoginPhase};
 use aurelia_tui::interface::cloud_sync;
-use aurelia_tui::interface::play_settings::{self, AntiCheat};
+use aurelia_tui::interface::play_settings::AntiCheat;
 use aurelia_tui::interface::steam_restart::Relocate;
 use aurelia_tui::interface::{binary, capabilities};
 use aurelia_tui::restart_depots;
@@ -467,9 +467,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Per-game settings overlay floats above everything.
                 if browser.show_game_config {
-                    let area = ui::centered_rect(58, 45, frame.size());
+                    let area = ui::centered_rect(58, 60, frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::game_config::game_config(&browser), area);
+                    frame.render_widget(ui::game_config::game_config(&browser, area), area);
+                    if browser.game_config_picking() {
+                        let area = ui::centered_rect(40, 50, frame.size());
+                        frame.render_widget(Clear, area);
+                        frame.render_widget(ui::play_settings::picker(&browser, area), area);
+                    }
                 }
 
                 // Collections overlay floats above everything.
@@ -577,7 +582,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 if browser.show_proton {
                     let area = ui::centered_rect(60, 70, frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::proton::proton(&browser), area);
+                    frame.render_widget(ui::proton::proton(&browser, area), area);
 
                     // Destructive uninstall confirmation floats above the overlay.
                     if browser.confirm_proton_uninstall {
@@ -588,6 +593,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             frame.render_widget(prompt, confirm_area);
                         }
                     }
+                }
+
+                // Shader / anti-cheat confirm.
+                if let Some(prompt) = ui::play_settings::confirm_prompt(&browser) {
+                    let area = ui::centered_rect(50, 25, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(prompt, area);
                 }
 
                 // Aurelia log overlay.
@@ -744,7 +756,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     // Any keypress dismisses a transient notice from the prior
                     // action (it is set again below if this action also fails).
                     browser.notice = None;
-                    if cloud_sync::prompt_pending() {
+                    if browser.play_confirm_prompt().is_some() {
+                        browser.answer_play_confirm(matches!(input, KeyCode::Char('y' | 'Y')));
+                    } else if cloud_sync::prompt_pending() {
                         // Cloud conflict prompt is modal.
                         match input {
                             KeyCode::Char('c') => {
@@ -887,11 +901,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                             Action::ProcessShaders
                                             | Action::ProcessShadersForce => {
                                                 let force = action == Action::ProcessShadersForce;
-                                                play_settings::spawn_shaders(
-                                                    game.id,
-                                                    force,
-                                                    game.status_counter(),
-                                                );
+                                                browser.ask_shaders(game.id, force);
                                             }
                                             Action::Settings => {
                                                 let _ = browser.open_config();
@@ -964,6 +974,14 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                             }
+                            _ => {}
+                        }
+                    } else if browser.show_game_config && browser.game_config_picking() {
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.picker_cancel(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.picker_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.picker_previous(),
+                            KeyCode::Char('\n') | KeyCode::Enter => browser.picker_apply(),
                             _ => {}
                         }
                     } else if browser.show_game_config && browser.game_config_editing() {
@@ -1427,12 +1445,15 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                             }
-                            KeyCode::Char('e') => browser.install_anticheat(AntiCheat::Eac),
-                            KeyCode::Char('b') => browser.install_anticheat(AntiCheat::BattlEye),
+                            KeyCode::Char('e') => browser.ask_anticheat(AntiCheat::Eac),
+                            KeyCode::Char('b') => browser.ask_anticheat(AntiCheat::BattlEye),
                             KeyCode::Char('u') => {
                                 // Only custom (installed GE) runtimes are removable.
                                 if browser.selected_proton_uninstallable() {
                                     browser.confirm_proton_uninstall = true;
+                                } else {
+                                    browser.notice =
+                                        Some("Only installed GE runtimes can be removed.".into());
                                 }
                             }
                             _ => {}

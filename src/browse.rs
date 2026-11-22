@@ -23,7 +23,7 @@ pub mod install_options;
 pub mod install_queue;
 mod library_info;
 mod play_settings;
-pub use play_settings::{PLAY_ROWS, ROW_LAUNCH_OPTIONS, ROW_PREFIX};
+pub use play_settings::{ChoicePicker, PLAY_ROWS, PlayUi, ROW_LAUNCH_OPTIONS, ROW_PREFIX};
 #[path = "browse_launch.rs"]
 mod launch_ui;
 
@@ -570,6 +570,8 @@ pub struct Browser {
     pub game_cloud_sync: Option<crate::interface::cloud_sync::GameCloudSync>,
     /// Text being typed into a row.
     pub game_config_input: Option<String>,
+    /// Pickers, confirms and Proton default.
+    pub play: PlayUi,
 
     // --- Collections overlay ---
     /// Whether the collections overlay is open.
@@ -843,6 +845,7 @@ impl Browser {
             game_config_status: String::new(),
             game_cloud_sync: None,
             game_config_input: None,
+            play: PlayUi::default(),
             show_collections: false,
             collections: Vec::new(),
             collections_index: 0,
@@ -1142,7 +1145,7 @@ impl Browser {
     /// Fetch the Proton/Wine runtimes and open the overlay. Blocks on the
     /// `aurelia proton list` subprocess; the selection resets to the first row.
     pub fn open_proton(&mut self) -> Result<(), STError> {
-        self.protons = aurelia::proton_list()?;
+        self.load_protons()?;
         self.proton_index = 0;
         self.show_proton = true;
         Ok(())
@@ -1152,6 +1155,7 @@ impl Browser {
     pub fn close_proton(&mut self) {
         self.show_proton = false;
         self.confirm_proton_uninstall = false;
+        self.play.confirm_anticheat = None;
         self.protons.clear();
         self.proton_index = 0;
     }
@@ -1159,8 +1163,7 @@ impl Browser {
     /// Re-fetch the Proton runtimes (e.g. after an install/uninstall) while
     /// keeping the current row highlighted. A fetch error leaves the list as-is.
     pub fn refresh_proton(&mut self) {
-        if let Ok(protons) = aurelia::proton_list() {
-            self.protons = protons;
+        if self.load_protons().is_ok() {
             self.proton_index = self.proton_index.min(self.protons.len().saturating_sub(1));
         }
     }
@@ -3574,6 +3577,7 @@ impl Browser {
         self.game_config_protons.clear();
         self.game_config_index = 0;
         self.game_config_input = None;
+        self.play.picker = None;
     }
 
     pub fn game_config_next(&mut self) {
@@ -3603,102 +3607,8 @@ impl Browser {
             return;
         }
         match self.game_config_index {
-            // Runner: auto → umu → luxtorpeda → auto.
-            0 => {
-                let cur = self
-                    .game_config
-                    .as_ref()
-                    .map(|c| c.runner.as_str())
-                    .unwrap_or("auto");
-                let res = match cur {
-                    "umu" => {
-                        let _ = aurelia::config_game_set_umu(id, false);
-                        aurelia::config_game_set_native_engine(id, true)
-                    }
-                    "luxtorpeda" => aurelia::config_game_set_native_engine(id, false),
-                    _ => aurelia::config_game_set_umu(id, true),
-                };
-                self.game_config_status = match res {
-                    Ok(()) => "Runner updated.".to_string(),
-                    Err(e) => format!("Failed: {e}"),
-                };
-            }
-            // Forced Proton: cycle installed runtimes, then wrap to cleared.
-            1 => {
-                let cur = self
-                    .game_config
-                    .as_ref()
-                    .and_then(|c| c.forced_proton_version.clone());
-                let res = if self.game_config_protons.is_empty() {
-                    aurelia::config_game_clear_proton(id)
-                } else {
-                    let next = match cur.as_deref() {
-                        None => Some(0),
-                        Some(v) => match self.game_config_protons.iter().position(|p| p == v) {
-                            Some(i) if i + 1 < self.game_config_protons.len() => Some(i + 1),
-                            _ => None,
-                        },
-                    };
-                    match next {
-                        Some(i) => {
-                            aurelia::config_game_set_proton(id, &self.game_config_protons[i])
-                        }
-                        None => aurelia::config_game_clear_proton(id),
-                    }
-                };
-                self.game_config_status = match res {
-                    Ok(()) => "Forced Proton updated.".to_string(),
-                    Err(e) => format!("Failed: {e}"),
-                };
-            }
-            // Platform: auto → windows → linux → auto.
-            2 => {
-                let cur = self
-                    .game_config
-                    .as_ref()
-                    .and_then(|c| c.platform_preference.clone());
-                let (next, res) = match cur.as_deref() {
-                    None => ("windows", aurelia::config_game_set_platform(id, "windows")),
-                    Some("windows") => ("linux", aurelia::config_game_set_platform(id, "linux")),
-                    Some(_) => ("auto", aurelia::config_game_clear_platform(id)),
-                };
-                self.game_config_status = match res {
-                    Ok(()) => format!("Platform set to {next}."),
-                    Err(e) => format!("Failed: {e}"),
-                };
-            }
-            // Steam runtime: auto → on → off → auto.
-            3 => {
-                let cur = self
-                    .game_config
-                    .as_ref()
-                    .and_then(|c| c.steam_runtime_policy.clone());
-                let next = match cur.as_deref() {
-                    Some("Enabled") => "off",
-                    Some("Disabled") => "auto",
-                    _ => "on",
-                };
-                self.game_config_status = match aurelia::config_game_set_steam_runtime(id, next) {
-                    Ok(()) => format!("Steam runtime set to {next}."),
-                    Err(e) => format!("Failed: {e}"),
-                };
-            }
-            // Steam prefix: toggle shared ↔ per-game.
-            4 => {
-                let cur = self
-                    .game_config
-                    .as_ref()
-                    .and_then(|c| c.steam_prefix_mode.clone());
-                let next = match cur.as_deref() {
-                    Some("PerGame") => "shared",
-                    _ => "per-game",
-                };
-                self.game_config_status = match aurelia::config_game_set_steam_prefix_mode(id, next)
-                {
-                    Ok(()) => format!("Steam prefix set to {next}."),
-                    Err(e) => format!("Failed: {e}"),
-                };
-            }
+            // Choice rows open a picker.
+            0..=4 => return self.open_game_config_picker(),
             // Steam integration (TUI config).
             6 => self.toggle_steam_integration(),
             // Launch script: create one if none, else clear the per-game override.

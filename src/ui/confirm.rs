@@ -25,7 +25,7 @@ pub fn confirm_install(game_name: &str) -> Paragraph<'static> {
 
 /// Shared destructive-action confirmation popup: a `prompt` question over a
 /// `[y] confirm / [n] cancel` hint, framed by a WARN-accented border/title.
-fn confirm(prompt: String) -> Paragraph<'static> {
+pub fn confirm(prompt: String) -> Paragraph<'static> {
     let lines = vec![
         Spans::from(Span::styled(prompt, Style::default().fg(theme::TEXT))),
         Spans::from(""),
