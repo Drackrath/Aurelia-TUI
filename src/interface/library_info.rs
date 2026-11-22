@@ -4,7 +4,7 @@
 //! `info --extended`: only when expanded.
 //! SteamDB links open off-thread.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::thread;
 
@@ -24,6 +24,9 @@ pub struct LibraryInfoJson {
     /// Installed bytes (`SizeOnDisk`).
     #[serde(default)]
     pub size_on_disk: Option<u64>,
+    /// Installed manifest per depot id.
+    #[serde(default)]
+    pub local_manifest_ids: BTreeMap<String, u64>,
 }
 
 impl LibraryInfoJson {

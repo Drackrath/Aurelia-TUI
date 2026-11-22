@@ -22,6 +22,7 @@ use crate::util::error::STError;
 pub mod install_options;
 pub mod install_queue;
 mod library_info;
+pub use library_info::{VersionRow, VersionsConfirm};
 mod play_settings;
 pub use play_settings::{PLAY_ROWS, ROW_LAUNCH_OPTIONS, ROW_PREFIX};
 #[path = "browse_launch.rs"]
@@ -232,6 +233,8 @@ pub struct Browser {
     pub wallet_info: Option<aurelia::WalletJson>,
     /// Whether the description panel is expanded beyond its collapsed cap.
     pub expand_description: bool,
+    /// Expanded detail scroll: (app, offset).
+    pub detail_scroll: (i32, u16),
     /// Whether the achievements overlay is open.
     pub show_achievements: bool,
     /// The selected game's achievements (loaded when the overlay opens).
@@ -547,6 +550,8 @@ pub struct Browser {
     /// highlighted depot to (older ids come from SteamDB); the buffer is what the
     /// user has typed so far.
     pub versions_input: Option<String>,
+    /// Pending pin/downgrade awaiting `y`.
+    pub versions_confirm: Option<VersionsConfirm>,
     /// Shared status cell for an in-flight downgrade, streamed from the backend
     /// worker thread (mirrors a game's install status).
     pub versions_busy: Arc<Mutex<Option<GameStatus>>>,
@@ -706,6 +711,7 @@ impl Browser {
             show_wallet: false,
             wallet_info: None,
             expand_description: false,
+            detail_scroll: (0, 0),
             show_achievements: false,
             achievements: Vec::new(),
             ach_scroll: 0,
@@ -833,6 +839,7 @@ impl Browser {
             versions_app_id: 0,
             versions_status: String::new(),
             versions_input: None,
+            versions_confirm: None,
             versions_busy: Arc::new(Mutex::new(None)),
             show_game_config: false,
             game_config: None,
@@ -1282,6 +1289,7 @@ impl Browser {
     /// Toggle the expanded/collapsed state of the description panel.
     pub fn toggle_description(&mut self) {
         self.expand_description = !self.expand_description;
+        self.detail_scroll = (0, 0);
     }
 
     /// Fetch the Steam Cloud file list for `app_id` (blocking) and open the
@@ -3361,6 +3369,7 @@ impl Browser {
         self.versions_app_id = app_id;
         self.versions_status.clear();
         self.versions_input = None;
+        self.versions_confirm = None;
         self.show_versions = true;
     }
 
@@ -3382,20 +3391,22 @@ impl Browser {
     }
 
     pub fn versions_next(&mut self) {
-        if self.versions_manifests.is_empty() {
+        let len = self.versions_rows().len();
+        if len == 0 {
             self.versions_index = 0;
             return;
         }
-        self.versions_index = (self.versions_index + 1) % self.versions_manifests.len();
+        self.versions_index = (self.versions_index + 1) % len;
     }
 
     pub fn versions_previous(&mut self) {
-        if self.versions_manifests.is_empty() {
+        let len = self.versions_rows().len();
+        if len == 0 {
             self.versions_index = 0;
             return;
         }
         self.versions_index = if self.versions_index == 0 {
-            self.versions_manifests.len() - 1
+            len - 1
         } else {
             self.versions_index - 1
         };
@@ -3437,7 +3448,7 @@ impl Browser {
 
     /// Start prompting for a manifest id to downgrade the highlighted depot to.
     pub fn begin_downgrade_input(&mut self) {
-        if self.selected_manifest().is_some() {
+        if self.selected_version_depot().is_some() {
             self.versions_input = Some(String::new());
         }
     }
@@ -3464,7 +3475,7 @@ impl Browser {
     /// a worker thread. Progress streams into `versions_busy` (shown in the
     /// overlay); the download runs off the UI thread so the TUI stays responsive.
     pub fn start_downgrade(&mut self) {
-        let Some(depot) = self.selected_manifest().map(|m| m.depot_id) else {
+        let Some(depot) = self.selected_version_depot() else {
             return;
         };
         let Some(text) = self.versions_input.take() else {
@@ -3474,12 +3485,8 @@ impl Browser {
             self.versions_status = "Invalid manifest id.".to_string();
             return;
         };
-        let app_id = self.versions_app_id;
-        let busy = Arc::clone(&self.versions_busy);
-        self.versions_status = format!("Downgrading depot {depot} → manifest {manifest}…");
-        thread::spawn(move || {
-            aurelia::downgrade(app_id, &[(depot, manifest)], None, false, false, busy);
-        });
+        // Ask first; `y` runs it.
+        self.request_downgrade(depot, manifest);
     }
 
     /// The current downgrade worker status, if one is in flight (or just finished).

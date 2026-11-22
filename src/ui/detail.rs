@@ -49,12 +49,12 @@ pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
 /// A transparent Detail panel: the same rounded, accent-titled frame as
 /// [`theme::panel`] but with no inner fill, so the cover art rendered behind it
 /// shows through as the background.
-fn transparent_panel() -> Block<'static> {
+fn transparent_panel(title: &'static str) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER).bg(theme::BG))
-        .title(Spans::from(Span::styled("Detail", theme::title_style())))
+        .title(Spans::from(Span::styled(title, theme::title_style())))
 }
 
 /// An empty, height-1 row used both as a section separator and as top padding.
@@ -74,6 +74,7 @@ fn build_content(
     expand: bool,
     width: u16,
     height: Option<u16>,
+    scroll: u16,
 ) -> (Vec<Row<'static>>, u16) {
     let mut content: Vec<Row> = Vec::new();
     let mut content_h = 0u16;
@@ -124,10 +125,7 @@ fn build_content(
                     1,
                 );
             }
-            for (row, h) in super::library_info::library_rows(g)
-                .into_iter()
-                .chain(super::library_info::extended_rows(g, width, expand))
-            {
+            for (row, h) in super::library_info::library_rows(g) {
                 push(row, h);
             }
 
@@ -168,11 +166,17 @@ fn build_content(
             if let Some(status) = g.get_status() {
                 push(blank(), 1);
                 let size = super::library_info::size_text(g, status.size);
-                for &(heading, value) in &[
-                    ("State", &status.state),
-                    ("Installation", &status.installdir),
-                    ("Size", &size),
-                ] {
+                let rows = [
+                    ("State", &status.state, true),
+                    (
+                        "Installation",
+                        &status.installdir,
+                        !status.installdir.is_empty(),
+                    ),
+                    ("Size", &size, g.installed || status.size > 0.0),
+                ];
+                // Skip empty rows when uninstalled.
+                for (heading, value, _) in rows.into_iter().filter(|r| r.2) {
                     push(
                         Row::new(vec![
                             Cell::from(Span::styled(heading, theme::label())),
@@ -183,51 +187,17 @@ fn build_content(
                 }
             }
 
-            // Description, listed as its own (wrapping) row.
-            let description = g.get_description();
-            if !description.is_empty() {
-                // Table fits whole rows: a six-line description that exceeds
-                // the remaining space can disappear entirely. Use the existing
-                // panel budget to show the lines that fit alongside HLTB.
-                let description_start = push(blank(), 1);
-                let mut lines = wrap(&description, width.max(1) as usize);
-                let available = height
-                    .map(|h| h.saturating_sub(description_start) as usize)
-                    .unwrap_or(usize::MAX);
-                let limit = if expand {
-                    available
-                } else {
-                    available.min(DESC_COLLAPSED_LINES)
-                };
-                if lines.len() > limit {
-                    lines.truncate(limit);
-                    if let Some(last) = lines.last_mut() {
-                        while last.chars().count() >= width.max(1) as usize {
-                            last.pop();
-                        }
-                        last.push('…');
-                    }
+            // Extra lines fill remaining height.
+            let lines = super::library_info::extra_lines(g, width, expand, DESC_COLLAPSED_LINES);
+            if !lines.is_empty() {
+                let start = push(blank(), 1);
+                let budget = height
+                    .map(|h| h.saturating_sub(start) as usize)
+                    .unwrap_or(lines.len());
+                let shown = super::library_info::visible_lines(lines, budget, scroll, expand);
+                for row in super::library_info::line_rows(shown) {
+                    push(row, 1);
                 }
-                let label = if expand {
-                    "Description ([i] collapse)"
-                } else {
-                    "Description ([i] expand)"
-                };
-                let lines_h = lines.len() as u16;
-                let text = Text::from(
-                    lines
-                        .into_iter()
-                        .map(|l| Spans::from(Span::styled(l, theme::value())))
-                        .collect::<Vec<_>>(),
-                );
-                push(
-                    Row::new(vec![
-                        Cell::from(Span::styled(label, theme::label())),
-                        Cell::from(text),
-                    ])
-                    .height(lines_h),
-                    lines_h,
-                );
             }
         }
         None => {
@@ -248,7 +218,7 @@ fn build_content(
 /// region from the `ID | Name` head down to the bottom of the panel. The caller
 /// uses this to size the cover art into the empty space above it.
 pub fn content_height(game: Option<&Game>, expand: bool, width: u16) -> u16 {
-    build_content(game, expand, width, None).1
+    build_content(game, expand, width, None, 0).1
 }
 
 /// Build the detail table for the selected game (or an empty-state table). The
@@ -258,7 +228,18 @@ pub fn content_height(game: Option<&Game>, expand: bool, width: u16) -> u16 {
 /// are bottom-aligned within it (padded from the top) so the cover art fills the
 /// empty space above the `ID | Name` head.
 pub fn detail(game: Option<&Game>, expand: bool, width: u16, height: u16) -> Table<'static> {
-    let (content, content_h) = build_content(game, expand, width, Some(height));
+    detail_scrolled(game, expand, width, height, 0)
+}
+
+/// [`detail`] with expanded lines scrolled.
+pub fn detail_scrolled(
+    game: Option<&Game>,
+    expand: bool,
+    width: u16,
+    height: u16,
+    scroll: u16,
+) -> Table<'static> {
+    let (content, content_h) = build_content(game, expand, width, Some(height), scroll);
 
     // Bottom-align: pad the top with empty rows so the content sits against the
     // panel's lower edge, leaving the top free for the cover art.
@@ -270,6 +251,9 @@ pub fn detail(game: Option<&Game>, expand: bool, width: u16, height: u16) -> Tab
     // No `.style(...)`: the table must not paint a background, so the cover art
     // rendered behind it remains visible between the rows.
     Table::new(rows)
-        .block(transparent_panel())
+        .block(transparent_panel(super::library_info::detail_title(
+            expand,
+            game.is_some(),
+        )))
         .widths(&[Constraint::Percentage(18), Constraint::Percentage(82)])
 }

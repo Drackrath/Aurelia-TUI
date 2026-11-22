@@ -35,6 +35,7 @@ fn list_json_fields_parse() {
             update_queued: true,
             online_required: Some(false),
             size_on_disk: Some(13_421_772_800),
+            local_manifest_ids: [("621".to_string(), 1_234_567_890_123_456_789)].into(),
         }
     );
     assert!(entries[1].library.online_only());
@@ -187,7 +188,7 @@ fn list_badges_queued_and_online_games() {
     assert!(row("Counter-Strike 2").contains("online"), "{text}");
     let portal2 = row("Portal 2");
     assert!(
-        portal2.contains("queued") && portal2.contains("13.42 GB"),
+        portal2.contains("queued") && portal2.contains("13G"),
         "{text}"
     );
     // Narrow lists drop the size.

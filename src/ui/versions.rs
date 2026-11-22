@@ -4,22 +4,84 @@
 
 use pretty_bytes::converter::convert;
 
-use tui::style::Modifier;
+use tui::style::{Modifier, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::Paragraph;
 
-use crate::browse::Browser;
+use crate::browse::{Browser, VersionRow};
 use crate::theme;
 use crate::ui::{paneled_paragraph, selection_marker};
 
-/// Build the versions overlay from the browser's open versions state. Shows the
-/// pin banner, install path, one row per depot (name, current manifest, size,
-/// and any pinned manifest), and either the downgrade prompt or a status/hint
-/// line.
-pub fn versions(browser: &Browser) -> Paragraph<'static> {
-    let mut lines: Vec<Spans<'static>> = Vec::new();
+/// Footer key hints, wrapped to width.
+const HINT: &str = "[j/k] move  [p] pin  [u] unpin  [d] downgrade  [s] SteamDB  [Esc] close";
 
-    // Pin banner + install path.
+/// Unsized variant; shows every row.
+pub fn versions(browser: &Browser) -> Paragraph<'static> {
+    versions_sized(browser, 80, u16::MAX)
+}
+
+fn row_line(r: &VersionRow, selected: bool) -> Spans<'static> {
+    let style = if selected {
+        theme::selection(theme::ACCENT)
+    } else {
+        theme::value()
+    };
+    let name = match &r.depot_name {
+        Some(n) => format!("{n} ({})", r.depot_id),
+        None => r.depot_id.to_string(),
+    };
+    let mut spans = vec![
+        Span::styled(selection_marker(selected).to_string(), style),
+        Span::styled(name, style),
+    ];
+    if let Some(branch) = &r.branch {
+        spans.push(Span::styled(format!(" [{branch}]"), theme::accent()));
+    }
+    // Markers first; narrow screens.
+    if r.is_installed() {
+        spans.push(Span::styled(
+            " · installed".to_string(),
+            theme::value().fg(theme::ONLINE),
+        ));
+    }
+    if let Some(pin) = r.pinned {
+        let note = if r.manifest_id == Some(pin) || r.manifest_id.is_none() {
+            format!(" · pinned {pin}")
+        } else {
+            " · pinned elsewhere".to_string()
+        };
+        spans.push(Span::styled(note, theme::value().fg(theme::WARN)));
+    }
+    match r.manifest_id {
+        Some(mid) => spans.push(Span::styled(format!("  {mid}"), theme::dim())),
+        None => {
+            if let Some(mid) = r.installed {
+                spans.push(Span::styled(format!(" · installed {mid}"), theme::dim()));
+            }
+            spans.push(Span::styled("  (not listed)".to_string(), theme::dim()));
+        }
+    }
+    if let Some(size) = r.size {
+        spans.push(Span::styled(
+            format!("  {}", convert(size as f64)),
+            theme::dim(),
+        ));
+    }
+    Spans::from(spans)
+}
+
+/// Wrap footer text into styled lines.
+fn footer_lines(text: &str, width: usize, style: Style) -> Vec<Spans<'static>> {
+    super::detail::wrap(text, width)
+        .into_iter()
+        .map(|l| Spans::from(Span::styled(l, style)))
+        .collect()
+}
+
+/// Sized overlay; fixed header, footer.
+pub fn versions_sized(browser: &Browser, width: u16, height: u16) -> Paragraph<'static> {
+    let inner_w = width.saturating_sub(2).max(1) as usize;
+    let mut header: Vec<Spans<'static>> = Vec::new();
     let pin_span = if browser.is_pinned() {
         Span::styled(
             "PINNED (updates held)".to_string(),
@@ -28,92 +90,87 @@ pub fn versions(browser: &Browser) -> Paragraph<'static> {
     } else {
         Span::styled("not pinned".to_string(), theme::dim())
     };
-    lines.push(Spans::from(vec![
+    header.push(Spans::from(vec![
         Span::styled("Version pin: ".to_string(), theme::label()),
         pin_span,
     ]));
-    if let Some(av) = &browser.versions_available {
-        if let Some(path) = &av.install_path {
-            lines.push(Spans::from(vec![
-                Span::styled("Installed at: ".to_string(), theme::label()),
-                Span::styled(path.clone(), theme::dim()),
-            ]));
-        }
+    if let Some(path) = browser
+        .versions_available
+        .as_ref()
+        .and_then(|a| a.install_path.clone())
+    {
+        header.push(Spans::from(vec![
+            Span::styled("Installed at: ".to_string(), theme::label()),
+            Span::styled(path, theme::dim()),
+        ]));
     }
-    lines.push(Spans::from(""));
+    header.push(Spans::from(Span::styled(
+        "depot [branch] · state  manifest  size".to_string(),
+        theme::dim(),
+    )));
 
-    // Depot rows.
-    if browser.versions_manifests.is_empty() {
+    // Footer: prompt or status, then hints.
+    let mut footer: Vec<Spans<'static>> = vec![Spans::from("")];
+    if let Some(confirm) = browser.versions_confirm {
+        footer.extend(footer_lines(&confirm.prompt(), inner_w, theme::accent()));
+        footer.extend(footer_lines(
+            "[y] confirm · any other key cancels",
+            inner_w,
+            theme::key(),
+        ));
+    } else if let Some(input) = &browser.versions_input {
+        footer.push(Spans::from(vec![
+            Span::styled("Downgrade to manifest id: ".to_string(), theme::label()),
+            Span::styled(input.clone(), theme::accent()),
+            Span::styled("_".to_string(), theme::key()),
+        ]));
+        footer.extend(footer_lines(
+            "[Enter] continue · [Esc] cancel · older ids: SteamDB",
+            inner_w,
+            theme::dim(),
+        ));
+    } else {
+        let status = if !browser.versions_status.is_empty() {
+            Some(browser.versions_status.clone())
+        } else {
+            browser.downgrade_busy_text()
+        };
+        if let Some(status) = status {
+            footer.extend(footer_lines(&status, inner_w, theme::value()));
+        }
+        footer.extend(footer_lines(HINT, inner_w, theme::dim()));
+    }
+
+    let rows = browser.versions_rows();
+    let inner_h = height.saturating_sub(2) as usize;
+    let list_h = inner_h.saturating_sub(header.len() + footer.len()).max(1);
+    let mut lines = header;
+    if rows.is_empty() {
         lines.push(Spans::from(Span::styled(
             "No depot manifests (the game may not be installed or owned).".to_string(),
             theme::dim(),
         )));
     } else {
-        let pinned_map = browser
-            .versions_available
-            .as_ref()
-            .map(|a| &a.pinned_manifests);
-        for (i, m) in browser.versions_manifests.iter().enumerate() {
-            let selected = i == browser.versions_index;
-            let style = if selected {
-                theme::selection(theme::ACCENT)
-            } else {
-                theme::value()
-            };
-            let name = match m.depot_name.as_deref() {
-                Some(n) if !n.is_empty() => format!("{} ({})", n, m.depot_id),
-                _ => m.depot_id.to_string(),
-            };
-            // Note if this depot is pinned, and to which manifest.
-            let pin_note = pinned_map
-                .and_then(|pm| pm.get(&m.depot_id.to_string()))
-                .map(|mid| {
-                    if *mid == m.manifest_id {
-                        " · pinned".to_string()
-                    } else {
-                        format!(" · pinned {mid}")
-                    }
-                })
-                .unwrap_or_default();
-            lines.push(Spans::from(vec![
-                Span::styled(selection_marker(selected).to_string(), style),
-                Span::styled(name, style),
-                Span::raw("  ".to_string()),
-                Span::styled(format!("manifest {}", m.manifest_id), theme::dim()),
-                Span::raw("  ".to_string()),
-                Span::styled(convert(m.size as f64), theme::dim()),
-                Span::styled(pin_note, theme::value().fg(theme::WARN)),
-            ]));
+        let (start, end) = super::scroll::window(browser.versions_index, rows.len(), list_h);
+        for (i, r) in rows.iter().enumerate().take(end).skip(start) {
+            lines.push(row_line(r, i == browser.versions_index));
         }
     }
-
-    lines.push(Spans::from(""));
-
-    // Downgrade prompt or status/hint line.
-    if let Some(input) = &browser.versions_input {
-        lines.push(Spans::from(vec![
-            Span::styled(
-                "Downgrade highlighted depot to manifest id: ".to_string(),
-                theme::label(),
-            ),
-            Span::styled(input.clone(), theme::accent()),
-            Span::styled("_".to_string(), theme::key()),
-        ]));
-        lines.push(Spans::from(Span::styled(
-            "Enter to start · Esc to cancel · (find older ids on SteamDB)".to_string(),
-            theme::dim(),
-        )));
-    } else {
-        let status = if !browser.versions_status.is_empty() {
-            browser.versions_status.clone()
-        } else if let Some(busy) = browser.downgrade_busy_text() {
-            busy
-        } else {
-            "[p] pin  [u] unpin  [d] downgrade selected  [s] SteamDB manifests  [Esc] close"
-                .to_string()
-        };
-        lines.push(Spans::from(Span::styled(status, theme::dim())));
+    // Pin footer to bottom.
+    let used = lines.len() + footer.len();
+    if height != u16::MAX && used < inner_h {
+        lines.extend((used..inner_h).map(|_| Spans::from("")));
     }
+    lines.extend(footer);
 
-    paneled_paragraph(lines, "Versions & pinning".to_string())
+    let title = if rows.is_empty() {
+        "Versions & pinning".to_string()
+    } else {
+        format!(
+            "Versions & pinning ({}/{})",
+            browser.versions_index.min(rows.len() - 1) + 1,
+            rows.len()
+        )
+    };
+    paneled_paragraph(lines, title)
 }

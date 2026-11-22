@@ -2,7 +2,9 @@
 
 use pretty_bytes::converter::convert;
 
-use tui::text::{Span, Spans, Text};
+use std::sync::atomic::{AtomicU16, Ordering};
+
+use tui::text::Span;
 use tui::widgets::{Cell, Row};
 
 use crate::interface::game::Game;
@@ -14,6 +16,22 @@ pub fn size_text(game: &Game, fallback: f64) -> String {
     match game.library.installed_size() {
         Some(bytes) => convert(bytes as f64),
         None => convert(fallback),
+    }
+}
+
+/// Short size, e.g. `13G`, `512M`.
+pub fn compact_size(bytes: u64) -> String {
+    const GB: f64 = 1e9;
+    const MB: f64 = 1e6;
+    let b = bytes as f64;
+    if b >= 10.0 * GB {
+        format!("{:.0}G", b / GB)
+    } else if b >= GB {
+        format!("{:.1}G", b / GB)
+    } else if b >= MB {
+        format!("{:.0}M", b / MB)
+    } else {
+        format!("{:.0}K", (b / 1e3).max(1.0))
     }
 }
 
@@ -29,14 +47,17 @@ pub fn list_tags(game: &Game) -> Vec<&'static str> {
     tags
 }
 
+/// List width needed for sizes.
+const LIST_SIZE_MIN_WIDTH: usize = 40;
+
 /// Tags, plus size when wide.
 pub fn list_suffix(game: &Game, inner_width: usize) -> Option<String> {
     let mut parts: Vec<String> = list_tags(game).into_iter().map(String::from).collect();
-    if inner_width >= 48
+    if inner_width >= LIST_SIZE_MIN_WIDTH
         && game.installed
         && let Some(bytes) = game.library.installed_size()
     {
-        parts.push(convert(bytes as f64));
+        parts.push(compact_size(bytes));
     }
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
@@ -49,34 +70,6 @@ fn kv(label: &str, value: String) -> (Row<'static>, u16) {
         ]),
         1,
     )
-}
-
-fn wrapped(label: &str, text: &str, width: usize, limit: usize) -> Option<(Row<'static>, u16)> {
-    let mut lines = super::detail::wrap(text, width.max(1));
-    if text.trim().is_empty() || limit == 0 {
-        return None;
-    }
-    if lines.len() > limit {
-        lines.truncate(limit);
-        if let Some(last) = lines.last_mut() {
-            last.push('…');
-        }
-    }
-    let h = lines.len() as u16;
-    let text = Text::from(
-        lines
-            .into_iter()
-            .map(|l| Spans::from(Span::styled(l, theme::value())))
-            .collect::<Vec<_>>(),
-    );
-    Some((
-        Row::new(vec![
-            Cell::from(Span::styled(label.to_string(), theme::label())),
-            Cell::from(text),
-        ])
-        .height(h),
-        h,
-    ))
 }
 
 /// Playtime and library flag rows.
@@ -95,34 +88,154 @@ pub fn library_rows(game: &Game) -> Vec<(Row<'static>, u16)> {
     rows
 }
 
-/// `info --extended` rows; more when expanded.
-pub fn extended_rows(game: &Game, width: u16, expand: bool) -> Vec<(Row<'static>, u16)> {
-    let Some(ext) = game.extended_info() else {
-        return Vec::new();
-    };
-    let width = width as usize;
-    let mut rows = Vec::new();
-    if !ext.genres.is_empty() {
-        rows.push(kv("Genres", ext.genres.join(", ")));
+/// One detail line: label, text.
+pub type Line = (String, String);
+
+/// Max scroll offset of last render.
+static MAX_SCROLL: AtomicU16 = AtomicU16::new(0);
+
+/// Lines per detail page.
+static PAGE: AtomicU16 = AtomicU16::new(1);
+
+/// Expanded-detail page size.
+pub fn page() -> u16 {
+    PAGE.load(Ordering::Relaxed)
+}
+
+/// Largest useful expanded-detail scroll.
+pub fn max_scroll() -> u16 {
+    MAX_SCROLL.load(Ordering::Relaxed)
+}
+
+/// Wrap `text` into labelled lines.
+fn push_wrapped(out: &mut Vec<Line>, label: &str, text: &str, width: usize, limit: usize) {
+    if text.trim().is_empty() || limit == 0 {
+        return;
     }
-    if let Some(score) = ext.metacritic {
-        rows.push(kv("Metacritic", score.to_string()));
+    let mut lines = super::detail::wrap(text, width.max(1));
+    if lines.len() > limit {
+        lines.truncate(limit);
+        if let Some(last) = lines.last_mut() {
+            while last.chars().count() >= width.max(1) {
+                last.pop();
+            }
+            last.push('…');
+        }
+    }
+    for (i, line) in lines.into_iter().enumerate() {
+        let label = if i == 0 { label } else { "" };
+        out.push((label.to_string(), line));
+    }
+}
+
+/// Drop repeated entries, keep order.
+pub fn dedupe(items: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    items
+        .iter()
+        .filter(|i| seen.insert(i.to_lowercase()))
+        .cloned()
+        .collect()
+}
+
+/// Extended info and description lines.
+pub fn extra_lines(game: &Game, width: u16, expand: bool, desc_limit: usize) -> Vec<Line> {
+    let width = width as usize;
+    let mut out = Vec::new();
+    if let Some(ext) = game.extended_info() {
+        if !ext.genres.is_empty() {
+            push_wrapped(&mut out, "Genres", &ext.genres.join(", "), width, 1);
+        }
+        if let Some(score) = ext.metacritic {
+            out.push(("Metacritic".into(), score.to_string()));
+        }
+        if expand {
+            if let Some(site) = ext.website.as_deref().filter(|s| !s.is_empty()) {
+                out.push(("Website".into(), site.to_string()));
+            }
+            let all = usize::MAX;
+            let features = dedupe(&ext.categories).join(", ");
+            push_wrapped(&mut out, "Features", &features, width, all);
+            let req = &ext.requirements;
+            push_wrapped(&mut out, "Minimum", &req.minimum.join("\n"), width, all);
+            let rec = req.recommended.join("\n");
+            push_wrapped(&mut out, "Recommended", &rec, width, all);
+        }
+    }
+    let limit = if expand { usize::MAX } else { desc_limit };
+    push_wrapped(
+        &mut out,
+        "Description",
+        &game.get_description(),
+        width,
+        limit,
+    );
+    out
+}
+
+/// Visible lines with scroll markers.
+pub fn visible_lines(lines: Vec<Line>, budget: usize, scroll: u16, expand: bool) -> Vec<Line> {
+    if budget == 0 {
+        return Vec::new();
     }
     if !expand {
-        return rows;
+        return truncated(lines, budget);
     }
-    if let Some(site) = ext.website.filter(|s| !s.is_empty()) {
-        rows.push(kv("Website", site));
+    let max = lines.len().saturating_sub(budget);
+    MAX_SCROLL.store(max.min(u16::MAX as usize) as u16, Ordering::Relaxed);
+    PAGE.store(budget.saturating_sub(1).max(1) as u16, Ordering::Relaxed);
+    let start = (scroll as usize).min(max);
+    let end = (start + budget).min(lines.len());
+    let mut shown: Vec<Line> = lines[start..end].to_vec();
+    if start > 0
+        && let Some(first) = shown.first_mut()
+        && first.0.is_empty()
+    {
+        first.0 = "  ▲".into();
     }
-    let req = &ext.requirements;
-    let all = usize::MAX;
-    rows.extend(wrapped("Features", &ext.categories.join(", "), width, all));
-    rows.extend(wrapped("Minimum", &req.minimum.join("\n"), width, all));
-    rows.extend(wrapped(
-        "Recommended",
-        &req.recommended.join("\n"),
-        width,
-        all,
-    ));
-    rows
+    // Always flag hidden lines below.
+    if end < lines.len()
+        && let Some(last) = shown.last_mut()
+    {
+        *last = ("  ▼".into(), "more · PgDn".into());
+    }
+    shown
+}
+
+/// First `budget` lines, ellipsis if cut.
+fn truncated(mut lines: Vec<Line>, budget: usize) -> Vec<Line> {
+    if lines.len() > budget {
+        lines.truncate(budget);
+        if let Some(last) = lines.last_mut() {
+            last.1.push('…');
+        }
+    }
+    lines
+}
+
+/// Detail rows for visible lines.
+pub fn line_rows(lines: Vec<Line>) -> Vec<Row<'static>> {
+    lines
+        .into_iter()
+        .map(|(label, text)| {
+            let style = if label.trim_start().starts_with(['▲', '▼']) {
+                theme::dim()
+            } else {
+                theme::label()
+            };
+            Row::new(vec![
+                Cell::from(Span::styled(label, style)),
+                Cell::from(Span::styled(text, theme::value())),
+            ])
+        })
+        .collect()
+}
+
+/// Detail panel title with key hints.
+pub fn detail_title(expand: bool, has_game: bool) -> &'static str {
+    match (has_game, expand) {
+        (false, _) => "Detail",
+        (true, false) => "Detail · [i] more",
+        (true, true) => "Detail · [i] less · PgUp/PgDn scroll",
+    }
 }

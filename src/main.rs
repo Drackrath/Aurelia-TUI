@@ -336,11 +336,12 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 // The (transparent) detail table draws its frame and bottom-
                 // aligned rows over the art.
                 frame.render_widget(
-                    ui::detail::detail(
+                    ui::detail::detail_scrolled(
                         selected.as_ref(),
                         browser.expand_description,
                         desc_width.saturating_sub(1),
                         inner.height,
+                        browser.detail_scroll_for(selected.as_ref().map(|g| g.id)),
                     ),
                     detail_area,
                 );
@@ -462,7 +463,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 if browser.show_versions {
                     let area = ui::centered_rect(72, 78, frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::versions::versions(&browser), area);
+                    frame.render_widget(ui::versions::versions_sized(&browser, area.width, area.height), area);
                 }
 
                 // Per-game settings overlay floats above everything.
@@ -928,7 +929,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     } else if browser.show_versions {
                         // Versions & pinning overlay. When prompting for a
                         // downgrade manifest id, keys edit that input instead.
-                        if browser.versions_input.is_some() {
+                        if browser.versions_confirm.is_some() {
+                            browser.versions_confirm_key(input == KeyCode::Char('y'));
+                        } else if browser.versions_input.is_some() {
                             match input {
                                 KeyCode::Esc => browser.cancel_downgrade_input(),
                                 KeyCode::Char('\n') | KeyCode::Enter => browser.start_downgrade(),
@@ -941,7 +944,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Esc | KeyCode::Char('q') => browser.close_versions(),
                                 KeyCode::Down | KeyCode::Char('j') => browser.versions_next(),
                                 KeyCode::Up | KeyCode::Char('k') => browser.versions_previous(),
-                                KeyCode::Char('p') => browser.pin_current(),
+                                KeyCode::Char('p') => browser.request_pin(),
                                 KeyCode::Char('u') => browser.unpin_current(),
                                 KeyCode::Char('d') => browser.begin_downgrade_input(),
                                 KeyCode::Char('s') => browser.open_steamdb_depot(),
@@ -1699,6 +1702,12 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => browser.previous(),
                             KeyCode::Char('g') => browser.home(),
                             KeyCode::Char('G') => browser.end(),
+                            KeyCode::PageDown if browser.expand_description => {
+                                browser.detail_scroll_by(1)
+                            }
+                            KeyCode::PageUp if browser.expand_description => {
+                                browser.detail_scroll_by(-1)
+                            }
                             KeyCode::PageDown => browser.page_down(10),
                             KeyCode::PageUp => browser.page_up(10),
                             KeyCode::Char('\n') | KeyCode::Enter => {
