@@ -85,10 +85,7 @@ fn entry_status_marks_resumable_as_paused() {
     let list = entries();
     assert_eq!(entry_status(&list[0]).unwrap(), "downloading 50.0%");
     assert_eq!(entry_status(&list[1]).unwrap(), "paused 25.0%");
-    assert_eq!(
-        entry_status(&list[2]).unwrap(),
-        "paused 25.0% · interrupted · Disk full"
-    );
+    assert_eq!(entry_status(&list[2]).unwrap(), "paused 25.0% (disk full)");
     assert_eq!(entry_status(&list[3]), None);
 }
 
@@ -161,7 +158,7 @@ fn progress_uses_reused_bytes_without_double_count() {
     );
     assert_eq!(
         iq::progress_status(&events[1]),
-        "downloading 75.0% · 12.5 MB/s · ETA 1m 20s · 1.0 GB reused"
+        "downloading 75.0% · ETA 1m 20s · 12.5 MB/s · 1.0 GB reused"
     );
     // Overshoot from old builds clamps.
     let mut over = events[1].clone();
@@ -249,28 +246,136 @@ fn download_limit_parses_and_describes() {
     assert!(iq::parse_limit("fast").is_err());
 }
 
+fn screen(browser: &Browser, w: u16, h: u16) -> Vec<String> {
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+    terminal
+        .draw(|f| {
+            let area = ui::centered_rect(72, 70, f.size());
+            ui::install_queue::render(f, area, browser);
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+    (0..h)
+        .map(|y| (0..w).map(|x| buf.get(x, y).symbol.clone()).collect())
+        .collect()
+}
+
+fn many_entries() -> Vec<QueueEntry> {
+    (0..30)
+        .map(|i| QueueEntry {
+            app_id: 1000 + i,
+            name: format!("Queued Game {i}"),
+            downloaded_bytes: 3_900_000_000,
+            total_bytes: 14_000_000_000,
+            state: "paused".into(),
+            ..Default::default()
+        })
+        .collect()
+}
+
 #[test]
-fn overlay_and_settings_row_render() {
+fn overlay_scrolls_and_hints_fit() {
+    isolate_config();
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut browser = Browser::new(vec![]);
+        browser.apply_queue(many_entries());
+        for _ in 0..40 {
+            browser.install_queue_next();
+        }
+        let text = screen(&browser, w, h).join("\n");
+        assert!(text.contains("Install queue"), "{w}x{h}");
+        assert!(text.contains("▶ Queued Game 29"), "{w}x{h}: last row shown");
+        assert!(!text.contains("Queued Game 0 "), "{w}x{h}: scrolled");
+        for hint in ui::install_queue::HINTS {
+            assert!(text.contains(hint), "{w}x{h}: hint {hint}");
+        }
+        assert!(text.contains("3.9 GB / 14.0 GB (27.9%)"), "{w}x{h}");
+    }
+}
+
+#[test]
+fn forget_and_stop_ask_first() {
+    isolate_config();
+    let mut browser = Browser::new(vec![]);
+    let mut list = entries();
+    list.swap(0, 1);
+    browser.apply_queue(list);
+    // Portal is paused and selected.
+    browser.queue_ask_forget(false);
+    assert_eq!(
+        browser.queue_prompt().unwrap(),
+        "Forget Portal? Downloaded files stay on disk. [y]"
+    );
+    browser.queue_answer(false);
+    assert_eq!(browser.install_queue.pending, None);
+    assert_eq!(browser.install_queue.entries.len(), 4, "nothing forgotten");
+
+    browser.queue_ask_forget(true);
+    assert_eq!(
+        browser.queue_prompt().unwrap(),
+        "Forget Portal and delete 1.0 GB of partial files? [y]"
+    );
+    for (w, h) in [(80, 24), (120, 40)] {
+        let text = screen(&browser, w, h).join("");
+        assert!(text.contains("of partial files? [y]"), "{w}x{h}");
+    }
+    browser.queue_answer(false);
+
+    browser.queue_ask_stop();
+    assert_eq!(
+        browser.queue_prompt().unwrap(),
+        "Stop Portal? It stays in the queue as aborted. [y]"
+    );
+    browser.queue_answer(false);
+    assert_eq!(browser.install_queue.status, "Cancelled");
+
+    // Running entries can't be forgotten.
+    browser.install_queue_next();
+    browser.install_queue_previous();
+    browser.install_queue.index = 1;
+    browser.queue_ask_forget(false);
+    assert_eq!(browser.install_queue.pending, None);
+}
+
+#[test]
+fn interrupted_game_fits_main_list_at_80() {
     isolate_config();
     let mut browser = Browser::new(vec![game(620, "Portal 2")]);
     browser.apply_queue(entries());
-    browser.download_limit.kbit = Some(8000);
-    let backend = TestBackend::new(110, 16);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal
         .draw(|f| {
+            let list = ui::list::list(&browser, 32, 0);
+            f.render_stateful_widget(list, Rect::new(0, 3, 32, 19), &mut browser.state);
+            let selected = browser.selected();
             f.render_widget(
-                ui::install_queue::install_queue(&browser),
-                Rect::new(0, 0, 110, 16),
+                ui::detail::detail(selected.as_ref(), false, 45, 17),
+                Rect::new(32, 3, 48, 19),
             );
         })
         .unwrap();
-    let buf = terminal.backend().buffer();
-    let text: String = buf.content().iter().map(|c| c.symbol.as_str()).collect();
-    assert!(text.contains("Install queue"));
+    let buf = terminal.backend().buffer().clone();
+    let text: String = (0..24)
+        .map(|y| {
+            (0..80)
+                .map(|x| buf.get(x, y).symbol.clone())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(text.contains("Portal 2"));
-    assert!(text.contains("interrupted"));
-    assert!(text.contains("Disk full"));
+    assert!(text.contains("25.0%"), "list badge note");
+    assert!(
+        text.contains("paused 25.0% (disk full)"),
+        "detail state fits"
+    );
+}
+
+#[test]
+fn settings_limit_value_renders() {
+    isolate_config();
+    let mut browser = Browser::new(vec![]);
+    browser.download_limit.kbit = Some(8000);
     assert_eq!(
         ui::install_queue::limit_value(&browser),
         "8000 kbit/s (≈ 1.0 MB/s)"

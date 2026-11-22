@@ -440,7 +440,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                 if browser.install_queue.show {
                     let area = ui::centered_rect(72, 70, frame.size());
                     frame.render_widget(Clear, area);
-                    frame.render_widget(ui::install_queue::install_queue(&browser), area);
+                    ui::install_queue::render(frame, area, &browser);
                 }
 
                 // Wallet overlay floats above everything.
@@ -1475,6 +1475,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char(c) => browser.import_push(c),
                             _ => {}
                         }
+                    } else if browser.install_queue.pending.is_some() {
+                        // `y` confirms; anything else cancels.
+                        browser.queue_answer(input == KeyCode::Char('y'));
                     } else if browser.install_queue.show {
                         // Install queue overlay keys.
                         match input {
@@ -1483,9 +1486,9 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => browser.install_queue_previous(),
                             KeyCode::Char('p') => browser.queue_pause(),
                             KeyCode::Char('r') => browser.queue_resume(),
-                            KeyCode::Char('s') => browser.queue_stop(),
-                            KeyCode::Char('f') => browser.queue_forget(false),
-                            KeyCode::Char('F') => browser.queue_forget(true),
+                            KeyCode::Char('s') => browser.queue_ask_stop(),
+                            KeyCode::Char('f') => browser.queue_ask_forget(false),
+                            KeyCode::Char('F') => browser.queue_ask_forget(true),
                             _ => {}
                         }
                     } else if browser.show_help {
