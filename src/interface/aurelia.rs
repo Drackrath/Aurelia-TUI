@@ -20,7 +20,8 @@ use crate::util::log::log;
 
 /// The `aurelia` binary to invoke.
 ///
-/// Resolution order: `AURELIA_BIN` (explicit override) → a sibling `Aurelia`
+/// Resolution order: `AURELIA_BIN` (explicit override) → the Settings path →
+/// a sibling `Aurelia`
 /// build next to this project (dev convenience, so the TUI works without
 /// installing `aurelia` first) → bare `aurelia` (resolved on `PATH`).
 pub fn bin() -> String {
@@ -28,6 +29,9 @@ pub fn bin() -> String {
         if !explicit.is_empty() {
             return explicit;
         }
+    }
+    if let Some(chosen) = crate::interface::binary::configured() {
+        return chosen;
     }
 
     let exe = if cfg!(windows) { "aurelia.exe" } else { "aurelia" };
@@ -57,9 +61,9 @@ pub fn bin() -> String {
 }
 
 /// The oldest `aurelia` release this TUI supports.
-pub const MIN_VERSION: (u32, u32, u32) = (0, 1, 40);
+pub const MIN_VERSION: (u32, u32, u32) = (0, 3, 1);
 
-/// The installed `aurelia` version (`aurelia --version` prints `aurelia 0.1.40`),
+/// The installed `aurelia` version (`aurelia --version` prints `aurelia 0.3.1`),
 /// or `None` when the binary can't be run.
 pub fn version() -> Option<String> {
     let output = process::Command::new(bin())
@@ -72,7 +76,7 @@ pub fn version() -> Option<String> {
     stdout.split_whitespace().last().map(str::to_string)
 }
 
-/// Whether `version` (e.g. `0.1.40`, `0.1.37-2`) is at least [`MIN_VERSION`].
+/// Whether `version` (e.g. `0.3.1`, `0.3.0-2`) is at least [`MIN_VERSION`].
 /// An unparsable version counts as unsupported.
 pub fn version_supported(version: &str) -> bool {
     let core = version.trim_start_matches('v').split('-').next().unwrap_or("");
@@ -121,6 +125,9 @@ pub struct AccountJson {
     pub authed_machines: u32,
     #[serde(default)]
     pub vac_bans: u32,
+    /// Daemon's Steam logon id (v0.2.0).
+    #[serde(default)]
+    pub daemon_logon_id: Option<u32>,
 }
 
 impl AccountJson {
@@ -1286,11 +1293,10 @@ pub fn config_proxy_clear() -> Result<(), STError> {
     Ok(())
 }
 
-/// Log out of the current Steam session (`aurelia logout --json`). The returned
-/// value (`{"logged_out":true}`) is ignored; only errors are propagated.
-pub fn logout() -> Result<(), STError> {
-    run_json(&["logout"])?;
-    Ok(())
+/// `logout --json` with token revocation (v0.2.1).
+pub fn logout() -> Result<crate::interface::session::LogoutJson, STError> {
+    let value = run_json(&["logout"])?;
+    Ok(serde_json::from_value(value)?)
 }
 
 /// Fetch the Steam Wallet balance (`aurelia wallet --json`).

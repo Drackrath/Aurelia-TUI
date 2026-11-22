@@ -357,6 +357,13 @@ impl Client {
         self.last_error.lock().ok().and_then(|e| e.clone())
     }
 
+    /// Show `message` on the sign-in page.
+    pub fn set_last_error(&self, message: Option<String>) {
+        if let Ok(mut e) = self.last_error.lock() {
+            *e = message;
+        }
+    }
+
     /// Start a QR-code login. Poll [`Client::get_qr`] for the challenge to
     /// render and [`Client::get_state`] for completion (`Loaded(_, -2)`) or
     /// failure (`Failed`).

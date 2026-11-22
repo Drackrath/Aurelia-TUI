@@ -24,7 +24,7 @@ heavy lifting — authentication, library listing, downloads, and launching
 
 ## Requirements
 
-- The [`aurelia`](https://github.com/Drackrath/Aurelia) CLI, **version `>= 0.1.40`**
+- The [`aurelia`](https://github.com/Drackrath/Aurelia) CLI, **version `>= 0.3.1`**
   (on Arch: the [`aurelia`](https://aur.archlinux.org/packages/aurelia) AUR
   package; otherwise build it from source).
 - A Steam account (logging in is described below).
@@ -32,13 +32,19 @@ heavy lifting — authentication, library listing, downloads, and launching
 Aurelia TUI looks for the `aurelia` binary in this order:
 
 1. The `AURELIA_BIN` environment variable, if set (point it at a specific build).
-2. A sibling `Aurelia` checkout next to this project
+2. The path chosen in Settings (`p`, then `b`; empty means automatic), saved in
+   the TUI's `config.json`.
+3. A sibling `Aurelia` checkout next to this project
    (`../Aurelia/target/release/` or `.../debug/`) — handy when developing both.
-3. `aurelia` on your `PATH`.
+4. `aurelia` on your `PATH`.
+
+The TUI remembers which binary (path, size, modification time) it last ran.
+When that changes, Aurelia itself restarts its session daemon on the next
+command, so the TUI only shows a notice and never restarts the daemon in a loop.
 
 If none of these resolve, the sign-in screen tells you the binary couldn't be
 found. The detected `aurelia` version is shown in the bottom-right corner of the
-library footer, in the warning colour if it is older than 0.1.40 or missing.
+library footer, in the warning colour if it is older than 0.3.1 or missing.
 
 ## Building
 
