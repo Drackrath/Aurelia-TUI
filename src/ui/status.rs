@@ -144,7 +144,12 @@ pub fn status_bar(browser: &Browser, account: Option<&str>) -> Paragraph<'static
 
     // --- Line 2: key hints ---
     let mut line2: Vec<Span<'static>> = Vec::new();
-    for (cap, desc) in HINTS {
+    let hints: &[(&str, &str)] = if browser.friends_focused() {
+        &crate::ui::social::FRIEND_HINTS
+    } else {
+        &HINTS
+    };
+    for (cap, desc) in hints {
         line2.push(Span::styled(cap.to_string(), theme::key()));
         line2.push(Span::styled(desc.to_string(), theme::dim()));
     }

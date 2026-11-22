@@ -94,17 +94,13 @@ fn friends_panel_focus_aware_and_highlights() {
     assert!(joined.contains("Dota 2"), "shows the current game");
     print_shot("Friends (unfocused)", &unfocused);
 
-    // Focused: louder title advertising chat + new-window shortcuts.
+    // Focused: louder title, footer keys.
     b.view = View::Friends;
     let focused = render_rows(40, 8, |f| {
         f.render_widget(ui::friends::friends(&b, 6), Rect::new(0, 0, 40, 8));
     });
     let joined = focused.join("\n");
-    assert!(joined.contains("chat"), "focused title advertises chat");
-    assert!(
-        joined.contains("window"),
-        "focused title advertises [t] window"
-    );
+    assert!(joined.contains("● Friends (3)"), "focused title marker");
     assert!(
         joined.contains("\u{25b6}"),
         "highlighted row shows the ▶ marker"

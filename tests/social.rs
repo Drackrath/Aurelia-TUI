@@ -78,7 +78,7 @@ fn friends_panel_shows_status_labels() {
     assert!(out.contains("Away Friend (away)"), "{out}");
     assert!(out.contains("Ghost (invisible)"), "{out}");
     assert!(!out.contains("Player (online)"), "{out}");
-    assert!(out.contains("[i] invite"), "{out}");
+    assert!(out.contains("● Friends (4)"), "{out}");
 }
 
 #[test]

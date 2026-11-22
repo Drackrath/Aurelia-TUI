@@ -36,16 +36,22 @@ pub fn invite_overlay(draft: &InviteDraft) -> Paragraph<'static> {
         _ => draft.app_input.clone(),
     };
     let mut lines = vec![
-        Spans::from(vec![
-            Span::styled("Invite ", theme::label()),
-            Span::styled(
-                draft.friend_name.clone(),
-                Style::default()
-                    .fg(theme::ACCENT)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(format!("  ({})", draft.steamid), theme::dim()),
-        ]),
+        Spans::from({
+            let (name, id) = draft.header();
+            let mut spans = vec![
+                Span::styled("Invite ", theme::label()),
+                Span::styled(
+                    name,
+                    Style::default()
+                        .fg(theme::ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ];
+            if let Some(id) = id {
+                spans.push(Span::styled(format!("  ({id})"), theme::dim()));
+            }
+            spans
+        }),
         Spans::from(""),
         field_line("App id", &app_value, draft.field == InviteField::App),
         field_line(
@@ -69,7 +75,7 @@ pub fn invite_overlay(draft: &InviteDraft) -> Paragraph<'static> {
     }
     Paragraph::new(Text::from(lines))
         .block(theme::panel(
-            "Invite to game ([Enter] send · [Tab] field · [Esc] close)".to_string(),
+            "Invite · [Enter] send [Tab] field [Esc]".to_string(),
         ))
         .style(theme::base())
         .wrap(Wrap { trim: false })
@@ -191,13 +197,20 @@ pub fn profile_lines(p: &UserProfileJson) -> Vec<Spans<'static>> {
 /// The read-only profile overlay.
 pub fn profile_overlay(view: &ProfileView) -> Paragraph<'static> {
     let lines = match view.finished() {
-        None => vec![Spans::from(Span::styled(
-            format!(
-                "Loading profile of {}… (waits up to the Settings persona wait)",
-                view.label
-            ),
-            theme::dim(),
-        ))],
+        None => vec![
+            Spans::from(Span::styled(
+                format!(
+                    "Loading profile of {}… {}s",
+                    view.label,
+                    view.elapsed_secs(std::time::Instant::now())
+                ),
+                theme::dim(),
+            )),
+            Spans::from(Span::styled(
+                "Steam may take up to the persona wait.".to_string(),
+                theme::dim(),
+            )),
+        ],
         Some(Err(error)) => vec![Spans::from(Span::styled(
             format!("Profile unavailable: {error}"),
             Style::default().fg(theme::WARN),
@@ -205,11 +218,21 @@ pub fn profile_overlay(view: &ProfileView) -> Paragraph<'static> {
         Some(Ok(profile)) => profile_lines(&profile),
     };
     Paragraph::new(Text::from(lines))
-        .block(theme::panel(format!(
-            "Profile — {} ([j/k] scroll · [Esc] close)",
-            view.ident
-        )))
+        .block(theme::panel(
+            "Profile · [j/k] scroll [Esc] close".to_string(),
+        ))
         .style(theme::base())
         .wrap(Wrap { trim: false })
         .scroll((view.scroll, 0))
 }
+
+/// Friends tab footer key hints.
+pub const FRIEND_HINTS: [(&str, &str); 7] = [
+    ("[Enter]", " chat  "),
+    ("[t]", " window  "),
+    ("[i]", " invite  "),
+    ("[p]", " profile  "),
+    ("[m]", " me  "),
+    ("[a]", " add  "),
+    ("[x]", " remove"),
+];

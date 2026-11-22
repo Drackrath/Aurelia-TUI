@@ -1,9 +1,12 @@
 //! Invite, profile and persona-wait state.
 
+pub mod names;
+
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
 
-use crate::browse::Browser;
+use crate::browse::{Browser, View};
 use crate::interface::social::{self, UserProfileJson};
 
 /// Which invite field receives typing.
@@ -27,12 +30,33 @@ pub struct InviteDraft {
     pub field: InviteField,
     /// Progress, success or Aurelia's refusal.
     pub status: Arc<Mutex<String>>,
+    /// Send start while waiting on Aurelia.
+    pub sent_at: Arc<Mutex<Option<Instant>>>,
 }
 
 impl InviteDraft {
     /// The current status line.
     pub fn status_text(&self) -> String {
-        self.status.lock().map(|s| s.clone()).unwrap_or_default()
+        self.status_text_at(Instant::now())
+    }
+
+    /// Status line, with elapsed while sending.
+    pub fn status_text_at(&self, now: Instant) -> String {
+        let text = self.status.lock().map(|s| s.clone()).unwrap_or_default();
+        match self.sent_at.lock().ok().and_then(|t| *t) {
+            Some(start) => format!("{text} {}s", now.duration_since(start).as_secs()),
+            None => text,
+        }
+    }
+
+    /// Header: name and ID, once each.
+    pub fn header(&self) -> (String, Option<String>) {
+        let id = self.steamid.to_string();
+        if self.friend_name.is_empty() || self.friend_name == id {
+            (id, None)
+        } else {
+            (self.friend_name.clone(), Some(id))
+        }
     }
 }
 
@@ -48,9 +72,18 @@ pub struct ProfileView {
     pub label: String,
     pub result: ProfileSlot,
     pub scroll: u16,
+    /// When the lookup started.
+    pub started: Option<Instant>,
 }
 
 impl ProfileView {
+    /// Seconds since the lookup started.
+    pub fn elapsed_secs(&self, now: Instant) -> u64 {
+        self.started
+            .map(|t| now.duration_since(t).as_secs())
+            .unwrap_or(0)
+    }
+
     /// A finished lookup, if any.
     pub fn finished(&self) -> Option<Result<UserProfileJson, String>> {
         self.result.lock().ok().and_then(|r| r.clone())
@@ -64,6 +97,8 @@ pub struct SocialState {
     pub profile: Option<ProfileView>,
     /// Settings persona-wait editor input.
     pub wait_input: Option<String>,
+    /// Session names and background resolver.
+    pub names: names::NameResolver,
 }
 
 impl Browser {
@@ -160,11 +195,18 @@ impl Browser {
         let name = draft.friend_name.clone();
         let connect = draft.connect.clone();
         set(&status, format!("Inviting {name} to app {app_id}…"));
+        let sent_at = draft.sent_at.clone();
+        if let Ok(mut t) = sent_at.lock() {
+            *t = Some(Instant::now());
+        }
         thread::spawn(move || {
             let text = match social::chat_invite(steamid, app_id, Some(&connect)) {
                 Ok(_) => format!("Game invite for app {app_id} sent to {name}."),
                 Err(error) => format!("Invite refused: {error}"),
             };
+            if let Ok(mut t) = sent_at.lock() {
+                *t = None;
+            }
             set(&status, text);
         });
     }
@@ -186,21 +228,80 @@ impl Browser {
 
     /// Fetch `aurelia user <ident>` off-thread.
     pub fn open_profile(&mut self, ident: String, label: String) {
-        let result: ProfileSlot = Arc::new(Mutex::new(None));
-        let slot = result.clone();
-        let query = ident.clone();
-        thread::spawn(move || {
-            let fetched = social::user_profile(&query).map_err(|e| e.to_string());
-            if let Ok(mut slot) = slot.lock() {
-                *slot = Some(fetched);
-            }
-        });
+        if let Ok(id) = ident.parse::<u64>() {
+            self.social.names.attempted.insert(id);
+        }
+        let result = spawn_profile(ident.clone());
         self.social.profile = Some(ProfileView {
             ident,
             label,
             result,
             scroll: 0,
+            started: Some(Instant::now()),
         });
+    }
+
+    /// Per-tick social upkeep.
+    pub fn poll_social(&mut self) {
+        self.poll_social_at(Instant::now(), true);
+    }
+
+    /// Upkeep at `now`; `spawn` allows lookups.
+    pub fn poll_social_at(&mut self, now: Instant, spawn: bool) {
+        // Drop clans and other groups.
+        if self
+            .friends
+            .iter()
+            .any(|f| !names::is_individual(f.steam_id))
+        {
+            self.friends.retain(|f| names::is_individual(f.steam_id));
+            self.friends_index = self.friends_index.min(self.friends.len().saturating_sub(1));
+        }
+
+        let opened = self.social.profile.as_ref().and_then(|v| v.finished());
+        if let Some(Ok(profile)) = opened {
+            self.social.names.learn(&profile);
+        }
+        let done = self
+            .social
+            .names
+            .inflight
+            .as_ref()
+            .and_then(|(id, slot)| Some((*id, slot.lock().ok()?.clone()?)));
+        if let Some((id, result)) = done {
+            if let Ok(profile) = result {
+                self.social.names.learn(&profile);
+            }
+            self.social.names.attempted.insert(id);
+            self.social.names.inflight = None;
+            self.social.names.last_done = Some(now);
+        }
+        self.social.names.apply(&mut self.friends);
+
+        let in_friends = self.view == View::Friends;
+        self.social
+            .names
+            .note_nav(self.friends_index, in_friends, now);
+        if in_friends {
+            self.social.names.refresh_steam_here(now);
+        }
+
+        let busy = self.social.invite.is_some()
+            || self.social.profile.is_some()
+            || self.show_chat
+            || self.show_friend_add
+            || self.confirm_friend_remove;
+        if !spawn || !in_friends || busy || !self.social.names.lookup_due(now) {
+            return;
+        }
+        if let Some(id) = self
+            .social
+            .names
+            .next_lookup(&self.friends, self.friends_index)
+        {
+            self.social.names.attempted.insert(id);
+            self.social.names.inflight = Some((id, spawn_profile(id.to_string())));
+        }
     }
 
     /// Close the profile overlay.
@@ -220,6 +321,11 @@ impl Browser {
         if let Some(view) = self.social.profile.as_mut() {
             view.scroll = view.scroll.saturating_sub(1);
         }
+    }
+
+    /// Panel note when names are missing.
+    pub fn friends_note(&self) -> Vec<&'static str> {
+        names::missing_note(&self.friends, self.social.names.steam_here)
     }
 
     // --- Settings: persona wait ---
@@ -279,4 +385,17 @@ impl Browser {
             Err(error) => self.notice = Some(format!("Persona wait: {error}")),
         }
     }
+}
+
+/// Run `aurelia user` on a worker.
+fn spawn_profile(ident: String) -> ProfileSlot {
+    let result: ProfileSlot = Arc::new(Mutex::new(None));
+    let slot = result.clone();
+    thread::spawn(move || {
+        let fetched = social::user_profile(&ident).map_err(|e| e.to_string());
+        if let Ok(mut slot) = slot.lock() {
+            *slot = Some(fetched);
+        }
+    });
+    result
 }

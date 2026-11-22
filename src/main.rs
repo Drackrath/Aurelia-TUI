@@ -187,6 +187,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Adopt any async friend-management results (resolved search previews and
         // roster refreshes after an add/remove) before drawing this frame.
         browser.poll_friends_ops();
+        browser.poll_social();
         browser.poll_hltb();
         browser.poll_library_info();
         browser.poll_launch_runtime();
