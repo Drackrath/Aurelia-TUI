@@ -200,6 +200,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // gates uninstall) tracks reality without a full-screen reload.
         browser.poll_install_completions();
         browser.poll_game_refresh();
+        browser.poll_install_queue();
 
         // A just-finished Proton install flips a runtime to [installed]; pick
         // that up by refreshing the list once, then drop the status line. Done
@@ -429,6 +430,13 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                     let area = ui::centered_rect(55, 60, frame.size());
                     frame.render_widget(Clear, area);
                     frame.render_widget(ui::config::config(&browser), area);
+                }
+
+                // Install queue overlay.
+                if browser.install_queue.show {
+                    let area = ui::centered_rect(72, 70, frame.size());
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(ui::install_queue::install_queue(&browser), area);
                 }
 
                 // Wallet overlay floats above everything.
@@ -743,15 +751,12 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                                         browser.pause_install(game.id)
                                                     }
                                                     InstallPhase::Paused => {
-                                                        let library =
-                                                            browser.install_library_for(game.id);
-                                                        let control = browser
-                                                            .begin_install(game.id, library.clone());
-                                                        client.install(&game, control, library)?;
+                                                        browser.resume_install(&game)
                                                     }
                                                     InstallPhase::Idle => {}
                                                 }
                                             }
+                                            Action::InstallQueue => browser.open_install_queue(),
                                             Action::CancelInstall => {
                                                 if browser.install_phase(&game) != InstallPhase::Idle
                                                 {
@@ -1411,6 +1416,19 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char(c) => browser.import_push(c),
                             _ => {}
                         }
+                    } else if browser.install_queue.show {
+                        // Install queue overlay keys.
+                        match input {
+                            KeyCode::Esc | KeyCode::Char('q') => browser.close_install_queue(),
+                            KeyCode::Down | KeyCode::Char('j') => browser.install_queue_next(),
+                            KeyCode::Up | KeyCode::Char('k') => browser.install_queue_previous(),
+                            KeyCode::Char('p') => browser.queue_pause(),
+                            KeyCode::Char('r') => browser.queue_resume(),
+                            KeyCode::Char('s') => browser.queue_stop(),
+                            KeyCode::Char('f') => browser.queue_forget(false),
+                            KeyCode::Char('F') => browser.queue_forget(true),
+                            _ => {}
+                        }
                     } else if browser.show_help {
                         // Help overlay: Esc/q/? close, j/k scroll.
                         match input {
@@ -1440,7 +1458,17 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                         // Settings overlay. While editing the proxy URL, keys edit
                         // that input; otherwise dismiss / toggle presence / edit or
                         // clear the proxy, or toggle TUI-owned HLTB lookups in place.
-                        if browser.config_binary_input.is_some() {
+                        if browser.download_limit.input.is_some() {
+                            match input {
+                                KeyCode::Esc => browser.cancel_limit_edit(),
+                                KeyCode::Char('\n') | KeyCode::Enter => {
+                                    browser.commit_limit_edit()
+                                }
+                                KeyCode::Backspace => browser.limit_input_pop(),
+                                KeyCode::Char(c) => browser.limit_input_push(c),
+                                _ => {}
+                            }
+                        } else if browser.config_binary_input.is_some() {
                             match input {
                                 KeyCode::Esc => browser.config_binary_input = None,
                                 KeyCode::Char('\n') | KeyCode::Enter => {
@@ -1517,6 +1545,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Char('e') => browser.begin_proxy_edit(),
                                 KeyCode::Char('w') => browser.begin_persona_wait_edit(),
                                 KeyCode::Char('c') => browser.clear_proxy(),
+                                KeyCode::Char('d') => browser.begin_limit_edit(),
                                 KeyCode::Char('l') => {
                                     // Cycle store language, refetch info.
                                     let mut updated = config.clone();
@@ -1645,6 +1674,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             KeyCode::Char('E') => browser.open_engine(),
+                            KeyCode::Char('B') => browser.open_install_queue(),
                             KeyCode::Char('d') => {
                                 if let Some(game) = browser.selected() {
                                     // Choose the install location first; fall back
@@ -1663,13 +1693,8 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
                                     match browser.install_phase(&game) {
                                         InstallPhase::Active => browser.pause_install(game.id),
                                         InstallPhase::Paused => {
-                                            // Resume into the same library the
-                                            // download was started in.
-                                            let library =
-                                                browser.install_library_for(game.id);
-                                            let control = browser
-                                                .begin_install(game.id, library.clone());
-                                            client.install(&game, control, library)?;
+                                            // Resumes the backlog entry.
+                                            browser.resume_install(&game);
                                         }
                                         InstallPhase::Idle => {}
                                     }
@@ -1980,7 +2005,7 @@ fn entry() -> Result<(), Box<dyn std::error::Error>> {
         // Adopt a finished runtime-plugin worker (install/update/repair).
         browser.poll_engine();
 
-        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install && !browser.show_actions && !browser.show_versions && !browser.show_game_config && !browser.show_launch_targets && !browser.show_collections && !browser.show_engine && browser.language_picker.is_none() {
+        if app.mode == Mode::Browse && !browser.show_help && !browser.show_dlc && !browser.show_account && !browser.show_config && !browser.show_achievements && !browser.show_cloud && !browser.show_branches && !browser.show_depots && !browser.show_chat && !browser.show_inventory && !browser.show_launch && !browser.show_market && !browser.show_market_search && !browser.show_move && !browser.show_relink && !browser.show_import && !browser.show_proton && !browser.show_running && !browser.show_wallet && !browser.show_workshop && !browser.show_friend_add && !browser.confirm_friend_remove && !browser.confirm_uninstall && !browser.show_install_picker && !browser.confirm_install && !browser.show_actions && !browser.show_versions && !browser.show_game_config && !browser.show_launch_targets && !browser.show_collections && !browser.show_engine && browser.language_picker.is_none() && !browser.install_queue.show {
             let selected = browser.selected();
             let cur_sel = selected.as_ref().map(|g| g.id);
             if cur_sel != artwork_sel_id {

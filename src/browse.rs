@@ -19,6 +19,7 @@ use crate::interface::game_status::GameStatus;
 use crate::theme;
 use crate::util::error::STError;
 
+pub mod install_queue;
 pub mod install_options;
 mod library_info;
 mod play_settings;
@@ -461,6 +462,10 @@ pub struct Browser {
     /// The library folder each in-flight install was started in, keyed by app
     /// id, so a paused install resumes into the *same* library (not the default).
     install_library_choice: HashMap<i32, Option<String>>,
+    /// Install backlog overlay state.
+    pub install_queue: install_queue::InstallQueue,
+    /// Global download limit setting.
+    pub download_limit: crate::interface::install_queue::DownloadLimit,
     /// Whether the "game not installed — install now?" prompt is open (shown
     /// when the user tries to launch a game the listing marks not installed).
     pub confirm_install: bool,
@@ -629,6 +634,7 @@ pub enum Action {
     Collections,
     Favourite,
     Hide,
+    InstallQueue,
     SteamDb,
     PlaySkipShaders,
     ProcessShaders,
@@ -769,6 +775,8 @@ impl Browser {
             market_price_cell: Arc::new(Mutex::new(aurelia::MarketPriceState::Idle)),
             install_controls: HashMap::new(),
             install_library_choice: HashMap::new(),
+            install_queue: Default::default(),
+            download_limit: Default::default(),
             confirm_install: false,
             show_install_picker: false,
             install_libraries: Vec::new(),
@@ -2387,6 +2395,7 @@ impl Browser {
         self.show_config = true;
         self.config_info = None;
         self.config_proxy = None;
+        self.refresh_download_limit();
         match aurelia::config_show() {
             Ok(info) => self.config_info = Some(info),
             Err(error) => {
@@ -2472,6 +2481,7 @@ impl Browser {
     /// sensible selection.
     pub fn set_items(&mut self, items: Vec<Game>) {
         self.items = items;
+        self.install_queue.rescan();
         self.clamp_selection();
     }
 
@@ -2652,7 +2662,7 @@ impl Browser {
     pub fn pause_install(&mut self, app_id: i32) {
         if let Some(control) = self.install_controls.get(&app_id) {
             control.set(aurelia::InstallAction::Paused);
-            let _ = aurelia::install_stop(app_id);
+            let _ = crate::interface::install_queue::install_pause(app_id as u32);
         }
     }
 
@@ -3009,6 +3019,7 @@ impl Browser {
         } else if !installing {
             rows.push(ActionRow { action: Action::Install, category: PLAY, label: "Install", key: "d" });
         }
+        rows.push(ActionRow { action: Action::InstallQueue, category: PLAY, label: "Install queue", key: "B" });
 
         const VERS: &str = "Versions";
         rows.push(ActionRow { action: Action::Versions, category: VERS, label: "Versions & pinning", key: "V" });

@@ -1,0 +1,1 @@
+{"error":"not enough space on /mnt/games: needs 12.00 GiB but only 2.00 GiB free","type":"disk_full","hint":"free space on the target drive or pick another `--library`"}

@@ -108,6 +108,10 @@ pub fn config(browser: &Browser) -> Table<'static> {
     });
     let play = crate::ui::play_settings::settings_rows(browser);
     rows.extend(play.into_iter().map(|(label, value)| row(label, value)));
+    rows.push(row(
+        "Download limit [d]",
+        crate::ui::install_queue::limit_value(browser),
+    ));
     // Keep the inline editor visible if the launcher read failed. Otherwise its
     // title would invite typing while the edited URL itself was hidden.
     if browser.config_info.is_none() && browser.config_proxy_input.is_some() {

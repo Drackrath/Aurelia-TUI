@@ -15,6 +15,7 @@ pub mod depots;
 pub mod engine;
 pub mod game_config;
 pub mod install_picker;
+pub mod install_queue;
 pub mod install_options;
 pub mod detail;
 pub mod dlc;

@@ -2111,20 +2111,6 @@ pub fn install_stop(app_id: i32) -> Result<(), STError> {
     Ok(())
 }
 
-/// Freeze the status cell at "paused" (carrying the last-seen percent, if any),
-/// preserving the install dir/size.
-fn set_status_paused(status: &Arc<Mutex<Option<GameStatus>>>) {
-    if let Ok(mut guard) = status.lock() {
-        let pct = guard
-            .as_ref()
-            .and_then(|s| s.state.split_whitespace().find(|t| t.ends_with('%')))
-            .map(|p| format!("paused {p}"))
-            .unwrap_or_else(|| "paused".to_string());
-        let next = GameStatus::msg(&guard, &pct);
-        *guard = Some(next);
-    }
-}
-
 /// Install a game (`aurelia install <id> --json`), streaming progress into the
 /// shared status cell. Blocks until the install finishes; intended to be run on
 /// a dedicated thread. `control` lets the UI pause (resumable) or stop (cancel)
@@ -2147,93 +2133,8 @@ pub fn install(
     }
     let extra = control.options().args();
     args.extend(extra.iter().map(String::as_str));
-    let spawned = process::Command::new(bin())
-        .args(&args)
-        .stdin(process::Stdio::null())
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn();
-
-    let mut child = match spawned {
-        Ok(child) => child,
-        Err(err) => {
-            set_status(&status, &format!("Failed: {}", err));
-            log!("Failed to spawn aurelia install", id, err);
-            return;
-        }
-    };
-
-    // Drain stdout (the small terminal result object) on a helper thread so the
-    // child never blocks writing it while we consume the larger stderr stream.
-    let stdout = child.stdout.take();
-    let result_handle = thread::spawn(move || {
-        let mut buf = String::new();
-        if let Some(mut out) = stdout {
-            let _ = out.read_to_string(&mut buf);
-        }
-        buf
-    });
-
-    if let Some(stderr) = child.stderr.take() {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Ok(event) = serde_json::from_str::<ProgressJson>(line) {
-                if event.event.as_deref() == Some("progress") {
-                    let label = match event.state.as_deref() {
-                        Some("verifying") => "verifying",
-                        Some("moving") => "moving",
-                        Some("queued") => "queued",
-                        _ => "downloading",
-                    };
-                    set_status(
-                        &status,
-                        &format!(
-                            "{} {:.1}%{}",
-                            label,
-                            event.percent.unwrap_or(0.0),
-                            eta_suffix(event.eta_seconds)
-                        ),
-                    );
-                }
-            }
-        }
-    }
-
-    let result = result_handle.join().unwrap_or_default();
-    let _ = child.wait();
-
-    // If the user paused/stopped, the process exited because the daemon aborted
-    // the download — finalise on the user's intent, not the aborted result.
-    match control.get() {
-        InstallAction::Paused => {
-            set_status_paused(&status);
-            return;
-        }
-        InstallAction::Stopped => {
-            if let Ok(mut guard) = status.lock() {
-                *guard = None;
-            }
-            return;
-        }
-        InstallAction::Running => {}
-    }
-
-    match serde_json::from_str::<serde_json::Value>(result.trim()) {
-        Ok(value) => {
-            if let Some(err) = json_error(&value) {
-                set_status(&status, &format!("Failed: {}", err));
-            } else if value.get("status").and_then(|s| s.as_str()) == Some("installed") {
-                set_status(&status, "Installed!");
-            } else {
-                set_status(&status, "done");
-            }
-        }
-        // No parseable result line: fall back on the exit status we already waited on.
-        Err(_) => set_status(&status, "Installed!"),
-    }
+    let args = args.into_iter().map(String::from).collect();
+    crate::interface::install_queue::run_install(args, status, control);
 }
 
 /// Uninstall a game (`aurelia uninstall <id> --json`). Blocks until the CLI
