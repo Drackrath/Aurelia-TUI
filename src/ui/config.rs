@@ -1,24 +1,23 @@
-//! The settings overlay (modal popup) showing the launcher configuration, with
-//! keys for friends/chat presence, proxy editing, and TUI-owned HLTB metadata.
+//! Settings overlay: grouped, selectable rows.
 
-use tui::layout::Constraint;
-use tui::text::Span;
-use tui::widgets::{Cell, Row, Table};
+use tui::style::Modifier;
+use tui::text::{Span, Spans};
+use tui::widgets::Paragraph;
 
 use crate::browse::Browser;
 use crate::config::Config;
 use crate::interface::binary;
+use crate::settings::{self, Setting};
 use crate::theme;
+use crate::ui::{paneled_paragraph, selection_marker};
 
-/// One key-value row in the settings table.
-fn row(label: &str, value: String) -> Row<'static> {
-    Row::new(vec![
-        Cell::from(Span::styled(label.to_string(), theme::label())),
-        Cell::from(Span::styled(value, theme::value())),
-    ])
-}
+/// Label column width.
+const LABEL_WIDTH: usize = 26;
 
-/// Render an optional string, falling back to a muted placeholder.
+/// The short default title.
+pub const TITLE: &str = "Settings — [j/k] select · [Enter] change · [Esc] close";
+
+/// Optional string, or a dash.
 fn opt(value: &Option<String>) -> String {
     match value {
         Some(v) if !v.is_empty() => v.clone(),
@@ -26,13 +25,12 @@ fn opt(value: &Option<String>) -> String {
     }
 }
 
-/// Render a boolean as a friendly on/off label.
+/// Boolean as on/off.
 fn yes_no(value: bool) -> String {
     if value { "on" } else { "off" }.to_string()
 }
 
-/// The Proxy row value: while editing, the typed URL with a caret; otherwise the
-/// configured URL (or a direct-connection placeholder).
+/// Proxy URL, or the live edit.
 fn proxy_value(browser: &Browser) -> String {
     if let Some(input) = &browser.config_proxy_input {
         return format!("{input}_");
@@ -60,82 +58,167 @@ fn persona_wait_value(browser: &Browser, secs: Option<u64>) -> String {
     format!("{secs}s (profile status wait)")
 }
 
-/// Build the settings overlay content from the fetched launcher configuration.
-pub fn config(browser: &Browser) -> Table<'static> {
-    // Local preferences must remain visible without a working launcher. Keep
-    // the switch first so it is also reachable in shorter settings panels.
-    let mut rows = vec![
-        row("HowLongToBeat", yes_no(Config::cached().hltb_enabled)),
-        row(
-            "Auto cloud sync (TUI)",
-            yes_no(Config::cached().auto_cloud_sync),
-        ),
-        row(
-            "Aurelia binary",
-            binary::describe(browser.config_binary_input.as_deref()),
-        ),
-        row(
-            "Store language",
-            crate::interface::library_info::language_label(
-                Config::cached().info_language.as_deref(),
-            ),
-        ),
-    ];
-    rows.extend(match &browser.config_info {
-        Some(info) => vec![
-            row("Presence", presence_value(&info.chat_presence)),
-            row(
-                "Persona wait",
-                persona_wait_value(browser, info.persona_wait_secs),
-            ),
-            row("Proton", opt(&info.proton_version)),
-            row("Library", opt(&info.steam_library_path)),
-            row("Prefix mode", opt(&info.steam_prefix_mode)),
-            row("Language", opt(&info.language)),
-            row("Cloud sync", yes_no(info.enable_cloud_sync)),
-            row("Shared compat data", yes_no(info.use_shared_compat_data)),
-            row(
-                "Windows discovery",
-                yes_no(info.windows_steam_discovery_enabled),
-            ),
-            row("Luxtorpeda", yes_no(info.luxtorpeda_enabled)),
-            row("Proxy", proxy_value(browser)),
-            row(
-                "Proxy bypass",
-                opt(&browser
-                    .config_proxy
-                    .as_ref()
-                    .and_then(|p| p.no_proxy.clone())),
-            ),
-        ],
-        None => vec![row("Launcher", "Unavailable".into())],
-    });
-    let play = crate::ui::play_settings::settings_rows(browser);
-    rows.extend(play.into_iter().map(|(label, value)| row(label, value)));
-    rows.push(row(
-        "Download limit [d]",
-        crate::ui::install_queue::limit_value(browser),
-    ));
-    // Keep the inline editor visible if the launcher read failed. Otherwise its
-    // title would invite typing while the edited URL itself was hidden.
-    if browser.config_info.is_none() && browser.config_proxy_input.is_some() {
-        rows.push(row("Proxy", proxy_value(browser)));
-    }
+/// A play-settings value by label.
+fn play_value(browser: &Browser, label: &str) -> String {
+    crate::ui::play_settings::settings_rows(browser)
+        .into_iter()
+        .find(|(l, _)| *l == label)
+        .map(|(_, v)| v)
+        .unwrap_or_else(|| "—".to_string())
+}
 
-    let title = if browser.config_binary_input.is_some() {
+/// Current value of a row.
+pub fn value(browser: &Browser, setting: Setting) -> String {
+    let cached = Config::cached();
+    let info = browser.config_info.as_ref();
+    match setting {
+        Setting::Hltb => yes_no(cached.hltb_enabled),
+        Setting::AutoCloudSync => yes_no(cached.auto_cloud_sync),
+        Setting::StoreLanguage => {
+            crate::interface::library_info::language_label(cached.info_language.as_deref())
+        }
+        Setting::Binary => binary::describe(browser.config_binary_input.as_deref()),
+        Setting::Presence => presence_value(&info.and_then(|i| i.chat_presence.clone())),
+        Setting::PersonaWait => persona_wait_value(browser, info.and_then(|i| i.persona_wait_secs)),
+        Setting::CloudSync => info.map_or_else(|| "—".into(), |i| yes_no(i.enable_cloud_sync)),
+        Setting::DownloadLimit => crate::ui::install_queue::limit_value(browser),
+        Setting::Shaders => play_value(browser, "Shader pre-caching"),
+        Setting::AntiCheat => play_value(browser, "Anti-cheat auto-install"),
+        Setting::Proxy => proxy_value(browser),
+    }
+}
+
+/// Read-only rows from `config show`.
+fn info_rows(browser: &Browser) -> Vec<(&'static str, String)> {
+    let Some(info) = &browser.config_info else {
+        return vec![("Launcher", "Unavailable".into())];
+    };
+    vec![
+        ("Library", opt(&info.steam_library_path)),
+        ("Proton", opt(&info.proton_version)),
+        ("Prefix mode", opt(&info.steam_prefix_mode)),
+        ("Language", opt(&info.language)),
+        ("Shared compat data", yes_no(info.use_shared_compat_data)),
+        (
+            "Windows discovery",
+            yes_no(info.windows_steam_discovery_enabled),
+        ),
+        ("Luxtorpeda", yes_no(info.luxtorpeda_enabled)),
+        (
+            "Proxy bypass",
+            opt(&browser
+                .config_proxy
+                .as_ref()
+                .and_then(|p| p.no_proxy.clone())),
+        ),
+    ]
+}
+
+/// A group header line.
+fn header(title: &str) -> Spans<'static> {
+    Spans::from(Span::styled(
+        title.to_string(),
+        theme::accent().add_modifier(Modifier::BOLD),
+    ))
+}
+
+/// A label/value line.
+fn line(label: &str, value: String, selected: bool, readonly: bool) -> Spans<'static> {
+    let style = if selected {
+        theme::selection(theme::ACCENT)
+    } else if readonly {
+        theme::dim()
+    } else {
+        theme::value()
+    };
+    let label_style = if selected || readonly {
+        style
+    } else {
+        theme::label()
+    };
+    Spans::from(vec![
+        Span::styled(selection_marker(selected).to_string(), style),
+        Span::styled(format!("{label:<LABEL_WIDTH$}"), label_style),
+        Span::styled(value, style),
+    ])
+}
+
+/// Append a titled group of rows.
+fn group(
+    lines: &mut Vec<Spans<'static>>,
+    at: &mut usize,
+    browser: &Browser,
+    title: &str,
+    rows: Vec<Setting>,
+) {
+    if !lines.is_empty() {
+        lines.push(Spans::from(""));
+    }
+    lines.push(header(title));
+    let current = settings::selected(browser);
+    for setting in rows {
+        let selected = current == Some(setting);
+        if selected {
+            *at = lines.len();
+        }
+        let value = value(browser, setting);
+        lines.push(line(setting.label(), value, selected, false));
+    }
+}
+
+/// Body lines and the selected line index.
+fn body(browser: &Browser) -> (Vec<Spans<'static>>, usize) {
+    let mut lines = Vec::new();
+    let mut at = 0;
+    let tui = settings::TUI_ROWS.to_vec();
+    group(&mut lines, &mut at, browser, "TUI", tui);
+    let steam = settings::steam_rows(browser);
+    group(&mut lines, &mut at, browser, "Steam / Aurelia", steam);
+    lines.push(Spans::from(""));
+    lines.push(header("Info (read-only)"));
+    for (label, value) in info_rows(browser) {
+        lines.push(line(label, value, false, true));
+    }
+    (lines, at)
+}
+
+/// Title for the current mode.
+fn title(browser: &Browser) -> String {
+    if browser.config_binary_input.is_some() {
         "Settings — aurelia path ([Enter] save · [Esc] cancel · empty = auto)".to_string()
     } else if browser.social.wait_input.is_some() {
         "Settings — persona wait, 1-300 s ([Enter] save · [Esc] cancel)".to_string()
     } else if browser.config_proxy_input.is_some() {
         "Settings — proxy URL ([Enter] save · [Esc] cancel · empty clears)".to_string()
+    } else if browser.download_limit.input.is_some() {
+        "Settings — download limit ([Enter] save · [Esc] cancel)".to_string()
     } else {
-        "Settings ([h] HLTB · [b] binary · [l] language · [o] presence · [w] persona wait · [e]/[c] proxy · [s] shaders · [a] anti-cheat · [g] cloud sync · [t] TUI cloud)"
-            .to_string()
-    };
+        TITLE.to_string()
+    }
+}
 
-    Table::new(rows)
-        .block(theme::panel(title))
-        .style(theme::base())
-        .widths(&[Constraint::Percentage(32), Constraint::Percentage(68)])
-        .column_spacing(1)
+/// Settings overlay, unclipped.
+pub fn config(browser: &Browser) -> Paragraph<'static> {
+    config_in(browser, u16::MAX)
+}
+
+/// Settings overlay sized to `height` rows.
+pub fn config_in(browser: &Browser, height: u16) -> Paragraph<'static> {
+    let (lines, at) = body(browser);
+    // Border plus blank and help.
+    let room = usize::from(height).saturating_sub(4).max(1);
+    let start = if at < room {
+        0
+    } else {
+        (at + 1 - room).min(lines.len().saturating_sub(room))
+    };
+    let mut shown: Vec<Spans<'static>> = lines.into_iter().skip(start).take(room).collect();
+    shown.push(Spans::from(""));
+    if let Some(setting) = settings::selected(browser) {
+        shown.push(Spans::from(Span::styled(
+            setting.help().to_string(),
+            theme::dim(),
+        )));
+    }
+    paneled_paragraph(shown, title(browser))
 }

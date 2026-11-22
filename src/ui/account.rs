@@ -50,9 +50,11 @@ pub fn account(browser: &Browser) -> Table<'static> {
     };
 
     Table::new(rows)
-        .block(theme::panel(
-            "Account ([o] log out — any other key closes)".to_string(),
-        ))
+        .block(theme::panel(if browser.confirm_logout {
+            "Log out of Steam? [y] yes · any other key cancels".to_string()
+        } else {
+            "Account ([o] log out · any other key closes)".to_string()
+        }))
         .style(theme::base())
         .widths(&[Constraint::Percentage(28), Constraint::Percentage(72)])
         .column_spacing(1)

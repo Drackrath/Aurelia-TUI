@@ -351,8 +351,8 @@ fn settings_overlay_renders_proxy() {
         url: Some("http://host:8080".to_string()),
         no_proxy: Some("localhost".to_string()),
     });
-    let text = render(80, 18, |f| {
-        f.render_widget(ui::config::config(&browser), Rect::new(0, 0, 80, 18));
+    let text = render(80, 40, |f| {
+        f.render_widget(ui::config::config(&browser), Rect::new(0, 0, 80, 40));
     });
     assert!(text.contains("Proxy"), "proxy row renders");
     assert!(text.contains("http://host:8080"), "proxy url renders");
@@ -360,8 +360,8 @@ fn settings_overlay_renders_proxy() {
 
     // Editing shows the typed URL plus the edit-mode title hint.
     browser.config_proxy_input = Some("http://new:1".to_string());
-    let text = render(80, 18, |f| {
-        f.render_widget(ui::config::config(&browser), Rect::new(0, 0, 80, 18));
+    let text = render(80, 40, |f| {
+        f.render_widget(ui::config::config(&browser), Rect::new(0, 0, 80, 40));
     });
     assert!(
         text.contains("http://new:1"),
