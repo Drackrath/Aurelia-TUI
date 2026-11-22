@@ -1,0 +1,18 @@
+{
+  "app_id": 570,
+  "targets": [
+    {
+      "id": "linux",
+      "platform": "linux",
+      "steam_mode": null,
+      "flags": [
+        "--platform",
+        "linux",
+        "--steam"
+      ],
+      "available": true,
+      "missing": null,
+      "default": true
+    }
+  ]
+}

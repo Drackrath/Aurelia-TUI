@@ -53,6 +53,9 @@ pub struct Game {
     pub update_available: bool,
     #[serde(default)]
     pub size: f64,
+    /// Shared through Steam Family.
+    #[serde(default)]
+    pub family_shared: bool,
 
     #[serde(skip)]
     proton_tier: Arc<Mutex<Option<String>>>,
@@ -99,6 +102,7 @@ impl Game {
             install_dir: entry.install_path.unwrap_or_default(),
             update_available: entry.update_available,
             size: 0.0,
+            family_shared: entry.is_family_shared,
             proton_tier: Arc::new(Mutex::new(None)),
             hltb: Arc::new(Mutex::new(HltbState::Pending)),
             info: Arc::new(Mutex::new(None)),

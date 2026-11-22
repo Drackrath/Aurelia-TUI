@@ -4,6 +4,7 @@ use crate::util::paths::config_location;
 use crate::interface::game::GameType;
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::sync::RwLock;
 
@@ -28,6 +29,12 @@ pub struct Config {
     /// existing enabled behavior without resetting favourites or hidden games.
     #[serde(default = "default_hltb_enabled")]
     pub hltb_enabled: bool,
+    /// Saved launch target per game.
+    #[serde(default)]
+    pub launch_targets: BTreeMap<i32, String>,
+    /// Games launched with `--steam`.
+    #[serde(default)]
+    pub steam_integration: Vec<i32>,
 }
 
 fn default_hltb_enabled() -> bool {
@@ -43,6 +50,8 @@ impl Default for Config {
             allowed_games: vec![GameType::Game, GameType::DLC],
             highlight: theme::ACCENT,
             hltb_enabled: default_hltb_enabled(),
+            launch_targets: BTreeMap::new(),
+            steam_integration: vec![],
         }
     }
 }
