@@ -266,6 +266,13 @@ impl Game {
         crate::interface::library_info::cached_extended(self.id, lang.as_deref())
     }
 
+    /// Replace store info (tests, refresh).
+    pub fn set_info(&self, info: InfoJson) {
+        if let Ok(mut slot) = self.info.lock() {
+            *slot = Some(info);
+        }
+    }
+
     /// Snapshot of fetched store info.
     pub fn info_snapshot(&self) -> Option<InfoJson> {
         self.info.lock().ok().and_then(|slot| slot.clone())

@@ -307,3 +307,43 @@ fn narrow_versions_shorten_manifest_ids() {
     );
     assert_eq!(short_manifest(1234, true), "1234");
 }
+
+#[test]
+fn long_branches_stay_distinct_when_narrow() {
+    use aurelia_tui::ui::versions::short_branch;
+    let a = short_branch("release_patch6_hf9", 12);
+    let b = short_branch("release_patch_7_hf3", 12);
+    assert_ne!(a, b);
+    assert_eq!(a.chars().count(), 12);
+    assert_eq!(short_branch("public", 12), "public");
+
+    isolate_config();
+    let mut browser = versions_browser();
+    for (i, m) in browser.versions_manifests.iter_mut().enumerate() {
+        m.branch = ["public", "release_patch6_hf9", "release_patch_7_hf3"][i % 3].into();
+    }
+    let text = versions_text(&browser, 80, 24);
+    assert!(text.contains(&format!("[{a}]")), "{text}");
+    assert!(text.contains(&format!("[{b}]")), "{text}");
+    assert!(!text.contains("[release_pat…]"), "{text}");
+}
+
+#[test]
+fn narrow_expanded_detail_uses_about_label() {
+    isolate_config();
+    let g = game(1_086_999, true);
+    g.set_info(aurelia_tui::interface::aurelia::InfoJson {
+        app_id: 1_086_999,
+        description: "A tale of fellowship and betrayal.".into(),
+        ..Default::default()
+    });
+    let narrow = detail_text(&g, true, 0, 80, 24);
+    let mut seen = narrow.clone();
+    for scroll in 1..30 {
+        seen.push_str(&detail_text(&g, true, scroll, 80, 24));
+    }
+    assert!(seen.contains("About"), "{seen}");
+    assert!(!seen.contains("Descript"), "{seen}");
+    let wide = detail_text(&g, false, 0, 120, 40);
+    assert!(wide.contains("Description"), "{wide}");
+}

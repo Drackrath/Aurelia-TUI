@@ -173,13 +173,8 @@ pub fn extra_lines(
         }
     }
     let limit = if expand { usize::MAX } else { desc_limit };
-    push_wrapped(
-        &mut out,
-        "Description",
-        &game.get_description(),
-        width,
-        limit,
-    );
+    let desc_label = label("Description", "About", narrow);
+    push_wrapped(&mut out, &desc_label, &game.get_description(), width, limit);
     out
 }
 
