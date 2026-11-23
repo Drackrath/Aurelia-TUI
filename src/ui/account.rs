@@ -5,6 +5,7 @@ use tui::text::Span;
 use tui::widgets::{Cell, Row, Table};
 
 use crate::browse::Browser;
+use crate::browse::account::ReloadStatus;
 use crate::theme;
 
 /// One key-value row in the account table.
@@ -17,7 +18,7 @@ fn row(label: &str, value: String) -> Row<'static> {
 
 /// Build the account overlay content from the fetched account details.
 pub fn account(browser: &Browser) -> Table<'static> {
-    let rows = match &browser.account_info {
+    let mut rows = match &browser.account_info {
         Some(info) => vec![
             row("Player", info.display_name()),
             row("Login", info.account_name.clone()),
@@ -49,6 +50,15 @@ pub fn account(browser: &Browser) -> Table<'static> {
             (None, false) => vec![row("Account", "No account information".into())],
         },
     };
+    // Reload feedback above cached rows.
+    if let Some(status) = &browser.account_load.status {
+        let (label, value) = match status {
+            ReloadStatus::Reloading => ("Reloading…", "persona lookup may take 30 s".to_string()),
+            ReloadStatus::Updated => ("Status", "Updated".to_string()),
+            ReloadStatus::Failed(e) => ("Failed", e.clone()),
+        };
+        rows.insert(0, row(label, value));
+    }
 
     Table::new(rows)
         .block(theme::panel(if browser.confirm_logout {

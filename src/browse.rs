@@ -19,7 +19,7 @@ use crate::interface::game_status::GameStatus;
 use crate::theme;
 use crate::util::error::STError;
 
-mod account;
+pub mod account;
 pub mod install_options;
 pub mod install_queue;
 mod library_info;
