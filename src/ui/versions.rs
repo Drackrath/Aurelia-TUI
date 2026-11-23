@@ -35,12 +35,18 @@ pub fn short_manifest(id: u64, narrow: bool) -> String {
     }
 }
 
-fn clip(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
+/// Shorten keeping head and tail.
+pub fn short_branch(text: &str, max: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max || max < 5 {
         return text.to_string();
     }
-    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    // Tails tell branches apart.
+    let head = 3;
+    let tail = max - head - 1;
+    let mut out: String = chars[..head].iter().collect();
     out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
     out
 }
 
@@ -60,7 +66,7 @@ fn row_line(r: &VersionRow, selected: bool, narrow: bool) -> Spans<'static> {
     ];
     if let Some(branch) = &r.branch {
         let branch = if narrow {
-            clip(branch, 12)
+            short_branch(branch, 12)
         } else {
             branch.clone()
         };
