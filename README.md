@@ -1,4 +1,4 @@
-<img src="assets/aurelia_logo.png" alt="Aurelia TUI, a terminal UI for your Steam library" title="Aurelia TUI" align="left" height="80" />
+<img src="assets/aurelia_logo_v6.svg" alt="Aurelia TUI, a terminal UI for your Steam library" title="Aurelia TUI" align="left" height="80" />
 
 # Aurelia TUI: a terminal UI for your Steam library
 
