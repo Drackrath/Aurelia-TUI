@@ -20,6 +20,16 @@ pub struct AccountLoad {
     pub error: Option<String>,
     /// When `account_info` was fetched.
     fetched_at: Option<Instant>,
+    /// Reload feedback over cached data.
+    pub status: Option<ReloadStatus>,
+}
+
+/// Feedback for a reload over cached data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReloadStatus {
+    Reloading,
+    Updated,
+    Failed(String),
 }
 
 /// Cached account stays fresh this long.
@@ -46,6 +56,11 @@ impl Browser {
         load.generation = load.generation.wrapping_add(1);
         load.loading = true;
         load.error = None;
+        // Keep cached rows while reloading.
+        load.status = self
+            .account_info
+            .is_some()
+            .then_some(ReloadStatus::Reloading);
         let (slot, generation) = (load.slot.clone(), load.generation);
         thread::spawn(move || {
             let result = aurelia::account().map_err(|e| e.to_string());
@@ -74,9 +89,15 @@ impl Browser {
             Ok(info) => {
                 self.account_info = Some(info);
                 self.account_load.fetched_at = Some(Instant::now());
+                if self.account_load.status.is_some() {
+                    self.account_load.status = Some(ReloadStatus::Updated);
+                }
             }
             Err(error) => {
                 self.notice = Some(format!("Account: {error}"));
+                if self.account_load.status.is_some() {
+                    self.account_load.status = Some(ReloadStatus::Failed(error.clone()));
+                }
                 self.account_load.error = Some(error);
             }
         }
@@ -86,12 +107,16 @@ impl Browser {
     pub fn close_account(&mut self) {
         self.show_account = false;
         self.confirm_logout = false;
+        if !self.account_load.loading {
+            self.account_load.status = None;
+        }
     }
 
     /// Drop the cache, e.g. on logout.
     pub fn forget_account(&mut self) {
         self.account_info = None;
         self.account_load.fetched_at = None;
+        self.account_load.status = None;
         self.account_load.generation = self.account_load.generation.wrapping_add(1);
         self.account_load.loading = false;
     }

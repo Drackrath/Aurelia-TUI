@@ -1283,6 +1283,8 @@ fn missing_tokens_do_not_trigger_a_second_discovery_or_a_search() {
 fn a_slow_response_obeys_the_remaining_lookup_budget() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
+    // Server answers after 2 s, unless released.
+    let (release, held) = std::sync::mpsc::channel::<()>();
     let worker = thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
         socket
@@ -1290,16 +1292,20 @@ fn a_slow_response_obeys_the_remaining_lookup_budget() {
             .unwrap();
         let mut buffer = [0u8; 4096];
         assert!(socket.read(&mut buffer).unwrap() > 0);
-        thread::sleep(Duration::from_millis(150));
+        let _ = held.recv_timeout(Duration::from_secs(2));
         let _ = socket
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
     });
     let provider = Provider::new(&base, None).unwrap();
+    let started = Instant::now();
     let response = provider
-        .request("/", Instant::now() + Duration::from_millis(30))
+        .request("/", started + Duration::from_millis(200))
         .unwrap()
         .send();
     let error = Provider::body(response, "slow fixture").unwrap_err();
+    let elapsed = started.elapsed();
+    let _ = release.send(());
     assert!(error.to_string().contains("timed out"), "{error}");
+    assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
     worker.join().unwrap();
 }
