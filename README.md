@@ -1,8 +1,16 @@
-# Aurelia TUI
+<img src="assets/aurelia_logo.png" alt="Aurelia TUI, a terminal UI for your Steam library" title="Aurelia TUI" align="left" height="80" />
 
-A terminal UI for browsing, installing, updating, and launching your Steam
-library — powered by the [`aurelia`](https://github.com/Drackrath/Aurelia)
-command-line Steam launcher.
+# Aurelia TUI: a terminal UI for your Steam library
+
+**Browse, install, update and launch your Steam games from the terminal, powered by the [`aurelia`](https://github.com/Drackrath/Aurelia) command-line Steam launcher.**
+
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
+[![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
+[![Status: Beta](https://img.shields.io/badge/status-experimental%20beta-yellow.svg)](https://github.com/Drackrath/Aurelia#project-status)
+[![Release](https://img.shields.io/github/v/release/Drackrath/Aurelia-TUI.svg)](https://github.com/Drackrath/Aurelia-TUI/releases/latest)
+[![Requires aurelia](https://img.shields.io/badge/aurelia-%E2%89%A5%200.3.1-1793d1.svg)](https://github.com/Drackrath/Aurelia)
+
+<br clear="left" />
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/rcvxd3gpcA) [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/drackrath)
 
