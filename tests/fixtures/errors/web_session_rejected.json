@@ -1,0 +1,1 @@
+{"error":"the Steam web session was rejected (HTTP 403). Run `aurelia login --reconnect`, or `aurelia login` if you are not signed in.","hint":"run `aurelia login`","type":"auth_required"}

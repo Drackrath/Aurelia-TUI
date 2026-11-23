@@ -1,0 +1,21 @@
+{
+  "steam_id": 76561198000000001,
+  "persona_name": "Me",
+  "profile_url": "https://steamcommunity.com/profiles/76561198000000001",
+  "avatar_url": null,
+  "visibility": 1,
+  "privacy_state": 1,
+  "is_public": false,
+  "is_limited": true,
+  "ban_expires": null,
+  "created": null,
+  "real_name": null,
+  "location": null,
+  "headline": null,
+  "summary": null,
+  "persona_state": 7,
+  "game_app_id": null,
+  "game_name": null,
+  "last_logoff": null,
+  "sources": ["link_details"]
+}

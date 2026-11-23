@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use tui::style::Style;
 use tui::widgets::ListState;
 
@@ -18,6 +18,18 @@ use crate::interface::game::Game;
 use crate::interface::game_status::GameStatus;
 use crate::theme;
 use crate::util::error::STError;
+
+pub mod account;
+pub mod install_options;
+pub mod install_queue;
+mod library_info;
+pub use library_info::{VersionRow, VersionsConfirm};
+mod play_settings;
+pub use play_settings::{
+    ChoicePicker, PLAY_ROWS, PlayUi, ProtonConfirm, ROW_LAUNCH_OPTIONS, ROW_PREFIX,
+};
+#[path = "browse_launch.rs"]
+mod launch_ui;
 
 /// The quick-filter tabs along the top of the library.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -79,6 +91,7 @@ pub enum InstallPhase {
 pub enum Sort {
     Name,
     Installed,
+    Playtime,
 }
 
 impl Sort {
@@ -86,13 +99,15 @@ impl Sort {
         match self {
             Sort::Name => "name",
             Sort::Installed => "installed",
+            Sort::Playtime => "playtime",
         }
     }
 
     pub fn next(self) -> Sort {
         match self {
             Sort::Name => Sort::Installed,
-            Sort::Installed => Sort::Name,
+            Sort::Installed => Sort::Playtime,
+            Sort::Playtime => Sort::Name,
         }
     }
 }
@@ -131,7 +146,10 @@ pub fn badge(game: &Game) -> Badge {
             style: Style::default().fg(theme::WARN),
             note,
         }
-    } else if state.contains("downloading") || state.contains("processing") || state.contains("verifying") {
+    } else if state.contains("downloading")
+        || state.contains("processing")
+        || state.contains("verifying")
+    {
         // Pull a percentage out of e.g. "downloading 42.0%" if present.
         let note = state
             .split_whitespace()
@@ -154,7 +172,11 @@ pub fn badge(game: &Game) -> Badge {
             style: Style::default().fg(theme::WARN),
             note: Some("update".to_string()),
         }
-    } else if game.installed || state == "installed" || state.contains("Installed") || state.contains("ran") {
+    } else if game.installed
+        || state == "installed"
+        || state.contains("Installed")
+        || state.contains("ran")
+    {
         Badge {
             glyph: "●",
             style: Style::default().fg(theme::ONLINE),
@@ -188,10 +210,14 @@ pub struct Browser {
     pub cloud_files: Vec<aurelia::CloudFileJson>,
     /// A short status line for the cloud overlay (errors, sync progress).
     pub cloud_status: String,
+    /// Cloud overlay cursor and confirm.
+    pub cloud_view: crate::browse_cloud::CloudView,
     /// Whether the account overlay is open.
     pub show_account: bool,
     /// The fetched account details, shown by the account overlay.
     pub account_info: Option<AccountJson>,
+    /// Background account fetch.
+    pub account_load: account::AccountLoad,
     /// Whether the config (settings) overlay is open.
     pub show_config: bool,
     /// The fetched launcher configuration, shown by the config overlay.
@@ -202,12 +228,24 @@ pub struct Browser {
     /// The inline proxy-URL edit buffer in the config overlay (None = not
     /// editing; Some = the URL the user is typing, empty to clear).
     pub config_proxy_input: Option<String>,
+    /// Typed `aurelia` binary path, if editing.
+    pub config_binary_input: Option<String>,
+    /// Highlighted Settings row.
+    pub config_index: usize,
+    /// Store-language picker highlight, if open.
+    pub config_language_pick: Option<usize>,
+    /// Account overlay awaits logout confirmation.
+    pub confirm_logout: bool,
+    /// Reconnect awaits y/n.
+    pub confirm_reconnect: bool,
     /// Whether the Steam Wallet overlay is open.
     pub show_wallet: bool,
     /// The fetched wallet balance, shown by the wallet overlay.
     pub wallet_info: Option<aurelia::WalletJson>,
     /// Whether the description panel is expanded beyond its collapsed cap.
     pub expand_description: bool,
+    /// Expanded detail scroll: (app, offset).
+    pub detail_scroll: (i32, u16),
     /// Whether the achievements overlay is open.
     pub show_achievements: bool,
     /// The selected game's achievements (loaded when the overlay opens).
@@ -275,6 +313,8 @@ pub struct Browser {
     pub chat_input: String,
     /// Scroll offset (top row) within the chat message list.
     pub chat_scroll: usize,
+    /// Invite, profile and persona-wait state.
+    pub social: crate::social::SocialState,
     /// Whether the inventory overlay is open.
     pub show_inventory: bool,
     /// The selected game's inventory items (loaded when the overlay opens).
@@ -412,6 +452,10 @@ pub struct Browser {
     pub proton_status: Arc<Mutex<Option<GameStatus>>>,
     /// Whether the Proton uninstall confirmation prompt is showing.
     pub confirm_proton_uninstall: bool,
+    /// Aurelia log overlay state.
+    pub aurelia_log: crate::ui::aurelia_log::LogView,
+    /// Off-thread `login --reconnect`.
+    pub reconnect: crate::interface::session::Reconnect,
     /// Whether the running-games overlay is open.
     pub show_running: bool,
     /// The games Aurelia currently has running (loaded when the overlay opens).
@@ -447,6 +491,10 @@ pub struct Browser {
     /// The library folder each in-flight install was started in, keyed by app
     /// id, so a paused install resumes into the *same* library (not the default).
     install_library_choice: HashMap<i32, Option<String>>,
+    /// Install backlog overlay state.
+    pub install_queue: install_queue::InstallQueue,
+    /// Global download limit setting.
+    pub download_limit: crate::interface::install_queue::DownloadLimit,
     /// Whether the "game not installed — install now?" prompt is open (shown
     /// when the user tries to launch a game the listing marks not installed).
     pub confirm_install: bool,
@@ -461,6 +509,18 @@ pub struct Browser {
     pub install_estimate: Option<u64>,
     /// The highlighted row within the install picker.
     pub install_picker_index: usize,
+    /// Picker platform and language rows.
+    pub install_options: install_options::InstallPickerOptions,
+    /// App the picker options belong to.
+    install_options_app: i32,
+    /// Install flags per app, for resume.
+    install_opts_choice: HashMap<i32, crate::interface::install_options::InstallOpts>,
+    /// Open change-language picker, if any.
+    pub language_picker: Option<install_options::LanguagePicker>,
+    /// Inbox for option dry runs.
+    options_inbox: install_options::OptionsInbox,
+    /// Uninstall prompt: also delete prefix.
+    pub uninstall_delete_prefix: bool,
     /// Off-thread inbox for targeted single-game install-state refreshes (after
     /// an install completes or is cancelled). A worker fetches the fresh `list`
     /// entry and drops it here; [`Browser::poll_game_refresh`] adopts it,
@@ -470,6 +530,8 @@ pub struct Browser {
     /// status bar until the next keypress. Keeps a failed backend call from
     /// having to crash the whole TUI to report itself.
     pub notice: Option<String>,
+    /// Restart, depot files, push state.
+    pub restart_depots: crate::restart_depots::RestartDepots,
     /// Browser-launch results arrive off-thread so opening a page cannot stall input.
     hltb_open_pending: Arc<Mutex<Option<Result<(), String>>>>,
 
@@ -503,6 +565,10 @@ pub struct Browser {
     /// highlighted depot to (older ids come from SteamDB); the buffer is what the
     /// user has typed so far.
     pub versions_input: Option<String>,
+    /// Pending pin/downgrade awaiting `y`.
+    pub versions_confirm: Option<VersionsConfirm>,
+    /// Installed manifests from the appmanifest.
+    pub versions_installed: std::collections::BTreeMap<String, u64>,
     /// Shared status cell for an in-flight downgrade, streamed from the backend
     /// worker thread (mirrors a game's install status).
     pub versions_busy: Arc<Mutex<Option<GameStatus>>>,
@@ -522,6 +588,12 @@ pub struct Browser {
     game_config_app_id: i32,
     /// A transient status line for the settings overlay.
     pub game_config_status: String,
+    /// Cloud switch of that game.
+    pub game_cloud_sync: Option<crate::interface::cloud_sync::GameCloudSync>,
+    /// Text being typed into a row.
+    pub game_config_input: Option<String>,
+    /// Pickers, confirms and Proton default.
+    pub play: PlayUi,
 
     // --- Collections overlay ---
     /// Whether the collections overlay is open.
@@ -566,6 +638,8 @@ pub struct Browser {
     pub launch_targets_index: usize,
     /// A transient status line (fetch error, unavailable target).
     pub launch_targets_status: String,
+    /// Saved target and runtime install.
+    pub launch: crate::interface::launch::LaunchUi,
 }
 
 /// A single entry in the per-game Actions menu. Selecting one runs the same
@@ -583,6 +657,7 @@ pub enum Action {
     Uninstall,
     Versions,
     Branches,
+    ChangeLanguage,
     GameSettings,
     Proton,
     Engine,
@@ -600,6 +675,23 @@ pub enum Action {
     Collections,
     Favourite,
     Hide,
+    AureliaLog,
+    Reconnect,
+    InstallQueue,
+    SteamDb,
+    PlaySkipShaders,
+    ProcessShaders,
+    ProcessShadersForce,
+    Settings,
+    Account,
+    Wallet,
+    Running,
+    Friends,
+    OwnProfile,
+    Market,
+    MarketSearch,
+    Refresh,
+    Help,
 }
 
 /// One rendered row of the Actions menu: the action, the category header it
@@ -626,15 +718,23 @@ impl Browser {
             show_cloud: false,
             cloud_files: Vec::new(),
             cloud_status: String::new(),
+            cloud_view: Default::default(),
             show_account: false,
             account_info: None,
+            account_load: Default::default(),
             show_config: false,
             config_info: None,
             config_proxy: None,
             config_proxy_input: None,
+            config_binary_input: None,
+            config_index: 0,
+            config_language_pick: None,
+            confirm_logout: false,
+            confirm_reconnect: false,
             show_wallet: false,
             wallet_info: None,
             expand_description: false,
+            detail_scroll: (0, 0),
             show_achievements: false,
             achievements: Vec::new(),
             ach_scroll: 0,
@@ -658,6 +758,7 @@ impl Browser {
             chat_partner: String::new(),
             chat_input: String::new(),
             chat_scroll: 0,
+            social: Default::default(),
             show_inventory: false,
             inventory: Vec::new(),
             inv_scroll: 0,
@@ -720,6 +821,8 @@ impl Browser {
             proton_index: 0,
             proton_status: Arc::new(Mutex::new(None)),
             confirm_proton_uninstall: false,
+            aurelia_log: Default::default(),
+            reconnect: Default::default(),
             show_running: false,
             running: Vec::new(),
             running_index: 0,
@@ -734,11 +837,19 @@ impl Browser {
             market_price_cell: Arc::new(Mutex::new(aurelia::MarketPriceState::Idle)),
             install_controls: HashMap::new(),
             install_library_choice: HashMap::new(),
+            install_queue: Default::default(),
+            download_limit: Default::default(),
             confirm_install: false,
             show_install_picker: false,
             install_libraries: Vec::new(),
             install_estimate: None,
             install_picker_index: 0,
+            install_options: Default::default(),
+            install_options_app: 0,
+            install_opts_choice: HashMap::new(),
+            language_picker: None,
+            options_inbox: Default::default(),
+            uninstall_delete_prefix: false,
             game_refresh_slot: Arc::new(Mutex::new(Vec::new())),
             notice: None,
             hltb_open_pending: Arc::new(Mutex::new(None)),
@@ -753,6 +864,8 @@ impl Browser {
             versions_app_id: 0,
             versions_status: String::new(),
             versions_input: None,
+            versions_confirm: None,
+            versions_installed: Default::default(),
             versions_busy: Arc::new(Mutex::new(None)),
             show_game_config: false,
             game_config: None,
@@ -761,6 +874,9 @@ impl Browser {
             game_config_index: 0,
             game_config_app_id: 0,
             game_config_status: String::new(),
+            game_cloud_sync: None,
+            game_config_input: None,
+            play: PlayUi::default(),
             show_collections: false,
             collections: Vec::new(),
             collections_index: 0,
@@ -778,6 +894,8 @@ impl Browser {
             launch_targets: Vec::new(),
             launch_targets_index: 0,
             launch_targets_status: String::new(),
+            launch: Default::default(),
+            restart_depots: Default::default(),
         };
         browser.reset_selection();
         browser
@@ -1058,7 +1176,7 @@ impl Browser {
     /// Fetch the Proton/Wine runtimes and open the overlay. Blocks on the
     /// `aurelia proton list` subprocess; the selection resets to the first row.
     pub fn open_proton(&mut self) -> Result<(), STError> {
-        self.protons = aurelia::proton_list()?;
+        self.load_protons()?;
         self.proton_index = 0;
         self.show_proton = true;
         Ok(())
@@ -1068,6 +1186,8 @@ impl Browser {
     pub fn close_proton(&mut self) {
         self.show_proton = false;
         self.confirm_proton_uninstall = false;
+        self.play.confirm_anticheat = None;
+        self.play.confirm_proton = None;
         self.protons.clear();
         self.proton_index = 0;
     }
@@ -1075,11 +1195,8 @@ impl Browser {
     /// Re-fetch the Proton runtimes (e.g. after an install/uninstall) while
     /// keeping the current row highlighted. A fetch error leaves the list as-is.
     pub fn refresh_proton(&mut self) {
-        if let Ok(protons) = aurelia::proton_list() {
-            self.protons = protons;
-            self.proton_index = self
-                .proton_index
-                .min(self.protons.len().saturating_sub(1));
+        if self.load_protons().is_ok() {
+            self.proton_index = self.proton_index.min(self.protons.len().saturating_sub(1));
         }
     }
 
@@ -1200,12 +1317,14 @@ impl Browser {
     /// Toggle the expanded/collapsed state of the description panel.
     pub fn toggle_description(&mut self) {
         self.expand_description = !self.expand_description;
+        self.detail_scroll = (0, 0);
     }
 
     /// Fetch the Steam Cloud file list for `app_id` (blocking) and open the
     /// overlay. On failure the overlay still opens, showing the error.
     pub fn open_cloud(&mut self, app_id: i32) {
         self.show_cloud = true;
+        self.cloud_view = Default::default();
         self.refresh_cloud(app_id);
     }
 
@@ -1226,20 +1345,7 @@ impl Browser {
     /// Sync the game's Steam Cloud saves in `direction` (blocking), then re-fetch
     /// the list. `Both` syncs down then up; `Down`/`Up` restrict the transfer.
     pub fn sync_cloud(&mut self, app_id: i32, direction: aurelia::CloudDirection) {
-        self.cloud_status = "syncing...".to_string();
-        if let Err(err) = aurelia::cloud_sync(app_id, direction) {
-            self.cloud_status = format!("Failed: {}", err);
-            return;
-        }
-        self.refresh_cloud(app_id);
-        if self.cloud_status.is_empty() {
-            self.cloud_status = match direction {
-                aurelia::CloudDirection::Both => "synced",
-                aurelia::CloudDirection::Down => "downloaded",
-                aurelia::CloudDirection::Up => "uploaded",
-            }
-            .to_string();
-        }
+        self.run_cloud_sync(app_id, direction, None);
     }
 
     /// Close the Steam Cloud overlay and drop its state.
@@ -1880,21 +1986,17 @@ impl Browser {
         }
 
         // Adopt a finished price lookup (does not disturb the results list).
-        let price = self
-            .market_price_cell
-            .lock()
-            .ok()
-            .map(|mut slot| {
-                let done = !matches!(
-                    &*slot,
-                    aurelia::MarketPriceState::Idle | aurelia::MarketPriceState::Loading
-                );
-                if done {
-                    std::mem::replace(&mut *slot, aurelia::MarketPriceState::Idle)
-                } else {
-                    aurelia::MarketPriceState::Loading
-                }
-            });
+        let price = self.market_price_cell.lock().ok().map(|mut slot| {
+            let done = !matches!(
+                &*slot,
+                aurelia::MarketPriceState::Idle | aurelia::MarketPriceState::Loading
+            );
+            if done {
+                std::mem::replace(&mut *slot, aurelia::MarketPriceState::Idle)
+            } else {
+                aurelia::MarketPriceState::Loading
+            }
+        });
         match price {
             Some(aurelia::MarketPriceState::Ready(p)) => {
                 self.market_search_status = match p.summary() {
@@ -2044,8 +2146,7 @@ impl Browser {
         self.workshop_searching = true;
         self.workshop_status.clear();
         thread::spawn(move || {
-            let result =
-                aurelia::workshop_browse(app_id, &query).map_err(|e| e.to_string());
+            let result = aurelia::workshop_browse(app_id, &query).map_err(|e| e.to_string());
             if let Ok(mut guard) = slot.lock() {
                 *guard = Some((generation, result));
             }
@@ -2330,14 +2431,6 @@ impl Browser {
         self.workshop_comments_scroll = self.workshop_comments_scroll.saturating_sub(1);
     }
 
-    /// Fetch the logged-in account (`aurelia account`) and open the overlay.
-    /// Blocking; returns the backend error if the call fails.
-    pub fn open_account(&mut self) -> Result<(), STError> {
-        self.account_info = Some(aurelia::account()?);
-        self.show_account = true;
-        Ok(())
-    }
-
     /// Open local preferences even if the launcher's settings cannot be read.
     /// Launcher fetches remain blocking, matching this overlay's existing path;
     /// a failure is reported but cannot make the local HLTB switch unreachable.
@@ -2345,6 +2438,7 @@ impl Browser {
         self.show_config = true;
         self.config_info = None;
         self.config_proxy = None;
+        self.refresh_download_limit();
         match aurelia::config_show() {
             Ok(info) => self.config_info = Some(info),
             Err(error) => {
@@ -2363,6 +2457,8 @@ impl Browser {
         self.config_info = None;
         self.config_proxy = None;
         self.config_proxy_input = None;
+        self.config_binary_input = None;
+        self.config_language_pick = None;
     }
 
     /// Re-fetch just the proxy setting (after an edit/clear), keeping the overlay
@@ -2429,6 +2525,7 @@ impl Browser {
     /// sensible selection.
     pub fn set_items(&mut self, items: Vec<Game>) {
         self.items = items;
+        self.install_queue.rescan();
         self.clamp_selection();
     }
 
@@ -2461,22 +2558,28 @@ impl Browser {
             .iter()
             .filter(|g| Browser::passes(g, self.filter, &config))
             .filter(|g| {
-                self.query.is_empty()
-                    || matcher.fuzzy_match(g.raw_name(), &self.query).is_some()
+                self.query.is_empty() || matcher.fuzzy_match(g.raw_name(), &self.query).is_some()
             })
             .collect();
 
         match self.sort {
             Sort::Name => {
-                games.sort_by(|a, b| a.raw_name().to_lowercase().cmp(&b.raw_name().to_lowercase()));
+                games.sort_by(|a, b| {
+                    a.raw_name()
+                        .to_lowercase()
+                        .cmp(&b.raw_name().to_lowercase())
+                });
             }
             Sort::Installed => {
                 games.sort_by(|a, b| {
-                    b.installed
-                        .cmp(&a.installed)
-                        .then_with(|| a.raw_name().to_lowercase().cmp(&b.raw_name().to_lowercase()))
+                    b.installed.cmp(&a.installed).then_with(|| {
+                        a.raw_name()
+                            .to_lowercase()
+                            .cmp(&b.raw_name().to_lowercase())
+                    })
                 });
             }
+            Sort::Playtime => library_info::sort_by_playtime(&mut games),
         }
         games
     }
@@ -2509,7 +2612,7 @@ impl Browser {
         self.install_libraries = libraries;
         // The on-disk estimate, for showing the size and gauging fit. Treat 0
         // (unavailable) as unknown.
-        self.install_estimate = aurelia::install_estimate(app_id).ok().filter(|&b| b > 0);
+        self.load_install_options(app_id);
         self.install_picker_index = 0;
         self.show_install_picker = true;
         true
@@ -2565,7 +2668,7 @@ impl Browser {
         app_id: i32,
         library: Option<String>,
     ) -> aurelia::InstallControl {
-        let control = aurelia::InstallControl::new();
+        let control = aurelia::InstallControl::with_options(self.install_opts_for(app_id));
         self.install_controls.insert(app_id, control.clone());
         self.install_library_choice.insert(app_id, library);
         control
@@ -2574,10 +2677,7 @@ impl Browser {
     /// The library a tracked install of `app_id` was started in, for resuming a
     /// paused download into the same place.
     pub fn install_library_for(&self, app_id: i32) -> Option<String> {
-        self.install_library_choice
-            .get(&app_id)
-            .cloned()
-            .flatten()
+        self.install_library_choice.get(&app_id).cloned().flatten()
     }
 
     /// How the selected game's UI-tracked install currently sits. Reads the live
@@ -2608,7 +2708,7 @@ impl Browser {
     pub fn pause_install(&mut self, app_id: i32) {
         if let Some(control) = self.install_controls.get(&app_id) {
             control.set(aurelia::InstallAction::Paused);
-            let _ = aurelia::install_stop(app_id);
+            let _ = crate::interface::install_queue::install_pause(app_id as u32);
         }
     }
 
@@ -2619,6 +2719,7 @@ impl Browser {
     pub fn stop_install(&mut self, app_id: i32) {
         if let Some(control) = self.install_controls.remove(&app_id) {
             self.install_library_choice.remove(&app_id);
+            self.install_opts_choice.remove(&app_id);
             control.set(aurelia::InstallAction::Stopped);
             let _ = aurelia::install_stop(app_id);
             if let Some(game) = self.items.iter_mut().find(|g| g.id == app_id) {
@@ -2665,6 +2766,8 @@ impl Browser {
                 game.installed = entry.is_installed;
                 game.install_dir = entry.install_path.clone().unwrap_or_default();
                 game.update_available = entry.update_available;
+                game.platform = entry.platform.clone();
+                game.library = entry.library.clone();
                 if let Ok(mut s) = game.status_counter().lock() {
                     *s = None;
                 }
@@ -2702,6 +2805,7 @@ impl Browser {
         for (id, succeeded) in terminal {
             self.install_controls.remove(&id);
             self.install_library_choice.remove(&id);
+            self.install_opts_choice.remove(&id);
             if succeeded {
                 self.request_game_refresh(id);
             }
@@ -2948,49 +3052,260 @@ impl Browser {
 
         const PLAY: &str = "Play & Install";
         if installing {
-            rows.push(ActionRow { action: Action::PauseResume, category: PLAY, label: "Pause / resume install", key: "Space" });
-            rows.push(ActionRow { action: Action::CancelInstall, category: PLAY, label: "Cancel install", key: "c" });
+            rows.push(ActionRow {
+                action: Action::PauseResume,
+                category: PLAY,
+                label: "Pause / resume install",
+                key: "Space",
+            });
+            rows.push(ActionRow {
+                action: Action::CancelInstall,
+                category: PLAY,
+                label: "Cancel install",
+                key: "c",
+            });
         }
         if installed {
-            rows.push(ActionRow { action: Action::Play, category: PLAY, label: "Play", key: "" });
-            rows.push(ActionRow { action: Action::PlayAs, category: PLAY, label: "Play as… (launch target)", key: "" });
-            rows.push(ActionRow { action: Action::Update, category: PLAY, label: "Update", key: "U" });
-            rows.push(ActionRow { action: Action::Verify, category: PLAY, label: "Verify files", key: "v" });
-            rows.push(ActionRow { action: Action::Uninstall, category: PLAY, label: "Uninstall", key: "x" });
+            rows.push(ActionRow {
+                action: Action::Play,
+                category: PLAY,
+                label: "Play",
+                key: "",
+            });
+            rows.push(ActionRow {
+                action: Action::PlayAs,
+                category: PLAY,
+                label: "Play as… (launch target)",
+                key: "",
+            });
+            rows.push(ActionRow {
+                action: Action::PlaySkipShaders,
+                category: PLAY,
+                label: "Play without shader processing",
+                key: "",
+            });
+            rows.push(ActionRow {
+                action: Action::Update,
+                category: PLAY,
+                label: "Update",
+                key: "U",
+            });
+            rows.push(ActionRow {
+                action: Action::Verify,
+                category: PLAY,
+                label: "Verify files",
+                key: "v",
+            });
+            rows.push(ActionRow {
+                action: Action::Uninstall,
+                category: PLAY,
+                label: "Uninstall",
+                key: "x",
+            });
         } else if !installing {
-            rows.push(ActionRow { action: Action::Install, category: PLAY, label: "Install", key: "d" });
+            rows.push(ActionRow {
+                action: Action::Install,
+                category: PLAY,
+                label: "Install",
+                key: "d",
+            });
         }
+        rows.push(ActionRow {
+            action: Action::InstallQueue,
+            category: PLAY,
+            label: "Install queue",
+            key: "B",
+        });
 
         const VERS: &str = "Versions";
-        rows.push(ActionRow { action: Action::Versions, category: VERS, label: "Versions & pinning", key: "V" });
-        rows.push(ActionRow { action: Action::Branches, category: VERS, label: "Beta branches", key: "b" });
+        rows.push(ActionRow {
+            action: Action::Versions,
+            category: VERS,
+            label: "Versions & pinning",
+            key: "V",
+        });
+        rows.push(ActionRow {
+            action: Action::Branches,
+            category: VERS,
+            label: "Beta branches",
+            key: "b",
+        });
+        if installed && !installing {
+            rows.push(ActionRow {
+                action: Action::ChangeLanguage,
+                category: VERS,
+                label: "Change language",
+                key: "",
+            });
+        }
 
         const RT: &str = "Runtimes & config";
-        rows.push(ActionRow { action: Action::GameSettings, category: RT, label: "Game settings", key: "" });
-        rows.push(ActionRow { action: Action::Proton, category: RT, label: "Proton runtimes", key: "P" });
-        rows.push(ActionRow { action: Action::Engine, category: RT, label: "Runtime plugins (umu / lux)", key: "E" });
-        rows.push(ActionRow { action: Action::LaunchOptions, category: RT, label: "Launch options", key: "L" });
+        rows.push(ActionRow {
+            action: Action::GameSettings,
+            category: RT,
+            label: "Game settings",
+            key: "",
+        });
+        rows.push(ActionRow {
+            action: Action::Proton,
+            category: RT,
+            label: "Proton runtimes",
+            key: "P",
+        });
+        rows.push(ActionRow {
+            action: Action::Engine,
+            category: RT,
+            label: "Runtime plugins (umu / lux)",
+            key: "E",
+        });
+        rows.push(ActionRow {
+            action: Action::LaunchOptions,
+            category: RT,
+            label: "Launch options",
+            key: "L",
+        });
+        if installed {
+            rows.push(ActionRow {
+                action: Action::ProcessShaders,
+                category: RT,
+                label: "Process Vulkan shaders",
+                key: "",
+            });
+            rows.push(ActionRow {
+                action: Action::ProcessShadersForce,
+                category: RT,
+                label: "Process Vulkan shaders (force)",
+                key: "",
+            });
+        }
 
         const CONTENT: &str = "Content";
         if Config::cached().hltb_enabled {
-            rows.push(ActionRow { action: Action::Hltb, category: CONTENT, label: "HowLongToBeat page", key: ",ct" });
+            rows.push(ActionRow {
+                action: Action::Hltb,
+                category: CONTENT,
+                label: "HowLongToBeat page",
+                key: ",ct",
+            });
         }
-        rows.push(ActionRow { action: Action::Dlc, category: CONTENT, label: "DLC", key: "D" });
-        rows.push(ActionRow { action: Action::Workshop, category: CONTENT, label: "Workshop", key: "W" });
-        rows.push(ActionRow { action: Action::Cloud, category: CONTENT, label: "Cloud saves", key: "C" });
-        rows.push(ActionRow { action: Action::Achievements, category: CONTENT, label: "Achievements", key: "a" });
-        rows.push(ActionRow { action: Action::Depots, category: CONTENT, label: "Depots", key: "o" });
-        rows.push(ActionRow { action: Action::Inventory, category: CONTENT, label: "Inventory", key: "I" });
+        rows.push(ActionRow {
+            action: Action::Dlc,
+            category: CONTENT,
+            label: "DLC",
+            key: "D",
+        });
+        rows.push(ActionRow {
+            action: Action::Workshop,
+            category: CONTENT,
+            label: "Workshop",
+            key: "W",
+        });
+        rows.push(ActionRow {
+            action: Action::Cloud,
+            category: CONTENT,
+            label: "Cloud saves",
+            key: "C",
+        });
+        rows.push(ActionRow {
+            action: Action::Achievements,
+            category: CONTENT,
+            label: "Achievements",
+            key: "a",
+        });
+        rows.push(ActionRow {
+            action: Action::Depots,
+            category: CONTENT,
+            label: "Depots",
+            key: "o",
+        });
+        rows.push(ActionRow {
+            action: Action::Inventory,
+            category: CONTENT,
+            label: "Inventory",
+            key: "I",
+        });
 
         const LIB: &str = "Library";
         if installed {
-            rows.push(ActionRow { action: Action::Move, category: LIB, label: "Move install", key: "M" });
-            rows.push(ActionRow { action: Action::Relink, category: LIB, label: "Relink install", key: "K" });
+            rows.push(ActionRow {
+                action: Action::Move,
+                category: LIB,
+                label: "Move install",
+                key: "M",
+            });
+            rows.push(ActionRow {
+                action: Action::Relink,
+                category: LIB,
+                label: "Relink install",
+                key: "K",
+            });
         }
-        rows.push(ActionRow { action: Action::Import, category: LIB, label: "Import install", key: "N" });
-        rows.push(ActionRow { action: Action::Collections, category: LIB, label: "Collections", key: "O" });
-        rows.push(ActionRow { action: Action::Favourite, category: LIB, label: "Toggle favourite", key: "f" });
-        rows.push(ActionRow { action: Action::Hide, category: LIB, label: "Hide game", key: "H" });
+        rows.push(ActionRow {
+            action: Action::Import,
+            category: LIB,
+            label: "Import install",
+            key: "N",
+        });
+        rows.push(ActionRow {
+            action: Action::Collections,
+            category: LIB,
+            label: "Collections",
+            key: "O",
+        });
+        rows.push(ActionRow {
+            action: Action::Favourite,
+            category: LIB,
+            label: "Toggle favourite",
+            key: "f",
+        });
+        rows.push(ActionRow {
+            action: Action::Hide,
+            category: LIB,
+            label: "Hide game",
+            key: "H",
+        });
+        rows.push(ActionRow {
+            action: Action::SteamDb,
+            category: LIB,
+            label: "Open on SteamDB",
+            key: "",
+        });
+
+        const TOOLS: &str = "Aurelia";
+        rows.push(ActionRow {
+            action: Action::AureliaLog,
+            category: TOOLS,
+            label: "Aurelia log",
+            key: "",
+        });
+        rows.push(ActionRow {
+            action: Action::Reconnect,
+            category: TOOLS,
+            label: "Reconnect Steam session",
+            key: "",
+        });
+
+        // App-wide screens, also global keys.
+        const APP: &str = "App";
+        for (action, label, key) in [
+            (Action::Settings, "Settings", "p"),
+            (Action::Account, "Account / log out", "A"),
+            (Action::Wallet, "Wallet balance", "w"),
+            (Action::Running, "Running games", "R"),
+            (Action::Friends, "Friends & chat", "F"),
+            (Action::OwnProfile, "My Steam profile", ""),
+            (Action::Market, "Market listings", "m"),
+            (Action::MarketSearch, "Search community market", "S"),
+            (Action::Refresh, "Refresh library", "r"),
+            (Action::Help, "Key help", "?"),
+        ] {
+            rows.push(ActionRow {
+                action,
+                category: APP,
+                label,
+                key,
+            });
+        }
 
         rows
     }
@@ -3029,7 +3344,8 @@ impl Browser {
             self.actions_index = 0;
             return;
         }
-        self.actions_index = (self.actions_index + 1) % n;
+        // Stop at the end, no wrap.
+        self.actions_index = (self.actions_index + 1).min(n - 1);
     }
 
     pub fn actions_previous(&mut self) {
@@ -3038,16 +3354,14 @@ impl Browser {
             self.actions_index = 0;
             return;
         }
-        self.actions_index = if self.actions_index == 0 {
-            n - 1
-        } else {
-            self.actions_index - 1
-        };
+        self.actions_index = self.actions_index.min(n - 1).saturating_sub(1);
     }
 
     /// The action currently highlighted in the (filtered) menu.
     pub fn selected_action(&self) -> Option<Action> {
-        self.filtered_actions().get(self.actions_index).map(|r| r.action)
+        self.filtered_actions()
+            .get(self.actions_index)
+            .map(|r| r.action)
     }
 
     /// Append to the Actions menu filter (typing narrows the list).
@@ -3073,6 +3387,8 @@ impl Browser {
         self.versions_app_id = app_id;
         self.versions_status.clear();
         self.versions_input = None;
+        self.versions_confirm = None;
+        self.versions_installed = self.disk_installed_manifests(app_id);
         self.show_versions = true;
     }
 
@@ -3094,20 +3410,22 @@ impl Browser {
     }
 
     pub fn versions_next(&mut self) {
-        if self.versions_manifests.is_empty() {
+        let len = self.versions_rows().len();
+        if len == 0 {
             self.versions_index = 0;
             return;
         }
-        self.versions_index = (self.versions_index + 1) % self.versions_manifests.len();
+        self.versions_index = (self.versions_index + 1) % len;
     }
 
     pub fn versions_previous(&mut self) {
-        if self.versions_manifests.is_empty() {
+        let len = self.versions_rows().len();
+        if len == 0 {
             self.versions_index = 0;
             return;
         }
         self.versions_index = if self.versions_index == 0 {
-            self.versions_manifests.len() - 1
+            len - 1
         } else {
             self.versions_index - 1
         };
@@ -3119,13 +3437,19 @@ impl Browser {
 
     /// Whether the game is currently pinned (so its updates are held).
     pub fn is_pinned(&self) -> bool {
-        self.versions_available.as_ref().map(|a| a.pinned).unwrap_or(false)
+        self.versions_available
+            .as_ref()
+            .map(|a| a.pinned)
+            .unwrap_or(false)
     }
 
     /// Pin the game at its currently-installed depot versions (`aurelia pin`).
     pub fn pin_current(&mut self) {
         self.versions_status = match aurelia::pin(self.versions_app_id) {
-            Ok(p) => format!("Pinned {} depot(s) at the installed version.", p.manifests.len()),
+            Ok(p) => format!(
+                "Pinned {} depot(s) at the installed version.",
+                p.manifests.len()
+            ),
             Err(e) => format!("Pin failed: {e}"),
         };
         self.refresh_available();
@@ -3143,7 +3467,7 @@ impl Browser {
 
     /// Start prompting for a manifest id to downgrade the highlighted depot to.
     pub fn begin_downgrade_input(&mut self) {
-        if self.selected_manifest().is_some() {
+        if self.selected_version_depot().is_some() {
             self.versions_input = Some(String::new());
         }
     }
@@ -3170,7 +3494,7 @@ impl Browser {
     /// a worker thread. Progress streams into `versions_busy` (shown in the
     /// overlay); the download runs off the UI thread so the TUI stays responsive.
     pub fn start_downgrade(&mut self) {
-        let Some(depot) = self.selected_manifest().map(|m| m.depot_id) else {
+        let Some(depot) = self.selected_version_depot() else {
             return;
         };
         let Some(text) = self.versions_input.take() else {
@@ -3180,12 +3504,8 @@ impl Browser {
             self.versions_status = "Invalid manifest id.".to_string();
             return;
         };
-        let app_id = self.versions_app_id;
-        let busy = Arc::clone(&self.versions_busy);
-        self.versions_status = format!("Downgrading depot {depot} → manifest {manifest}…");
-        thread::spawn(move || {
-            aurelia::downgrade(app_id, &[(depot, manifest)], None, false, false, busy);
-        });
+        // Ask first; `y` runs it.
+        self.request_downgrade(depot, manifest);
     }
 
     /// The current downgrade worker status, if one is in flight (or just finished).
@@ -3203,18 +3523,7 @@ impl Browser {
     /// overlay, highlighting the target plain `play` would pick.
     pub fn open_launch_targets(&mut self, app_id: i32) {
         self.launch_targets_status.clear();
-        self.launch_targets = match aurelia::launch_targets(app_id) {
-            Ok(targets) => targets,
-            Err(e) => {
-                self.launch_targets_status = format!("Failed: {e}");
-                Vec::new()
-            }
-        };
-        self.launch_targets_index = self
-            .launch_targets
-            .iter()
-            .position(|t| t.default)
-            .unwrap_or(0);
+        self.fetch_launch_targets(app_id);
         self.show_launch_targets = true;
     }
 
@@ -3226,12 +3535,14 @@ impl Browser {
     }
 
     pub fn launch_targets_next(&mut self) {
+        self.launch_targets_status.clear();
         if !self.launch_targets.is_empty() {
             self.launch_targets_index = (self.launch_targets_index + 1) % self.launch_targets.len();
         }
     }
 
     pub fn launch_targets_previous(&mut self) {
+        self.launch_targets_status.clear();
         if !self.launch_targets.is_empty() {
             self.launch_targets_index = if self.launch_targets_index == 0 {
                 self.launch_targets.len() - 1
@@ -3246,30 +3557,43 @@ impl Browser {
     pub fn selected_launch_target(&mut self) -> Option<aurelia::PlayOpts> {
         let target = self.launch_targets.get(self.launch_targets_index)?;
         if !target.available {
-            let missing = target.missing.as_deref().unwrap_or("unknown");
-            self.launch_targets_status = format!("Unavailable (missing: {missing}).");
+            self.launch_targets_status = format!(
+                "Unavailable: {}",
+                crate::interface::launch::missing_long(target)
+            );
             return None;
         }
-        Some(target.play_opts())
+        let steam = launch_ui::steam_flag(self.launch.app_id);
+        Some(crate::interface::launch::play_target_opts(target, steam))
     }
 
     // --- Game settings overlay (per-game config overrides + launch script) ---
 
     /// Number of editable rows in the game-settings overlay: Runner, Forced
-    /// Proton, Platform, Steam runtime, Steam prefix, Launch script.
-    pub const GAME_CONFIG_ROWS: usize = 6;
+    /// Proton, Platform, Steam runtime, Steam prefix, Launch script, plus
+    /// Steam integration, play rows, Cloud sync.
+    pub const GAME_CONFIG_ROWS: usize = 7 + PLAY_ROWS + 1;
+    /// Row index of "Cloud sync".
+    pub const GAME_CONFIG_CLOUD_ROW: usize = 7 + PLAY_ROWS;
 
     /// Fetch the game's per-game config, launch-script state, and the installed
     /// Proton list (for cycling the forced runtime) and open the overlay.
     pub fn open_game_config(&mut self, app_id: i32) {
         self.game_config = aurelia::config_game_show(app_id).ok();
         self.game_script = aurelia::scripts_show(app_id).ok();
+        self.game_cloud_sync = crate::interface::cloud_sync::game(app_id).ok();
         self.game_config_protons = aurelia::proton_list()
-            .map(|v| v.into_iter().filter(|p| p.installed).map(|p| p.name).collect())
+            .map(|v| {
+                v.into_iter()
+                    .filter(|p| p.installed)
+                    .map(|p| p.name)
+                    .collect()
+            })
             .unwrap_or_default();
         self.game_config_app_id = app_id;
         self.game_config_index = 0;
         self.game_config_status.clear();
+        self.game_config_input = None;
         self.show_game_config = true;
     }
 
@@ -3279,6 +3603,8 @@ impl Browser {
         self.game_script = None;
         self.game_config_protons.clear();
         self.game_config_index = 0;
+        self.game_config_input = None;
+        self.play.picker = None;
     }
 
     pub fn game_config_next(&mut self) {
@@ -3302,103 +3628,18 @@ impl Browser {
     /// Activate (Enter) the highlighted settings row, cycling its value.
     pub fn game_config_activate(&mut self) {
         let id = self.game_config_app_id;
+        if self.game_config_index == Self::GAME_CONFIG_CLOUD_ROW {
+            self.game_config_status =
+                crate::browse_cloud::cycle_game_cloud(id, &mut self.game_cloud_sync);
+            return;
+        }
         match self.game_config_index {
-            // Runner: auto → umu → luxtorpeda → auto.
-            0 => {
-                let cur = self
-                    .game_config
-                    .as_ref()
-                    .map(|c| c.runner.as_str())
-                    .unwrap_or("auto");
-                let res = match cur {
-                    "umu" => {
-                        let _ = aurelia::config_game_set_umu(id, false);
-                        aurelia::config_game_set_native_engine(id, true)
-                    }
-                    "luxtorpeda" => aurelia::config_game_set_native_engine(id, false),
-                    _ => aurelia::config_game_set_umu(id, true),
-                };
-                self.game_config_status = match res {
-                    Ok(()) => "Runner updated.".to_string(),
-                    Err(e) => format!("Failed: {e}"),
-                };
-            }
-            // Forced Proton: cycle installed runtimes, then wrap to cleared.
-            1 => {
-                let cur = self
-                    .game_config
-                    .as_ref()
-                    .and_then(|c| c.forced_proton_version.clone());
-                let res = if self.game_config_protons.is_empty() {
-                    aurelia::config_game_clear_proton(id)
-                } else {
-                    let next = match cur.as_deref() {
-                        None => Some(0),
-                        Some(v) => match self.game_config_protons.iter().position(|p| p == v) {
-                            Some(i) if i + 1 < self.game_config_protons.len() => Some(i + 1),
-                            _ => None,
-                        },
-                    };
-                    match next {
-                        Some(i) => aurelia::config_game_set_proton(id, &self.game_config_protons[i]),
-                        None => aurelia::config_game_clear_proton(id),
-                    }
-                };
-                self.game_config_status = match res {
-                    Ok(()) => "Forced Proton updated.".to_string(),
-                    Err(e) => format!("Failed: {e}"),
-                };
-            }
-            // Platform: auto → windows → linux → auto.
-            2 => {
-                let cur = self
-                    .game_config
-                    .as_ref()
-                    .and_then(|c| c.platform_preference.clone());
-                let (next, res) = match cur.as_deref() {
-                    None => ("windows", aurelia::config_game_set_platform(id, "windows")),
-                    Some("windows") => ("linux", aurelia::config_game_set_platform(id, "linux")),
-                    Some(_) => ("auto", aurelia::config_game_clear_platform(id)),
-                };
-                self.game_config_status = match res {
-                    Ok(()) => format!("Platform set to {next}."),
-                    Err(e) => format!("Failed: {e}"),
-                };
-            }
-            // Steam runtime: auto → on → off → auto.
-            3 => {
-                let cur = self
-                    .game_config
-                    .as_ref()
-                    .and_then(|c| c.steam_runtime_policy.clone());
-                let next = match cur.as_deref() {
-                    Some("Enabled") => "off",
-                    Some("Disabled") => "auto",
-                    _ => "on",
-                };
-                self.game_config_status = match aurelia::config_game_set_steam_runtime(id, next) {
-                    Ok(()) => format!("Steam runtime set to {next}."),
-                    Err(e) => format!("Failed: {e}"),
-                };
-            }
-            // Steam prefix: toggle shared ↔ per-game.
-            4 => {
-                let cur = self
-                    .game_config
-                    .as_ref()
-                    .and_then(|c| c.steam_prefix_mode.clone());
-                let next = match cur.as_deref() {
-                    Some("PerGame") => "shared",
-                    _ => "per-game",
-                };
-                self.game_config_status =
-                    match aurelia::config_game_set_steam_prefix_mode(id, next) {
-                        Ok(()) => format!("Steam prefix set to {next}."),
-                        Err(e) => format!("Failed: {e}"),
-                    };
-            }
+            // Choice rows open a picker.
+            0..=4 => return self.open_game_config_picker(),
+            // Steam integration (TUI config).
+            6 => self.toggle_steam_integration(),
             // Launch script: create one if none, else clear the per-game override.
-            _ => {
+            5 => {
                 let has_script = self.game_script.as_ref().map(|s| s.exists).unwrap_or(false);
                 let res = if has_script {
                     aurelia::config_game_clear_launch_script(id)
@@ -3411,6 +3652,8 @@ impl Browser {
                     Err(e) => format!("Failed: {e}"),
                 };
             }
+            // Text rows open an input.
+            _ => return self.play_settings_activate(),
         }
         self.refresh_game_config();
     }
@@ -3729,6 +3972,7 @@ mod install_tests {
             active_branch: None,
             assets: None,
             store_url: None,
+            library: Default::default(),
         })
     }
 
@@ -3781,15 +4025,22 @@ mod install_tests {
             active_branch: None,
             assets: None,
             store_url: None,
+            library: Default::default(),
         });
 
         b.poll_game_refresh();
 
         let updated = b.items.iter().find(|x| x.id == 99).unwrap();
-        assert!(updated.installed, "installed flag adopted from refreshed entry");
+        assert!(
+            updated.installed,
+            "installed flag adopted from refreshed entry"
+        );
         // The transient status was dropped, so the badge now derives from the
         // installed flag (a steady "installed" state, not "Installed!").
-        assert_eq!(updated.get_status().map(|s| s.state).as_deref(), Some("installed"));
+        assert_eq!(
+            updated.get_status().map(|s| s.state).as_deref(),
+            Some("installed")
+        );
     }
 
     #[test]

@@ -1,5 +1,4 @@
-//! The depots overlay (modal popup): the selected game's depots, each with its
-//! id/name and human-readable size. Read-only; j/k scroll.
+//! Depots overlay: id, name, size, config.
 
 use pretty_bytes::converter::convert;
 
@@ -7,35 +6,58 @@ use tui::text::{Span, Spans};
 use tui::widgets::Paragraph;
 
 use crate::browse::Browser;
+use crate::restart_depots::depot_name;
 use crate::theme;
 use crate::ui::paneled_paragraph;
 
-/// Build the depots overlay from the browser's open depots state. Each row shows
-/// the depot name (falling back to its id) and the (human-readable) size; the
-/// `depots_scroll` offset selects the first visible row. Renders a single "No
-/// depots." line when empty.
-pub fn depots(browser: &Browser) -> Paragraph<'static> {
-    let lines: Vec<Spans<'static>> = if browser.depots.is_empty() {
-        vec![Spans::from(Span::styled("No depots.".to_string(), theme::dim()))]
+/// Depots overlay title.
+pub fn title(count: usize) -> String {
+    format!("Depots ({count}) [Enter] files [Esc] close")
+}
+
+/// One depot row's spans.
+pub fn depot_row(depot: &crate::interface::aurelia::DepotJson, selected: bool) -> Spans<'static> {
+    let style = if selected {
+        theme::selection(theme::ACCENT)
     } else {
-        browser
-            .depots
+        theme::value()
+    };
+    let mut spans = vec![
+        Span::styled(crate::ui::selection_marker(selected), style),
+        Span::styled(format!("{:>8}", depot.id), style),
+    ];
+    if let Some(name) = depot_name(depot.id, &depot.name) {
+        spans.push(Span::styled(format!("  {name}"), style));
+    }
+    // Zero means Aurelia doesn't know.
+    if depot.size > 0 {
+        spans.push(Span::styled(
+            format!("  {}", convert(depot.size as f64)),
+            theme::dim(),
+        ));
+    }
+    if !depot.config.is_empty() {
+        spans.push(Span::styled(format!("  [{}]", depot.config), theme::dim()));
+    }
+    Spans::from(spans)
+}
+
+/// Depots list; `rows` is inner height.
+pub fn depots(browser: &Browser, rows: usize) -> Paragraph<'static> {
+    let lines: Vec<Spans<'static>> = if browser.depots.is_empty() {
+        vec![Spans::from(Span::styled(
+            "No depots.".to_string(),
+            theme::dim(),
+        ))]
+    } else {
+        let selected = browser.depots_scroll;
+        let (start, end) = crate::ui::scroll::window(selected, browser.depots.len(), rows);
+        browser.depots[start..end]
             .iter()
-            .skip(browser.depots_scroll)
-            .map(|depot| {
-                let label = if depot.name.is_empty() {
-                    depot.id.to_string()
-                } else {
-                    format!("{} ({})", depot.name, depot.id)
-                };
-                Spans::from(vec![
-                    Span::styled(label, theme::value()),
-                    Span::raw("  ".to_string()),
-                    Span::styled(convert(depot.size as f64), theme::dim()),
-                ])
-            })
+            .enumerate()
+            .map(|(i, depot)| depot_row(depot, start + i == selected))
             .collect()
     };
 
-    paneled_paragraph(lines, format!("Depots ({})", browser.depots.len()))
+    paneled_paragraph(lines, title(browser.depots.len()))
 }

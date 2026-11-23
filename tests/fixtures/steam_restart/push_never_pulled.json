@@ -1,0 +1,1 @@
+{"error":"refusing to push: local collections were never pulled from Steam. Run `aurelia collections pull` first, or pass `--force` to upload anyway.","type":"unknown"}

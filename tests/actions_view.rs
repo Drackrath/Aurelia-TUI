@@ -6,15 +6,15 @@
 
 use aurelia_tui::browse::{Action, Browser};
 use aurelia_tui::interface::aurelia::{
-    AvailableJson, CollectionJson, ConfigJson, DepotManifestInfo, GameConfigJson,
-    LaunchTargetJson, LibraryGameJson, PluginStatusJson, ProxyJson,
+    AvailableJson, CollectionJson, ConfigJson, DepotManifestInfo, GameConfigJson, LaunchTargetJson,
+    LibraryGameJson, PluginStatusJson, ProxyJson,
 };
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::ui;
 use std::collections::BTreeMap;
+use tui::Terminal;
 use tui::backend::TestBackend;
 use tui::layout::Rect;
-use tui::Terminal;
 
 fn isolate_config() {
     let dir = std::env::temp_dir().join("aurelia-tui-test-config");
@@ -38,6 +38,7 @@ fn game(id: u32, name: &str, installed: bool) -> Game {
         active_branch: None,
         assets: None,
         store_url: None,
+        library: Default::default(),
     })
 }
 
@@ -61,26 +62,61 @@ fn action_candidates_depend_on_install_state() {
 
     // An installed game offers Play/Update/Verify/Uninstall, not Install.
     let mut browser = Browser::new(vec![game(1, "Alpha", true)]);
-    let actions: Vec<Action> = browser.action_candidates().iter().map(|r| r.action).collect();
+    let actions: Vec<Action> = browser
+        .action_candidates()
+        .iter()
+        .map(|r| r.action)
+        .collect();
     assert!(actions.contains(&Action::Play), "installed game can Play");
-    assert!(actions.contains(&Action::Update), "installed game can Update");
-    assert!(actions.contains(&Action::Uninstall), "installed game can Uninstall");
+    assert!(
+        actions.contains(&Action::Update),
+        "installed game can Update"
+    );
+    assert!(
+        actions.contains(&Action::Uninstall),
+        "installed game can Uninstall"
+    );
     assert!(actions.contains(&Action::Move), "installed game can Move");
-    assert!(!actions.contains(&Action::Install), "installed game hides Install");
+    assert!(
+        !actions.contains(&Action::Install),
+        "installed game hides Install"
+    );
 
     // Every game offers the new feature actions regardless of install state.
-    assert!(actions.contains(&Action::Versions), "Versions & pinning listed");
+    assert!(
+        actions.contains(&Action::Versions),
+        "Versions & pinning listed"
+    );
     assert!(actions.contains(&Action::Collections), "Collections listed");
     assert!(actions.contains(&Action::Engine), "Runtime plugins listed");
-    assert!(actions.contains(&Action::GameSettings), "Game settings listed");
+    assert!(
+        actions.contains(&Action::GameSettings),
+        "Game settings listed"
+    );
 
     // A not-installed game offers Install, not Play/Uninstall/Move.
     browser = Browser::new(vec![game(2, "Beta", false)]);
-    let actions: Vec<Action> = browser.action_candidates().iter().map(|r| r.action).collect();
-    assert!(actions.contains(&Action::Install), "uninstalled game can Install");
-    assert!(!actions.contains(&Action::Play), "uninstalled game hides Play");
-    assert!(!actions.contains(&Action::Uninstall), "uninstalled game hides Uninstall");
-    assert!(!actions.contains(&Action::Move), "uninstalled game hides Move");
+    let actions: Vec<Action> = browser
+        .action_candidates()
+        .iter()
+        .map(|r| r.action)
+        .collect();
+    assert!(
+        actions.contains(&Action::Install),
+        "uninstalled game can Install"
+    );
+    assert!(
+        !actions.contains(&Action::Play),
+        "uninstalled game hides Play"
+    );
+    assert!(
+        !actions.contains(&Action::Uninstall),
+        "uninstalled game hides Uninstall"
+    );
+    assert!(
+        !actions.contains(&Action::Move),
+        "uninstalled game hides Move"
+    );
 }
 
 #[test]
@@ -118,7 +154,10 @@ fn actions_menu_renders_categories() {
     assert!(text.contains("Actions"), "menu title renders");
     assert!(text.contains("Alpha"), "menu title names the game");
     assert!(text.contains("Versions"), "a category header renders");
-    assert!(text.contains("pinning"), "the versions/pinning action label renders");
+    assert!(
+        text.contains("pinning"),
+        "the versions/pinning action label renders"
+    );
 }
 
 #[test]
@@ -163,16 +202,26 @@ fn game_settings_overlay_renders_rows() {
         launch_script: None,
         steam_runtime_policy: Some("Enabled".to_string()),
         steam_prefix_mode: Some("PerGame".to_string()),
+        ..Default::default()
     });
     let text = render(70, 12, |f| {
-        f.render_widget(ui::game_config::game_config(&browser), Rect::new(0, 0, 70, 12));
+        f.render_widget(
+            ui::game_config::game_config(&browser, Rect::new(0, 0, 70, 12)),
+            Rect::new(0, 0, 70, 12),
+        );
     });
     assert!(text.contains("Runner"), "runner row renders");
     assert!(text.contains("umu"), "current runner value renders");
     assert!(text.contains("GE-Proton9"), "forced proton value renders");
     assert!(text.contains("Platform"), "platform row renders");
-    assert!(text.contains("Steam runtime: on"), "steam runtime policy renders");
-    assert!(text.contains("Steam prefix: per-game"), "steam prefix mode renders");
+    assert!(
+        text.contains("Steam runtime: on"),
+        "steam runtime policy renders"
+    );
+    assert!(
+        text.contains("Steam prefix: per-game"),
+        "steam prefix mode renders"
+    );
 }
 
 #[test]
@@ -224,13 +273,13 @@ fn launch_targets_overlay_renders_targets() {
     ];
     let text = render(70, 10, |f| {
         f.render_widget(
-            ui::launch_targets::launch_targets(&browser),
+            ui::launch_targets::launch_targets(&browser, Rect::new(0, 0, 70, 10)),
             Rect::new(0, 0, 70, 10),
         );
     });
     assert!(text.contains("Linux (native)"), "native target renders");
-    assert!(text.contains("[default]"), "default target is tagged");
-    assert!(text.contains("missing: build"), "unavailable target says why");
+    assert!(text.contains("[auto]"), "default target is tagged");
+    assert!(text.contains("(no build)"), "unavailable target says why");
 
     // The unavailable target refuses to launch and says so.
     browser.launch_targets_index = 1;
@@ -254,7 +303,10 @@ fn collections_overlay_renders_list() {
         app_ids: vec![1, 2, 3],
     }];
     let text = render(70, 12, |f| {
-        f.render_widget(ui::collections::collections(&browser), Rect::new(0, 0, 70, 12));
+        f.render_widget(
+            ui::collections::collections(&browser),
+            Rect::new(0, 0, 70, 12),
+        );
     });
     assert!(text.contains("Collections"), "overlay title renders");
     assert!(text.contains("Favourites"), "collection name renders");
@@ -277,7 +329,10 @@ fn engine_overlay_renders_plugin_status() {
     });
     assert!(text.contains("umu-launcher"), "umu row renders");
     assert!(text.contains("luxtorpeda"), "luxtorpeda row renders");
-    assert!(text.contains("Steam Linux Runtime"), "steam runtime row renders");
+    assert!(
+        text.contains("Steam Linux Runtime"),
+        "steam runtime row renders"
+    );
     assert!(text.contains("enabled"), "umu enabled status renders");
 }
 
@@ -293,8 +348,8 @@ fn settings_overlay_renders_proxy() {
         url: Some("http://host:8080".to_string()),
         no_proxy: Some("localhost".to_string()),
     });
-    let text = render(80, 18, |f| {
-        f.render_widget(ui::config::config(&browser), Rect::new(0, 0, 80, 18));
+    let text = render(80, 40, |f| {
+        f.render_widget(ui::config::config(&browser), Rect::new(0, 0, 80, 40));
     });
     assert!(text.contains("Proxy"), "proxy row renders");
     assert!(text.contains("http://host:8080"), "proxy url renders");
@@ -302,9 +357,12 @@ fn settings_overlay_renders_proxy() {
 
     // Editing shows the typed URL plus the edit-mode title hint.
     browser.config_proxy_input = Some("http://new:1".to_string());
-    let text = render(80, 18, |f| {
-        f.render_widget(ui::config::config(&browser), Rect::new(0, 0, 80, 18));
+    let text = render(80, 40, |f| {
+        f.render_widget(ui::config::config(&browser), Rect::new(0, 0, 80, 40));
     });
-    assert!(text.contains("http://new:1"), "typed url shown while editing");
+    assert!(
+        text.contains("http://new:1"),
+        "typed url shown while editing"
+    );
     assert!(text.contains("save"), "edit-mode title hint shown");
 }

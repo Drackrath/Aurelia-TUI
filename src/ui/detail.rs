@@ -1,10 +1,8 @@
 //! The detail pane for the selected game.
 
-use pretty_bytes::converter::convert;
-
 use tui::layout::Constraint;
 use tui::style::Style;
-use tui::text::{Span, Spans, Text};
+use tui::text::{Span, Spans};
 use tui::widgets::{Block, BorderType, Borders, Cell, Row, Table};
 
 use crate::interface::game::Game;
@@ -51,12 +49,12 @@ pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
 /// A transparent Detail panel: the same rounded, accent-titled frame as
 /// [`theme::panel`] but with no inner fill, so the cover art rendered behind it
 /// shows through as the background.
-fn transparent_panel() -> Block<'static> {
+fn transparent_panel(title: &'static str) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER).bg(theme::BG))
-        .title(Spans::from(Span::styled("Detail", theme::title_style())))
+        .title(Spans::from(Span::styled(title, theme::title_style())))
 }
 
 /// An empty, height-1 row used both as a section separator and as top padding.
@@ -76,6 +74,7 @@ fn build_content(
     expand: bool,
     width: u16,
     height: Option<u16>,
+    scroll: u16,
 ) -> (Vec<Row<'static>>, u16) {
     let mut content: Vec<Row> = Vec::new();
     let mut content_h = 0u16;
@@ -102,118 +101,75 @@ fn build_content(
                 ]),
                 1,
             );
-            push(blank(), 1);
+            let start = push(blank(), 1);
 
-            // Detail rows. Developer/publisher/description are filled in lazily
-            // from `aurelia info` (see Game::query_info).
-            let homepage = g.homepage.clone();
-            let developer = g.get_developer();
-            let publisher = g.get_publisher();
-            let proton = g.get_proton();
-
-            let detail_rows: Vec<(&str, &String)> = vec![
-                ("Homepage", &homepage),
-                ("Developer", &developer),
-                ("Publisher", &publisher),
-                ("Proton Tier", &proton),
+            // Detail rows, filled lazily (Game::query_info).
+            let narrow = super::library_info::is_narrow(width);
+            let lbl = |long: &str, short: &str| super::library_info::label(long, short, narrow);
+            let mut core: Vec<super::library_info::Line> = vec![
+                (lbl("Homepage", "Homepage"), g.homepage.clone()),
+                (lbl("Developer", "Dev"), g.get_developer()),
+                (lbl("Publisher", "Pub"), g.get_publisher()),
+                (lbl("Proton Tier", "Proton"), g.get_proton()),
             ];
-            for &(heading, value) in &detail_rows {
-                push(
-                    Row::new(vec![
-                        Cell::from(Span::styled(heading, theme::label())),
-                        Cell::from(Span::styled(value.clone(), theme::value())),
-                    ]),
-                    1,
-                );
+            core.extend(super::library_info::library_lines(g));
+            if let Some(cloud) = super::cloud_sync::detail_value(g.id) {
+                core.push(("Cloud".into(), cloud));
             }
-
             // Check the preference at render time too: an in-flight lookup may
             // finish after disabling, but its result must stay hidden.
             if crate::config::Config::cached().hltb_enabled
                 && let Some(hltb_lines) = super::hltb::lines(&g.get_hltb(), width as usize)
             {
-                // Keep times inside one wrapping table row, rather than adding a
-                // separate fixed row for each style, title, and source URL. The
-                // source remains accessible through the existing Actions menu.
-                let hltb_height = hltb_lines.len() as u16;
-                push(
-                    Row::new(vec![
-                        Cell::from(Span::styled("HLTB", theme::label())),
-                        Cell::from(Text::from(
-                            hltb_lines
-                                .into_iter()
-                                .map(|line| Spans::from(Span::styled(line, theme::value())))
-                                .collect::<Vec<_>>(),
-                        )),
-                    ])
-                    .height(hltb_height),
-                    hltb_height,
-                );
+                for (i, line) in hltb_lines.into_iter().enumerate() {
+                    let label = if i == 0 { "HLTB" } else { "" };
+                    core.push((label.into(), line));
+                }
             }
-
             if let Some(status) = g.get_status() {
-                push(blank(), 1);
-                let size = convert(status.size);
-                for &(heading, value) in &[
-                    ("State", &status.state),
-                    ("Installation", &status.installdir),
-                    ("Size", &size),
-                ] {
-                    push(
-                        Row::new(vec![
-                            Cell::from(Span::styled(heading, theme::label())),
-                            Cell::from(Span::styled(value.clone(), theme::value())),
-                        ]),
-                        1,
-                    );
+                core.push((String::new(), String::new()));
+                let size = super::library_info::size_text(g, status.size);
+                core.push(("State".into(), status.state.clone()));
+                if !status.installdir.is_empty() {
+                    core.push((lbl("Installation", "Path"), status.installdir.clone()));
+                }
+                if g.installed || status.size > 0.0 {
+                    core.push(("Size".into(), size));
                 }
             }
 
-            // Description, listed as its own (wrapping) row.
-            let description = g.get_description();
-            if !description.is_empty() {
-                // Table fits whole rows: a six-line description that exceeds
-                // the remaining space can disappear entirely. Use the existing
-                // panel budget to show the lines that fit alongside HLTB.
-                let description_start = push(blank(), 1);
-                let mut lines = wrap(&description, width.max(1) as usize);
-                let available = height
-                    .map(|h| h.saturating_sub(description_start) as usize)
-                    .unwrap_or(usize::MAX);
-                let limit = if expand {
-                    available
-                } else {
-                    available.min(DESC_COLLAPSED_LINES)
-                };
-                if lines.len() > limit {
-                    lines.truncate(limit);
-                    if let Some(last) = lines.last_mut() {
-                        while last.chars().count() >= width.max(1) as usize {
-                            last.pop();
-                        }
-                        last.push('…');
+            let extra =
+                super::library_info::extra_lines(g, width, expand, DESC_COLLAPSED_LINES, narrow);
+            let budget = |used: u16| {
+                height
+                    .map(|h| h.saturating_sub(used) as usize)
+                    .unwrap_or(usize::MAX)
+            };
+            if expand {
+                // Everything below the head scrolls.
+                let mut all = core;
+                if !extra.is_empty() {
+                    all.push((String::new(), String::new()));
+                    all.extend(extra);
+                }
+                let room = budget(start).min(all.len());
+                let shown =
+                    super::library_info::visible_lines(all, room, scroll, true, height.is_some());
+                for row in super::library_info::line_rows(shown) {
+                    push(row, 1);
+                }
+            } else {
+                for row in super::library_info::line_rows(core) {
+                    push(row, 1);
+                }
+                if !extra.is_empty() {
+                    let used = push(blank(), 1);
+                    let room = budget(used).min(extra.len());
+                    let shown = super::library_info::visible_lines(extra, room, 0, false, false);
+                    for row in super::library_info::line_rows(shown) {
+                        push(row, 1);
                     }
                 }
-                let label = if expand {
-                    "Description ([i] collapse)"
-                } else {
-                    "Description ([i] expand)"
-                };
-                let lines_h = lines.len() as u16;
-                let text = Text::from(
-                    lines
-                        .into_iter()
-                        .map(|l| Spans::from(Span::styled(l, theme::value())))
-                        .collect::<Vec<_>>(),
-                );
-                push(
-                    Row::new(vec![
-                        Cell::from(Span::styled(label, theme::label())),
-                        Cell::from(text),
-                    ])
-                    .height(lines_h),
-                    lines_h,
-                );
             }
         }
         None => {
@@ -234,7 +190,7 @@ fn build_content(
 /// region from the `ID | Name` head down to the bottom of the panel. The caller
 /// uses this to size the cover art into the empty space above it.
 pub fn content_height(game: Option<&Game>, expand: bool, width: u16) -> u16 {
-    build_content(game, expand, width, None).1
+    build_content(game, expand, width, None, 0).1
 }
 
 /// Build the detail table for the selected game (or an empty-state table). The
@@ -244,7 +200,18 @@ pub fn content_height(game: Option<&Game>, expand: bool, width: u16) -> u16 {
 /// are bottom-aligned within it (padded from the top) so the cover art fills the
 /// empty space above the `ID | Name` head.
 pub fn detail(game: Option<&Game>, expand: bool, width: u16, height: u16) -> Table<'static> {
-    let (content, content_h) = build_content(game, expand, width, Some(height));
+    detail_scrolled(game, expand, width, height, 0)
+}
+
+/// [`detail`] with expanded lines scrolled.
+pub fn detail_scrolled(
+    game: Option<&Game>,
+    expand: bool,
+    width: u16,
+    height: u16,
+    scroll: u16,
+) -> Table<'static> {
+    let (content, content_h) = build_content(game, expand, width, Some(height), scroll);
 
     // Bottom-align: pad the top with empty rows so the content sits against the
     // panel's lower edge, leaving the top free for the cover art.
@@ -256,6 +223,9 @@ pub fn detail(game: Option<&Game>, expand: bool, width: u16, height: u16) -> Tab
     // No `.style(...)`: the table must not paint a background, so the cover art
     // rendered behind it remains visible between the rows.
     Table::new(rows)
-        .block(transparent_panel())
+        .block(transparent_panel(super::library_info::detail_title(
+            expand,
+            game.is_some(),
+        )))
         .widths(&[Constraint::Percentage(18), Constraint::Percentage(82)])
 }

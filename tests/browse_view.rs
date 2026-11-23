@@ -8,9 +8,9 @@ use aurelia_tui::interface::aurelia::{
 };
 use aurelia_tui::interface::game::Game;
 use aurelia_tui::{theme, ui};
+use tui::Terminal;
 use tui::backend::TestBackend;
 use tui::layout::{Constraint, Direction, Layout, Rect};
-use tui::Terminal;
 
 /// Point the config at a throwaway dir so tests don't read/write the real one.
 fn isolate_config() {
@@ -35,6 +35,7 @@ fn game(id: u32, name: &str, installed: bool, update: bool) -> Game {
         active_branch: None,
         assets: None,
         store_url: None,
+        library: Default::default(),
     })
 }
 
@@ -161,9 +162,15 @@ fn install_picker_lists_libraries_and_marks_choice() {
 
     assert!(joined.contains("which library"), "picker title shown");
     assert!(joined.contains("C:\\SteamLibrary"), "first library listed");
-    assert!(joined.contains("D:\\Games\\SteamLibrary"), "second library listed");
+    assert!(
+        joined.contains("D:\\Games\\SteamLibrary"),
+        "second library listed"
+    );
     // The selection marker sits on the highlighted (second) row.
-    let marked = rows.iter().find(|r| r.contains('\u{25b6}')).expect("a marked row");
+    let marked = rows
+        .iter()
+        .find(|r| r.contains('\u{25b6}'))
+        .expect("a marked row");
     assert!(
         marked.contains("D:\\Games\\SteamLibrary"),
         "the marker is on the chosen library, got: {marked}"
@@ -172,10 +179,22 @@ fn install_picker_lists_libraries_and_marks_choice() {
     assert!(joined.contains("on disk"), "estimated install size shown");
     assert!(joined.contains("free"), "free space shown per library");
     // C: (2 GB free) can't fit the ~50 GB estimate -> marked; D: (80 GB) can.
-    let c_row = rows.iter().find(|r| r.contains("C:\\SteamLibrary")).unwrap();
-    assert!(c_row.contains('\u{2717}'), "the too-small drive is marked, got: {c_row}");
-    let d_row = rows.iter().find(|r| r.contains("D:\\Games\\SteamLibrary")).unwrap();
-    assert!(!d_row.contains('\u{2717}'), "the fitting drive is not marked, got: {d_row}");
+    let c_row = rows
+        .iter()
+        .find(|r| r.contains("C:\\SteamLibrary"))
+        .unwrap();
+    assert!(
+        c_row.contains('\u{2717}'),
+        "the too-small drive is marked, got: {c_row}"
+    );
+    let d_row = rows
+        .iter()
+        .find(|r| r.contains("D:\\Games\\SteamLibrary"))
+        .unwrap();
+    assert!(
+        !d_row.contains('\u{2717}'),
+        "the fitting drive is not marked, got: {d_row}"
+    );
 }
 
 /// Render the complete browse frame the way `main` lays it out — tabs / [list |
@@ -229,10 +248,7 @@ fn full_browse_frame_renders() {
             );
 
             // Status bar at the OUTER bottom chunk — the regression point.
-            f.render_widget(
-                ui::status::status_bar(&browser, Some("tester")),
-                chunks[2],
-            );
+            f.render_widget(ui::status::status_bar(&browser, Some("tester")), chunks[2]);
         })
         .unwrap();
 
@@ -241,12 +257,13 @@ fn full_browse_frame_renders() {
         .flat_map(|y| (0..80u16).map(move |x| (x, y)))
         .map(|(x, y)| buf.get(x, y).symbol.clone())
         .collect();
-    assert!(bottom.contains("tester"), "status bar renders at the bottom");
+    assert!(
+        bottom.contains("tester"),
+        "status bar renders at the bottom"
+    );
 }
 
-/// The Steam Cloud overlay advertises the sync directions in its title so the
-/// directional keys (`d` down-only, `u` up-only) are discoverable next to the
-/// plain `s` sync.
+/// Cloud overlay footer lists the directions.
 #[test]
 fn cloud_overlay_shows_directional_hints() {
     isolate_config();
@@ -255,17 +272,18 @@ fn cloud_overlay_shows_directional_hints() {
     let mut terminal = Terminal::new(backend).unwrap();
 
     terminal
-        .draw(|f| {
-            f.render_widget(ui::cloud::cloud(&browser), Rect::new(0, 0, 80, 12));
-        })
+        .draw(|f| ui::cloud::draw(f, &browser, Rect::new(0, 0, 80, 12)))
         .unwrap();
 
-    let title: String = (0..80)
-        .map(|x| terminal.backend().buffer().get(x, 0).symbol.clone())
+    let footer: String = (0..80)
+        .map(|x| terminal.backend().buffer().get(x, 10).symbol.clone())
         .collect();
-    assert!(title.contains("[s] sync"), "title keeps the both-ways sync hint");
-    assert!(title.contains("[d] down"), "title advertises download-only");
-    assert!(title.contains("[u] up"), "title advertises upload-only");
+    assert!(footer.contains("[s] sync"), "footer keeps the sync hint");
+    assert!(
+        footer.contains("[d] down"),
+        "footer advertises download-only"
+    );
+    assert!(footer.contains("[u] up"), "footer advertises upload-only");
 }
 
 /// The cover panel and the detail panel must occupy separate, ordered rows so
@@ -295,9 +313,7 @@ fn cover_and_detail_do_not_overlap() {
 
     // Find which row each panel title lands on.
     let buf = terminal.backend().buffer();
-    let row_text = |y: u16| -> String {
-        (0..60).map(|x| buf.get(x, y).symbol.clone()).collect()
-    };
+    let row_text = |y: u16| -> String { (0..60).map(|x| buf.get(x, y).symbol.clone()).collect() };
     let cover_row = (0..24).find(|&y| row_text(y).contains("Cover"));
     let detail_row = (0..24).find(|&y| row_text(y).contains("Detail"));
 
@@ -330,11 +346,15 @@ fn render_proton(browser: &Browser) -> String {
     let backend = TestBackend::new(90, 16);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
-        .draw(|f| f.render_widget(ui::proton::proton(browser), f.size()))
+        .draw(|f| f.render_widget(ui::proton::proton(browser, f.size()), f.size()))
         .unwrap();
     let buf = terminal.backend().buffer();
     (0..16)
-        .map(|y| (0..90).map(|x| buf.get(x, y).symbol.clone()).collect::<String>())
+        .map(|y| {
+            (0..90)
+                .map(|x| buf.get(x, y).symbol.clone())
+                .collect::<String>()
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -346,7 +366,7 @@ fn proton_overlay_offers_install_and_guards_uninstall() {
     isolate_config();
     let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
     browser.protons = vec![
-        proton("Proton 9.0", "Valve", true),         // installed but not removable
+        proton("Proton 9.0", "Valve", true), // installed but not removable
         proton("GE-Proton11-1", "Proton-GE", false), // available, not installed
         proton("GE-Proton10-34", "Proton-GE", true), // installed custom -> removable
     ];
@@ -356,18 +376,11 @@ fn proton_overlay_offers_install_and_guards_uninstall() {
     assert!(!browser.selected_proton_uninstallable());
     let valve = render_proton(&browser);
     assert!(valve.contains("[i] install"), "install hint always present");
-    assert!(
-        !valve.contains("[u] uninstall"),
-        "Valve runtime must not offer uninstall"
-    );
+    assert!(valve.contains("[u] remove"), "remove key always listed");
 
     // Highlight the installed GE runtime: uninstall is offered.
     browser.proton_index = 2;
     assert!(browser.selected_proton_uninstallable());
-    assert!(
-        render_proton(&browser).contains("[u] uninstall"),
-        "installed custom runtime offers uninstall"
-    );
 
     // A not-installed runtime is never uninstallable.
     browser.proton_index = 1;
@@ -380,11 +393,9 @@ fn proton_overlay_shows_install_status() {
     isolate_config();
     let mut browser = Browser::new(vec![game(1, "Alpha", true, false)]);
     browser.protons = vec![proton("GE-Proton11-1", "Proton-GE", false)];
-    *browser.proton_status.lock().unwrap() =
-        Some(aurelia_tui::interface::game_status::GameStatus::msg(
-            &None,
-            "downloading 42.0%",
-        ));
+    *browser.proton_status.lock().unwrap() = Some(
+        aurelia_tui::interface::game_status::GameStatus::msg(&None, "downloading 42.0%"),
+    );
     assert!(
         render_proton(&browser).contains("downloading 42.0%"),
         "streamed install status appears in the overlay"
@@ -441,7 +452,9 @@ fn workshop_result_navigation_clamps() {
     browser.workshop_next();
     assert_eq!(browser.workshop_index, 1, "cannot go past the last row");
 
-    let sel = browser.selected_workshop_result().expect("a row is selected");
+    let sel = browser
+        .selected_workshop_result()
+        .expect("a row is selected");
     assert_eq!(sel.id, Some(20));
 }
 
@@ -532,10 +545,7 @@ fn workshop_comments_state_resets() {
     );
 
     browser.close_workshop_comments();
-    assert!(
-        !browser.workshop_comments_open,
-        "sub-pane closed and reset"
-    );
+    assert!(!browser.workshop_comments_open, "sub-pane closed and reset");
     assert!(
         browser.workshop_comments.is_empty(),
         "comments dropped on close"
@@ -613,11 +623,12 @@ fn workshop_comment_parses_aliases() {
 #[test]
 fn aurelia_version_minimum() {
     use aurelia_tui::interface::aurelia::version_supported;
-    assert!(version_supported("0.1.40"));
-    assert!(version_supported("0.2.0"));
-    assert!(version_supported("v0.1.41-1"));
-    assert!(!version_supported("0.1.39"));
-    assert!(!version_supported("0.1.37-2"));
+    assert!(version_supported("0.3.1"));
+    assert!(version_supported("0.4.0"));
+    assert!(version_supported("v0.3.2-1"));
+    assert!(!version_supported("0.3.0"));
+    assert!(!version_supported("0.2.6"));
+    assert!(!version_supported("0.1.40"));
     assert!(!version_supported("garbage"));
 }
 
@@ -643,12 +654,18 @@ fn version_badge_sits_in_bottom_right_corner() {
             .collect()
     };
 
-    let rows = render(140, Some("0.1.40"));
-    assert!(rows[1].trim_end().ends_with("aurelia v0.1.40"), "badge is bottom-right");
+    let rows = render(140, Some("0.3.1"));
+    assert!(
+        rows[1].trim_end().ends_with("aurelia v0.3.1"),
+        "badge is bottom-right"
+    );
     assert!(rows[1].contains("[q] quit"), "key hints are not covered");
 
     let rows = render(140, Some("0.1.18"));
-    assert!(rows[1].contains("needs >= 0.1.40"), "too-old version is flagged");
+    assert!(
+        rows[1].contains("needs >= 0.3.1"),
+        "too-old version is flagged"
+    );
 
     // Too narrow for both on the bottom row: the badge moves up, hints stay whole.
     let rows = render(110, None);

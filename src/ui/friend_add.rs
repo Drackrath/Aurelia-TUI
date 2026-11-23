@@ -14,7 +14,7 @@ use tui::widgets::Paragraph;
 use crate::browse::Browser;
 use crate::theme;
 
-const TITLE: &str = "Add friend ([Enter] search, [a] send request, [Esc] cancel)";
+const TITLE: &str = "Add friend ([Enter] search, [Enter] again sends, [Esc] cancel)";
 
 /// Build the add-friend prompt from the current browser state.
 pub fn friend_add_overlay(browser: &Browser) -> Paragraph<'static> {
@@ -65,7 +65,7 @@ pub fn friend_add_overlay(browser: &Browser) -> Paragraph<'static> {
             ),
         ]));
         lines.push(Spans::from(Span::styled(
-            "Press [a] to send the friend request.".to_string(),
+            "Press [Enter] to send the friend request.".to_string(),
             Style::default().fg(theme::TEXT_DIM),
         )));
     }

@@ -5,6 +5,7 @@ use tui::text::Span;
 use tui::widgets::{Cell, Row, Table};
 
 use crate::browse::Browser;
+use crate::browse::account::ReloadStatus;
 use crate::theme;
 
 /// One key-value row in the account table.
@@ -17,7 +18,7 @@ fn row(label: &str, value: String) -> Row<'static> {
 
 /// Build the account overlay content from the fetched account details.
 pub fn account(browser: &Browser) -> Table<'static> {
-    let rows = match &browser.account_info {
+    let mut rows = match &browser.account_info {
         Some(info) => vec![
             row("Player", info.display_name()),
             row("Login", info.account_name.clone()),
@@ -37,17 +38,34 @@ pub fn account(browser: &Browser) -> Table<'static> {
             ),
             row("Devices", info.authed_machines.to_string()),
             row("VAC bans", info.vac_bans.to_string()),
+            row(
+                "Daemon logon",
+                info.daemon_logon_id
+                    .map_or_else(|| "— (no daemon)".to_string(), |id| id.to_string()),
+            ),
         ],
-        None => vec![Row::new(vec![Cell::from(Span::styled(
-            "No account information",
-            theme::value(),
-        ))])],
+        None => match (&browser.account_load.error, browser.account_load.loading) {
+            (Some(error), _) => vec![row("Failed", error.clone())],
+            (None, true) => vec![row("Loading…", "persona lookup may take 30 s".into())],
+            (None, false) => vec![row("Account", "No account information".into())],
+        },
     };
+    // Reload feedback above cached rows.
+    if let Some(status) = &browser.account_load.status {
+        let (label, value) = match status {
+            ReloadStatus::Reloading => ("Reloading…", "persona lookup may take 30 s".to_string()),
+            ReloadStatus::Updated => ("Status", "Updated".to_string()),
+            ReloadStatus::Failed(e) => ("Failed", e.clone()),
+        };
+        rows.insert(0, row(label, value));
+    }
 
     Table::new(rows)
-        .block(theme::panel(
-            "Account ([o] log out — any other key closes)".to_string(),
-        ))
+        .block(theme::panel(if browser.confirm_logout {
+            "Log out? [y] yes · other key cancels".to_string()
+        } else {
+            "Account — [r] reload · [o] log out · [Esc] close".to_string()
+        }))
         .style(theme::base())
         .widths(&[Constraint::Percentage(28), Constraint::Percentage(72)])
         .column_spacing(1)

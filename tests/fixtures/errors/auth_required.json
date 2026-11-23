@@ -1,0 +1,1 @@
+{"error":"could not restore the stored session: stored refresh token was rejected","hint":"run `aurelia login`","type":"auth_required"}

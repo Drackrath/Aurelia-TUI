@@ -3,7 +3,7 @@
 use tui::text::{Span, Spans};
 use tui::widgets::{List, ListItem};
 
-use crate::browse::{badge, Browser};
+use crate::browse::{Browser, badge};
 use crate::theme;
 use crate::util::stateful::Named;
 
@@ -60,8 +60,7 @@ pub fn list(browser: &Browser, width: u16, marquee_tick: usize) -> List<'static>
                     } else {
                         clip(&raw, name_budget)
                     };
-                    let pad =
-                        content_w.saturating_sub(GLYPH_W + name.chars().count() + pct_w);
+                    let pad = content_w.saturating_sub(GLYPH_W + name.chars().count() + pct_w);
                     return ListItem::new(Spans::from(vec![
                         Span::styled(b.glyph.to_string(), b.style),
                         Span::raw(" ".to_string()),
@@ -74,11 +73,17 @@ pub fn list(browser: &Browser, width: u16, marquee_tick: usize) -> List<'static>
 
             // Reserve the trailing note's width ("  {note}") so the marquee never
             // shoves it off the row.
-            let note_w = b
-                .note
-                .as_deref()
+            let cloud = super::cloud_sync::list_marker(game.id);
+            let info = super::library_info::list_suffix(game, inner);
+            let note_w = [b.note.as_deref(), info.as_deref()]
+                .into_iter()
+                .flatten()
                 .map(|n| n.chars().count() + 2)
-                .unwrap_or(0);
+                .sum::<usize>()
+                + cloud
+                    .as_ref()
+                    .map(|m| m.content.chars().count())
+                    .unwrap_or(0);
             // Only the hovered (highlighted) row marquees an over-long name; the
             // rest render normally and let the `List` clip them at the column
             // edge, keeping the list calm.
@@ -98,6 +103,10 @@ pub fn list(browser: &Browser, width: u16, marquee_tick: usize) -> List<'static>
             if let Some(note) = b.note {
                 spans.push(Span::styled(format!("  {}", note), theme::dim()));
             }
+            if let Some(info) = info {
+                spans.push(Span::styled(format!("  {info}"), theme::dim()));
+            }
+            spans.extend(cloud);
 
             ListItem::new(Spans::from(spans))
         })
@@ -167,7 +176,11 @@ mod tests {
         let budget = 6;
 
         let s0 = marquee(name, budget, 0);
-        assert_eq!(s0.chars().count(), budget, "window is exactly the column wide");
+        assert_eq!(
+            s0.chars().count(),
+            budget,
+            "window is exactly the column wide"
+        );
         assert_eq!(s0, "Counte");
 
         // Each tick shifts the window one column to the left.

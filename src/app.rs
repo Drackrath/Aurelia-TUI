@@ -216,6 +216,18 @@ impl App {
             ))
     }
 
+    /// QR scanned; waiting for approval.
+    pub fn build_qr_scanned() -> Paragraph<'static> {
+        App::build_infobox(
+            "Scan to sign in ([Esc] cancel, [q] quit)".to_string(),
+            format!(
+                "{}\n\nQR code scanned — approve the sign-in in your Steam Mobile app.",
+                SPLASH
+            ),
+            Alignment::Center,
+        )
+    }
+
     /// Render a challenge URL as a terminal QR code (black modules on white).
     fn render_qr_string(url: &str) -> String {
         match qrcode::QrCode::new(url.as_bytes()) {

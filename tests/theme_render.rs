@@ -4,9 +4,9 @@
 
 use aurelia_tui::app::App;
 use aurelia_tui::theme;
+use tui::Terminal;
 use tui::backend::TestBackend;
 use tui::widgets::Paragraph;
-use tui::Terminal;
 
 #[test]
 fn panel_paints_steam_palette() {
@@ -24,7 +24,11 @@ fn panel_paints_steam_palette() {
     let buffer = terminal.backend().buffer();
 
     // An interior cell is the navy panel background.
-    assert_eq!(buffer.get(3, 2).bg, theme::BG, "panel interior should be navy");
+    assert_eq!(
+        buffer.get(3, 2).bg,
+        theme::BG,
+        "panel interior should be navy"
+    );
 
     // The title text (row 0) is painted in the accent colour somewhere.
     let title_accent = (1..23).any(|x| buffer.get(x, 0).fg == theme::ACCENT);

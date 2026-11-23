@@ -37,7 +37,10 @@ pub fn branches(browser: &Browser) -> List<'static> {
                 // Active branch marker (Steam green dot).
                 if entry.active {
                     spans.push(Span::raw("  ".to_string()));
-                    spans.push(Span::styled("●".to_string(), theme::value().fg(theme::ONLINE)));
+                    spans.push(Span::styled(
+                        "●".to_string(),
+                        theme::value().fg(theme::ONLINE),
+                    ));
                 }
 
                 // Optional branch description, dimmed.

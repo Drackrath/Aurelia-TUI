@@ -944,7 +944,11 @@ fn html_data(html: &str) -> Result<Value, String> {
 /// Search results omit Steam IDs, so verify the HTML or JSON game-page data before
 /// publishing a result. Both the selected Steam ID and requested HLTB page ID
 /// must agree; a similarly named game or unexpected page is insufficient.
-fn verified_game(props: &Value, steam_id: i32, expected_id: u64) -> Result<Option<HltbData>, String> {
+fn verified_game(
+    props: &Value,
+    steam_id: i32,
+    expected_id: u64,
+) -> Result<Option<HltbData>, String> {
     let steam_id = u64::try_from(steam_id)
         .ok()
         .filter(|id| *id > 0)

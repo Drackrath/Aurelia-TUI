@@ -30,7 +30,11 @@ fn steam_runtime_desc(status: Option<&aurelia::SteamRuntimeStatusJson>) -> Strin
     match status {
         None => "status unavailable".to_string(),
         Some(s) => {
-            let present = if s.steam_exe_present { "present" } else { "missing" };
+            let present = if s.steam_exe_present {
+                "present"
+            } else {
+                "missing"
+            };
             format!("{} · steam {}", s.layout_kind, present)
         }
     }

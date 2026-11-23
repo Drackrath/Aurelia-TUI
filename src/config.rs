@@ -1,9 +1,11 @@
 use crate::util::error::STError;
 use crate::util::paths::config_location;
 
+use crate::interface::binary::BinarySignature;
 use crate::interface::game::GameType;
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::sync::RwLock;
 
@@ -28,9 +30,31 @@ pub struct Config {
     /// existing enabled behavior without resetting favourites or hidden games.
     #[serde(default = "default_hltb_enabled")]
     pub hltb_enabled: bool,
+    /// Chosen `aurelia` path; `AURELIA_BIN` wins.
+    #[serde(default)]
+    pub aurelia_bin: Option<String>,
+    /// Binary the TUI last ran.
+    #[serde(default)]
+    pub last_binary: Option<BinarySignature>,
+    /// Store text language; `None` = Aurelia's.
+    #[serde(default)]
+    pub info_language: Option<String>,
+    /// Saved launch target per game.
+    #[serde(default)]
+    pub launch_targets: BTreeMap<i32, String>,
+    /// Games launched with `--steam`.
+    #[serde(default)]
+    pub steam_integration: Vec<i32>,
+    /// Sync saves around play.
+    #[serde(default = "default_auto_cloud_sync")]
+    pub auto_cloud_sync: bool,
 }
 
 fn default_hltb_enabled() -> bool {
+    true
+}
+
+fn default_auto_cloud_sync() -> bool {
     true
 }
 
@@ -43,21 +67,30 @@ impl Default for Config {
             allowed_games: vec![GameType::Game, GameType::DLC],
             highlight: theme::ACCENT,
             hltb_enabled: default_hltb_enabled(),
+            aurelia_bin: None,
+            last_binary: None,
+            info_language: None,
+            launch_targets: BTreeMap::new(),
+            steam_integration: vec![],
+            auto_cloud_sync: default_auto_cloud_sync(),
         }
     }
 }
 
 impl Config {
     pub fn new() -> Result<Config, STError> {
-        let config = match serde_json::from_str(&fs::read_to_string(config_location()?)?) {
-            Ok(config) => config,
-            _ => {
+        // Lock across read and publish.
+        let mut cache = CACHE.write()?;
+        let path = config_location()?;
+        let config = match serde_json::from_str(&fs::read_to_string(&path)?).ok() {
+            Some(config) => config,
+            None => {
                 let config = Config::default();
-                config.save()?;
+                fs::write(&path, serde_json::to_string(&config)?)?;
                 config
             }
         };
-        *CACHE.write()? = Some(config.clone());
+        *cache = Some(config.clone());
         Ok(config)
     }
 
@@ -77,8 +110,10 @@ impl Config {
     pub fn save(&self) -> Result<(), STError> {
         // Publish only persisted settings. A failed save must not make a toggle
         // appear successful in cached readers while the UI retains its old copy.
+        // Lock so loads can't interleave.
+        let mut cache = CACHE.write()?;
         fs::write(config_location()?, serde_json::to_string(&self)?)?;
-        *CACHE.write()? = Some(self.clone());
+        *cache = Some(self.clone());
         Ok(())
     }
 }

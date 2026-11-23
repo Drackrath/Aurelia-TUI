@@ -23,7 +23,10 @@ pub fn wallet(browser: &Browser) -> Paragraph<'static> {
             )));
             lines.push(Spans::from(""));
             if !info.country.is_empty() {
-                lines.push(Spans::from(Span::styled(info.country.clone(), theme::dim())));
+                lines.push(Spans::from(Span::styled(
+                    info.country.clone(),
+                    theme::dim(),
+                )));
             }
         }
         None => {
@@ -33,7 +36,9 @@ pub fn wallet(browser: &Browser) -> Paragraph<'static> {
     }
 
     Paragraph::new(Text::from(lines))
-        .block(theme::panel("Steam Wallet — press any key to close".to_string()))
+        .block(theme::panel(
+            "Steam Wallet — press any key to close".to_string(),
+        ))
         .style(theme::base())
         .alignment(Alignment::Center)
 }

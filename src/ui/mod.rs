@@ -2,46 +2,56 @@
 //! [`crate::browse::Browser`] state plus the shared [`crate::theme`], so the
 //! event loop only has to lay them out.
 
+pub mod account;
+pub mod achievements;
 pub mod actions;
+pub mod aurelia_log;
+pub mod branches;
 pub mod chat;
 pub mod cloud;
-pub mod achievements;
-pub mod account;
-pub mod branches;
+pub mod cloud_sync;
 pub mod collections;
 pub mod config;
 pub mod confirm;
 pub mod depots;
-pub mod engine;
-pub mod game_config;
-pub mod install_picker;
 pub mod detail;
 pub mod dlc;
+pub mod engine;
 pub mod friend_add;
 pub mod friends;
+pub mod game_config;
 pub mod help;
 mod hltb;
 pub mod import;
+pub mod install_options;
+pub mod install_picker;
+pub mod install_queue;
 pub mod inventory;
 pub mod launch;
 pub mod launch_targets;
+pub mod library_info;
 pub mod list;
 pub mod market;
 pub mod market_search;
 pub mod move_game;
+pub mod play_settings;
 pub mod proton;
 pub mod relink;
+pub mod restart_depots;
 pub mod running;
+pub mod scroll;
+pub mod social;
 pub mod status;
 pub mod tabs;
 pub mod versions;
 pub mod wallet;
 pub mod workshop;
 
+use tui::buffer::Buffer;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use tui::style::{Modifier, Style};
 use tui::text::{Span, Spans, Text};
-use tui::widgets::{ListItem, Paragraph};
+use tui::widgets::{ListItem, Paragraph, Widget};
 
 use crate::theme;
 
@@ -58,41 +68,59 @@ pub fn paneled_paragraph(content: impl Into<Text<'static>>, title: String) -> Pa
         .style(theme::base())
 }
 
-/// A shared single-line text-entry overlay: a `label`, the typed `value` (with a
-/// trailing caret), an optional `status` line, all framed by `title`.
-///
-/// This is the common builder behind the move/relink/import path prompts and the
-/// friend search/add prompt — a pure builder from its arguments (no `Browser`
-/// coupling) so each caller passes the fields it stores.
-pub fn prompt_overlay(label: &str, value: &str, status: &str, title: &str) -> Paragraph<'static> {
-    let mut lines: Vec<Spans<'static>> = vec![
-        Spans::from(Span::styled(
-            label.to_string(),
-            Style::default().fg(theme::TEXT),
-        )),
-        Spans::from(vec![
-            Span::styled(value.to_string(), theme::accent()),
-            Span::styled(
-                "_".to_string(),
-                Style::default()
-                    .fg(theme::ACCENT_BRIGHT)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-    ];
+/// Typed text plus caret, tail kept.
+pub fn input_tail(value: &str, width: usize) -> String {
+    crate::ui::restart_depots::fit_tail(&format!("{value}_"), width)
+}
 
-    if !status.is_empty() {
-        lines.push(Spans::from(""));
-        lines.push(Spans::from(Span::styled(
-            status.to_string(),
-            Style::default().fg(theme::WARN).add_modifier(Modifier::DIM),
-        )));
+/// Single-line text prompt, scrolls horizontally.
+pub struct Prompt {
+    label: String,
+    value: String,
+    status: String,
+    title: String,
+}
+
+impl Widget for Prompt {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let width = usize::from(area.width.saturating_sub(2));
+        let shown = input_tail(&self.value, width);
+        let body = shown.strip_suffix('_').unwrap_or(&shown).to_string();
+        let mut lines: Vec<Spans<'static>> = vec![
+            Spans::from(Span::styled(self.label, Style::default().fg(theme::TEXT))),
+            Spans::from(vec![
+                Span::styled(body, theme::accent()),
+                Span::styled(
+                    "_".to_string(),
+                    Style::default()
+                        .fg(theme::ACCENT_BRIGHT)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+        ];
+        if !self.status.is_empty() {
+            lines.push(Spans::from(""));
+            lines.push(Spans::from(Span::styled(
+                self.status,
+                Style::default().fg(theme::WARN).add_modifier(Modifier::DIM),
+            )));
+        }
+        Paragraph::new(Text::from(lines))
+            .block(theme::panel(self.title))
+            .style(theme::base())
+            .alignment(Alignment::Left)
+            .render(area, buf);
     }
+}
 
-    Paragraph::new(Text::from(lines))
-        .block(theme::panel(title.to_string()))
-        .style(theme::base())
-        .alignment(Alignment::Left)
+/// Shared text prompt for move/relink/import.
+pub fn prompt_overlay(label: &str, value: &str, status: &str, title: &str) -> Prompt {
+    Prompt {
+        label: label.to_string(),
+        value: value.to_string(),
+        status: status.to_string(),
+        title: title.to_string(),
+    }
 }
 
 /// The leading marker for a row in a selectable list overlay: the `▶ ` selection
@@ -101,11 +129,7 @@ pub fn prompt_overlay(label: &str, value: &str, status: &str, title: &str) -> Pa
 /// branches/dlc/proton/running/friends/market-search lists; callers still own the
 /// per-list name styling, since that varies (online/installed/focus-aware).
 pub fn selection_marker(selected: bool) -> &'static str {
-    if selected {
-        "▶ "
-    } else {
-        "  "
-    }
+    if selected { "▶ " } else { "  " }
 }
 
 /// The single dimmed placeholder row a list overlay shows when it has no

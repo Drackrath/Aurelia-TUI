@@ -7,9 +7,9 @@ use aurelia_tui::browse::Browser;
 use aurelia_tui::interface::aurelia::{MarketPriceJson, MarketSearchResultJson};
 use aurelia_tui::ui;
 use serde_json::json;
+use tui::Terminal;
 use tui::backend::TestBackend;
 use tui::layout::Rect;
-use tui::Terminal;
 
 /// A partial/empty JSON payload must still deserialize (every field defaulted).
 #[test]

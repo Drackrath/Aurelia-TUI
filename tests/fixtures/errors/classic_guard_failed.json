@@ -1,0 +1,1 @@
+{"error":"login failed after providing Steam Guard code: invalid credentials","hint":"run `aurelia login`","type":"auth_required"}

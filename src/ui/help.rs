@@ -1,4 +1,4 @@
-//! The help overlay (modal popup) listing every key binding.
+//! The help overlay listing every key.
 
 use tui::layout::Alignment;
 use tui::style::{Modifier, Style};
@@ -14,10 +14,10 @@ enum Entry {
     Blank,
 }
 
-/// Width of a single column (the half the overlay devotes to one entry).
-const COL_WIDTH: usize = 44;
-/// Width of the key field within a binding column.
-const KEY_WIDTH: usize = 16;
+/// Width of one help column.
+pub const COL_WIDTH: usize = 48;
+/// Key field width, gap included.
+const KEY_WIDTH: usize = 20;
 
 /// Render a single entry into the spans for one half of a row.
 fn entry_spans(entry: &Entry) -> Vec<Span<'static>> {
@@ -29,7 +29,7 @@ fn entry_spans(entry: &Entry) -> Vec<Span<'static>> {
                 .add_modifier(Modifier::BOLD),
         )],
         Entry::Binding(keys, desc) => {
-            let keys_field = format!("  {:<14}", keys);
+            let keys_field = format!("  {:<17} ", keys);
             // Clamp the description to whatever space remains in the column so
             // the two columns stay aligned regardless of entry length.
             let desc_width = COL_WIDTH.saturating_sub(KEY_WIDTH);
@@ -50,105 +50,196 @@ fn entry_spans(entry: &Entry) -> Vec<Span<'static>> {
 fn entries() -> Vec<Entry> {
     vec![
         Entry::Header("Navigation"),
-        Entry::Binding("j / \u{2193}", "move down"),
-        Entry::Binding("k / \u{2191}", "move up"),
-        Entry::Binding("g", "jump to top"),
-        Entry::Binding("G", "jump to bottom"),
-        Entry::Binding("PageUp/Down", "page up / down"),
+        Entry::Binding("j / k / \u{2193}\u{2191}", "move"),
+        Entry::Binding("g / G", "top / bottom"),
+        Entry::Binding("PageUp/Down", "page"),
         Entry::Binding("mouse wheel", "scroll the list"),
         Entry::Binding("Shift+drag", "select text"),
         Entry::Blank,
-        Entry::Header("Filtering"),
+        Entry::Header("Tabs & filter"),
         Entry::Binding("Tab / S-Tab", "cycle tabs (+Friends)"),
-        Entry::Binding("1 \u{2013} 5", "jump to a tab (5=Friends)"),
-        Entry::Binding("/", "focus text filter"),
-        Entry::Binding("Esc", "clear filter"),
+        Entry::Binding("1 \u{2013} 4", "library tabs"),
+        Entry::Binding("5 / F", "Friends tab (F toggles)"),
+        Entry::Binding("/", "text filter (Esc clears)"),
         Entry::Binding("s", "cycle sort"),
         Entry::Blank,
-        Entry::Header("Actions"),
-        Entry::Binding("Enter", "Actions menu (all)"),
-        Entry::Binding("V", "versions & pinning"),
-        Entry::Binding("O", "collections"),
-        Entry::Binding("E", "runtime plugins"),
-        Entry::Binding("a", "achievements"),
-        Entry::Binding("I", "inventory"),
-        Entry::Binding("m", "market listings"),
-        Entry::Binding("S", "search community market"),
-        Entry::Binding("  Enter / Tab", "  run / price highlighted"),
-        Entry::Binding("i", "expand / collapse desc"),
-        Entry::Binding(",ct", "HowLongToBeat page / retry"),
-        Entry::Binding("d", "install (pick library)"),
+        Entry::Header("Selected game"),
+        Entry::Binding("Enter", "Actions menu (everything)"),
+        Entry::Binding("d", "install (picker)"),
         Entry::Binding("Space", "pause / resume install"),
         Entry::Binding("c", "cancel install"),
-        Entry::Binding("x", "uninstall game"),
-        Entry::Binding("M", "move install"),
-        Entry::Binding("K", "relink install"),
-        Entry::Binding("N", "import install"),
-        Entry::Binding("v", "verify files"),
-        Entry::Binding("U", "update game"),
-        Entry::Binding("D", "manage DLC"),
+        Entry::Binding("U / v", "update / verify"),
+        Entry::Binding("x", "uninstall"),
+        Entry::Binding("M / K / N", "move / relink / import"),
+        Entry::Binding("V", "versions & pinning"),
         Entry::Binding("b", "beta branches"),
-        Entry::Binding("o", "depots"),
-        Entry::Binding("P", "proton (d/i/u)"),
-        Entry::Binding("R", "running games"),
-        Entry::Binding("W", "workshop items"),
-        Entry::Binding("W then b", "browse workshop"),
-        Entry::Binding("f", "toggle favourite"),
-        Entry::Binding("H", "hide game"),
-        Entry::Binding("C", "cloud saves (s/d/u)"),
+        Entry::Binding("o", "depots (Enter: files)"),
+        Entry::Binding("D", "DLC"),
+        Entry::Binding("C", "cloud saves"),
         Entry::Binding("L", "launch options"),
-        Entry::Binding("r", "refresh library"),
-        Entry::Binding("A", "account"),
-        Entry::Binding("p", "settings"),
-        Entry::Binding("p then h", "toggle HowLongToBeat"),
-        Entry::Binding("F / 5", "open Friends tab"),
-        Entry::Binding("c / Enter", "chat (Friends tab)"),
-        Entry::Binding("t", "chat in new window"),
-        Entry::Binding("a", "add friend (Friends)"),
-        Entry::Binding("x", "remove friend (Friends)"),
-        Entry::Binding("A then o", "log out"),
-        Entry::Binding("w", "wallet balance"),
-        Entry::Binding("l", "sign in again"),
+        Entry::Binding("W", "workshop"),
+        Entry::Binding("a", "achievements"),
+        Entry::Binding("I", "inventory"),
+        Entry::Binding("O", "collections"),
+        Entry::Binding("f / H", "favourite / hide"),
+        Entry::Binding("i", "expand details"),
+        Entry::Binding("PgUp/PgDn", "scroll details (expanded)"),
+        Entry::Binding(",ct", "HowLongToBeat page"),
         Entry::Blank,
-        Entry::Header("General"),
-        Entry::Binding("?", "toggle this help"),
+        Entry::Header("App"),
+        Entry::Binding("p", "settings"),
+        Entry::Binding("A", "account (o, y: log out)"),
+        Entry::Binding("w", "wallet balance"),
+        Entry::Binding("B", "install queue"),
+        Entry::Binding("P", "Proton runtimes"),
+        Entry::Binding("E", "runtime plugins"),
+        Entry::Binding("R", "running games"),
+        Entry::Binding("m", "market listings"),
+        Entry::Binding("S", "search market"),
+        Entry::Binding("r", "refresh library"),
+        Entry::Binding("l", "sign-in screen"),
+        Entry::Binding("?", "this help"),
+        Entry::Binding("q", "quit"),
+        Entry::Blank,
+        Entry::Header("Every overlay"),
+        Entry::Binding("j / k", "move / scroll"),
+        Entry::Binding("Enter", "choose / change"),
+        Entry::Binding("Esc", "cancel input / close"),
+        Entry::Binding("q", "close (lists only)"),
+        Entry::Blank,
+        Entry::Header("Settings (p)"),
+        Entry::Binding("Enter / Space", "toggle, cycle or edit"),
+        Entry::Binding("c", "clear proxy"),
+        Entry::Binding("h t l b", "HLTB/TUI cloud/lang/bin"),
+        Entry::Binding("o w g d", "presence/wait/cloud/limit"),
+        Entry::Binding("s a e", "shaders/anti-cheat/proxy"),
+        Entry::Blank,
+        Entry::Header("Friends tab"),
+        Entry::Binding("Enter / c", "chat"),
+        Entry::Binding("t", "chat in new window"),
+        Entry::Binding("a / x", "add / remove friend"),
+        Entry::Binding("i", "invite to game"),
+        Entry::Binding("p / m", "friend / own profile"),
+        Entry::Binding("Esc / q / F", "back to library"),
+        Entry::Blank,
+        Entry::Header("Game overlays"),
+        Entry::Binding("Play as: d a i", "choose/auto/runtime"),
+        Entry::Binding("Versions: p u", "pin (asks y) / unpin"),
+        Entry::Binding("Versions: d s", "downgrade (y) / SteamDB"),
+        Entry::Binding("Versions: g G", "first / last row"),
+        Entry::Binding("Game set.: x", "remove launch script"),
+        Entry::Binding("Install: p", "cycle platform"),
+        Entry::Binding("Install: ←/→ h/l", "cycle language"),
+        Entry::Binding("DLC: e / x", "enable / disable"),
+        Entry::Binding("Branches: s", "switch branch"),
+        Entry::Binding("Cloud: s d u", "sync / down / up (y)"),
+        Entry::Binding("Depot files: /", "filter"),
+        Entry::Binding("Depot files: b d", "branch / download"),
+        Entry::Binding("Workshop: b", "browse / search"),
+        Entry::Binding("Browse: Tab", "(un)subscribe"),
+        Entry::Binding("Browse: F1 F2", "rate up / down"),
+        Entry::Binding("Browse: F3", "comments"),
+        Entry::Blank,
+        Entry::Header("App overlays"),
+        Entry::Binding("Queue: p r s", "pause/resume/stop"),
+        Entry::Binding("Queue: f / F", "forget / +delete files"),
+        Entry::Binding("Proton: d i u", "default/install/remove"),
+        Entry::Binding("Proton: e / b", "install EAC / BattlEye"),
+        Entry::Binding("Plugins: e d x", "enable/disable/remove"),
+        Entry::Binding("Plugins: i U r", "install/update/repair"),
+        Entry::Binding("Running: s / x", "stop game"),
+        Entry::Binding("Collect.: a r", "add / remove game"),
+        Entry::Binding("Collect.: n x", "new / delete"),
+        Entry::Binding("Collect.: P U S", "pull / push / sync"),
+        Entry::Binding("Market srch: Tab", "price highlighted"),
+        Entry::Binding("Log: g G r", "top / end / reload"),
+        Entry::Binding("Invite: Tab", "switch field"),
+        Entry::Binding("Add friend Enter", "search, then send"),
+        Entry::Blank,
+        Entry::Header("Prompts"),
+        Entry::Binding("y", "confirm"),
+        Entry::Binding("Uninstall: p", "toggle delete prefix"),
+        Entry::Binding("cloud: c / l / n", "cloud / local / leave"),
+        Entry::Binding("any other key", "cancel"),
+        Entry::Blank,
+        Entry::Header("Sign-in"),
+        Entry::Binding("Enter", "username & password"),
+        Entry::Binding("y", "QR code"),
+        Entry::Binding("r", "re-check session"),
+        Entry::Binding("Esc", "back"),
         Entry::Binding("q", "quit"),
     ]
 }
 
-/// The number of rendered rows (each row pairs two entries side by side).
+/// Rows in the single-column layout.
 pub fn row_count() -> u16 {
-    entries().len().div_ceil(2) as u16
+    entries().len() as u16
 }
 
-/// Build the help overlay content as a two-column paragraph.
-///
-/// `scroll` is the vertical row offset applied so the overlay can be scrolled
-/// when the bindings overflow the popup.
-pub fn help(scroll: u16) -> Paragraph<'static> {
+/// Split index starting a group, near half.
+fn split_point(entries: &[Entry]) -> usize {
+    let half = entries.len() / 2;
+    (1..entries.len())
+        .filter(|&i| matches!(entries[i], Entry::Header(_)))
+        .min_by_key(|&i| i.abs_diff(half))
+        .unwrap_or(entries.len())
+}
+
+/// Help lines for an inner `width`.
+pub fn lines(width: usize) -> Vec<Spans<'static>> {
     let entries = entries();
-
-    // Split the entries into two roughly equal halves shown side by side.
-    let half = entries.len().div_ceil(2);
-    let (left, right) = entries.split_at(half);
-
-    let mut lines: Vec<Spans<'static>> = Vec::with_capacity(half);
-    for row in 0..half {
-        let mut spans = entry_spans(&left[row]);
-        spans.push(Span::raw("  "));
-        if let Some(entry) = right.get(row) {
-            spans.extend(entry_spans(entry));
-        }
-        lines.push(Spans::from(spans));
+    if width < COL_WIDTH * 2 + 2 {
+        return entries
+            .iter()
+            .map(|e| Spans::from(entry_spans(e)))
+            .collect();
     }
+    // Groups never split across columns.
+    let split = split_point(&entries);
+    let (left, right) = entries.split_at(split);
+    let left: Vec<&Entry> = {
+        let mut l: Vec<&Entry> = left.iter().collect();
+        while matches!(l.last(), Some(Entry::Blank)) {
+            l.pop();
+        }
+        l
+    };
+    let rows = left.len().max(right.len());
+    (0..rows)
+        .map(|row| {
+            let mut spans = match left.get(row) {
+                Some(entry) => entry_spans(entry),
+                None => entry_spans(&Entry::Blank),
+            };
+            spans.push(Span::raw("  "));
+            if let Some(entry) = right.get(row) {
+                spans.extend(entry_spans(entry));
+            }
+            Spans::from(spans)
+        })
+        .collect()
+}
 
-    let text = Text::from(lines);
+/// Largest useful scroll for a popup.
+pub fn max_scroll(width: u16, height: u16) -> u16 {
+    let lines = lines(usize::from(width).saturating_sub(2)).len();
+    lines.saturating_sub(usize::from(height).saturating_sub(2)) as u16
+}
 
-    Paragraph::new(text)
+/// Help overlay, unclipped.
+pub fn help(scroll: u16) -> Paragraph<'static> {
+    help_in(scroll, u16::MAX, u16::MAX)
+}
+
+/// Help overlay fitted to a popup.
+pub fn help_in(scroll: u16, width: u16, height: u16) -> Paragraph<'static> {
+    let lines = lines(usize::from(width).saturating_sub(2));
+    let max = max_scroll(width, height);
+    Paragraph::new(Text::from(lines))
         .block(theme::panel(
             "Help \u{2014} j/k scroll \u{00b7} Esc/q/? close".to_string(),
         ))
         .style(theme::base())
         .alignment(Alignment::Left)
-        .scroll((scroll, 0))
+        .scroll((scroll.min(max), 0))
 }
