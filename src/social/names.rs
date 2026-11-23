@@ -18,7 +18,7 @@ pub const NAV_IDLE: Duration = Duration::from_secs(3);
 pub const LOOKUP_GAP: Duration = Duration::from_secs(5);
 /// Stored names older than this refresh.
 pub const NAME_MAX_AGE: u64 = 7 * 24 * 60 * 60;
-/// Name cache file in the cache dir.
+/// Name cache file name.
 pub const STORE_FILE: &str = "friend_names.json";
 
 /// One persisted name.
@@ -40,7 +40,7 @@ pub fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// Read the store; corrupt or missing is empty.
+/// Read store; corrupt means empty.
 pub fn load_store(path: &Path) -> NameStore {
     std::fs::read_to_string(path)
         .ok()
@@ -48,7 +48,7 @@ pub fn load_store(path: &Path) -> NameStore {
         .unwrap_or_default()
 }
 
-/// Write the store via temp file rename.
+/// Atomic write via temp rename.
 pub fn save_store(path: &Path, store: &NameStore) -> std::io::Result<()> {
     let text = serde_json::to_string_pretty(store)?;
     let tmp = path.with_extension("json.tmp");
@@ -200,7 +200,7 @@ impl NameResolver {
         }
     }
 
-    /// Stored name missing or over a week old.
+    /// Stored name missing or week-old.
     pub fn is_stale(&self, steam_id: u64, now_unix: u64) -> bool {
         self.store
             .get(&steam_id.to_string())
@@ -318,7 +318,7 @@ impl NameResolver {
     }
 }
 
-/// Store path in the TUI cache dir.
+/// Store path in cache dir.
 pub fn store_path() -> Option<PathBuf> {
     crate::util::paths::cache_directory()
         .ok()
