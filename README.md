@@ -4,6 +4,8 @@ A terminal UI for browsing, installing, updating, and launching your Steam
 library — powered by the [`aurelia`](https://github.com/Drackrath/Aurelia)
 command-line Steam launcher.
 
+[![Discord](https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/rcvxd3gpcA) [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/drackrath)
+
 <p align="center">
   <img width="600" alt="Example of aurelia-tui in action" src="assets/screenshot_3.png">
 </p>
