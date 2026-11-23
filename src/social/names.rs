@@ -2,7 +2,10 @@
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
 
 use crate::interface::aurelia::FriendJson;
 use crate::interface::social::UserProfileJson;
@@ -13,6 +16,46 @@ use super::ProfileSlot;
 pub const NAV_IDLE: Duration = Duration::from_secs(3);
 /// Pause between two background lookups.
 pub const LOOKUP_GAP: Duration = Duration::from_secs(5);
+/// Stored names older than this refresh.
+pub const NAME_MAX_AGE: u64 = 7 * 24 * 60 * 60;
+/// Name cache file in the cache dir.
+pub const STORE_FILE: &str = "friend_names.json";
+
+/// One persisted name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredName {
+    pub name: String,
+    /// Unix seconds of the lookup.
+    pub fetched_at: u64,
+}
+
+/// Persisted names keyed by SteamID string.
+pub type NameStore = HashMap<String, StoredName>;
+
+/// Current unix time in seconds.
+pub fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Read the store; corrupt or missing is empty.
+pub fn load_store(path: &Path) -> NameStore {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Write the store via temp file rename.
+pub fn save_store(path: &Path, store: &NameStore) -> std::io::Result<()> {
+    let text = serde_json::to_string_pretty(store)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path)
+}
+
 /// How often to recheck host Steam.
 const STEAM_CHECK: Duration = Duration::from_secs(10);
 
@@ -38,6 +81,13 @@ pub struct NameResolver {
     pub steam_checked: Option<Instant>,
     /// Friend rows the panel last drew.
     pub visible_rows: Cell<usize>,
+    /// Persisted names, loaded once.
+    pub store: NameStore,
+    pub store_loaded: bool,
+    /// Store changed since last save.
+    pub store_dirty: bool,
+    /// Cached name each friend shows.
+    pub applied: HashMap<u64, String>,
 }
 
 /// Account type bits equal individual.
@@ -115,10 +165,71 @@ pub fn missing_note(friends: &[FriendJson], steam_here: bool) -> Vec<String> {
 }
 
 impl NameResolver {
+    /// Adopt persisted names into the cache.
+    pub fn adopt_store(&mut self, store: NameStore) {
+        for (id, stored) in &store {
+            let Ok(id) = id.parse::<u64>() else {
+                continue;
+            };
+            if stored.name.is_empty() || self.cache.contains_key(&id) {
+                continue;
+            }
+            self.cache.insert(
+                id,
+                Learned {
+                    name: Some(stored.name.clone()),
+                    state: None,
+                },
+            );
+        }
+        self.store = store;
+        self.store_loaded = true;
+    }
+
+    /// Load from `path` once per session.
+    pub fn load_once(&mut self, path: &Path) {
+        if !self.store_loaded {
+            self.adopt_store(load_store(path));
+        }
+    }
+
+    /// Save to `path` if anything changed.
+    pub fn save_if_dirty(&mut self, path: &Path) {
+        if self.store_dirty && save_store(path, &self.store).is_ok() {
+            self.store_dirty = false;
+        }
+    }
+
+    /// Stored name missing or over a week old.
+    pub fn is_stale(&self, steam_id: u64, now_unix: u64) -> bool {
+        self.store
+            .get(&steam_id.to_string())
+            .is_none_or(|s| now_unix.saturating_sub(s.fetched_at) >= NAME_MAX_AGE)
+    }
+
     /// Store a profile's name and status.
     pub fn learn(&mut self, profile: &UserProfileJson) {
+        self.learn_at(profile, unix_now());
+    }
+
+    /// Store a profile at `now_unix`.
+    pub fn learn_at(&mut self, profile: &UserProfileJson, now_unix: u64) {
         self.attempted.insert(profile.steam_id);
         let name = profile.persona_name.clone().filter(|n| !n.is_empty());
+        if let Some(name) = &name {
+            let key = profile.steam_id.to_string();
+            let changed = self.store.get(&key).map(|s| &s.name) != Some(name);
+            if changed || self.is_stale(profile.steam_id, now_unix) {
+                self.store.insert(
+                    key,
+                    StoredName {
+                        name: name.clone(),
+                        fetched_at: now_unix,
+                    },
+                );
+                self.store_dirty = true;
+            }
+        }
         if name.is_none() && profile.persona_state.is_none() {
             return;
         }
@@ -132,13 +243,18 @@ impl NameResolver {
     }
 
     /// Fill missing names and states.
-    pub fn apply(&self, friends: &mut [FriendJson]) {
+    pub fn apply(&mut self, friends: &mut [FriendJson]) {
         for f in friends.iter_mut() {
             let Some(learned) = self.cache.get(&f.steam_id) else {
                 continue;
             };
-            if lacks_name(f) && learned.name.is_some() {
-                f.persona_name = learned.name.clone();
+            let ours = lacks_name(f) || self.applied.get(&f.steam_id) == f.persona_name.as_ref();
+            if let Some(name) = &learned.name
+                && ours
+                && f.persona_name.as_ref() != Some(name)
+            {
+                f.persona_name = Some(name.clone());
+                self.applied.insert(f.steam_id, name.clone());
             }
             if f.persona_state.is_none() {
                 f.persona_state = learned.state;
@@ -177,17 +293,34 @@ impl NameResolver {
                 .is_none_or(|t| now.duration_since(t) >= LOOKUP_GAP)
     }
 
-    /// First visible unnamed, untried friend.
+    /// First visible unnamed or stale friend.
     pub fn next_lookup(&self, friends: &[FriendJson], selected: usize) -> Option<u64> {
+        self.next_lookup_at(friends, selected, unix_now())
+    }
+
+    /// `next_lookup` at a given unix time.
+    pub fn next_lookup_at(
+        &self,
+        friends: &[FriendJson],
+        selected: usize,
+        now_unix: u64,
+    ) -> Option<u64> {
         let rows = self.visible_rows.get().max(1);
         let (start, end) = crate::ui::scroll::window(selected, friends.len(), rows);
         friends[start..end]
             .iter()
             .find(|f| {
-                lacks_name(f)
-                    && !self.attempted.contains(&f.steam_id)
-                    && !self.cache.contains_key(&f.steam_id)
+                let stale = self.applied.get(&f.steam_id) == f.persona_name.as_ref()
+                    && self.is_stale(f.steam_id, now_unix);
+                !self.attempted.contains(&f.steam_id) && (lacks_name(f) || stale)
             })
             .map(|f| f.steam_id)
     }
+}
+
+/// Store path in the TUI cache dir.
+pub fn store_path() -> Option<PathBuf> {
+    crate::util::paths::cache_directory()
+        .ok()
+        .map(|d| d.join(STORE_FILE))
 }

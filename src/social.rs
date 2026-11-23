@@ -243,7 +243,14 @@ impl Browser {
 
     /// Per-tick social upkeep.
     pub fn poll_social(&mut self) {
+        let path = names::store_path();
+        if let Some(path) = &path {
+            self.social.names.load_once(path);
+        }
         self.poll_social_at(Instant::now(), true);
+        if let Some(path) = &path {
+            self.social.names.save_if_dirty(path);
+        }
     }
 
     /// Upkeep at `now`; `spawn` allows lookups.
