@@ -32,8 +32,8 @@ heavy lifting — authentication, library listing, downloads, and launching
 Aurelia TUI looks for the `aurelia` binary in this order:
 
 1. The `AURELIA_BIN` environment variable, if set (point it at a specific build).
-2. The path chosen in Settings (`p`, then `b`; empty means automatic), saved in
-   the TUI's `config.json`.
+2. The path chosen in Settings (`p`, then the "Aurelia binary" row; empty means
+   automatic), saved in the TUI's `config.json`.
 3. A sibling `Aurelia` checkout next to this project
    (`../Aurelia/target/release/` or `.../debug/`) — handy when developing both.
 4. `aurelia` on your `PATH`.
@@ -99,22 +99,24 @@ version. Press `?` any time for the full key list.
 | `Tab` / `Shift-Tab` | Cycle tabs |
 | `1`–`5` | Jump straight to a tab (`5` = Friends) |
 | `/` | Focus the live fuzzy filter (type to narrow, `Esc` clears) |
-| `s` | Cycle sort (name / installed-first) |
+| `s` | Cycle sort (name / installed-first / playtime) |
 | `Enter` | Open the Actions menu for the selected game |
-| `i` | Expand / collapse the description panel |
+| `i` | Expand / collapse the store details (`PgUp` / `PgDn` scroll them) |
 | `,ct` | Open the selected game’s HowLongToBeat page or retry a failed lookup |
-| `d` | Install / download (pick a library) |
+| `d` | Install (pick a library, platform and language) |
 | `Space` / `c` | Pause / resume, or cancel, an install |
-| `U` / `v` / `x` | Update, verify, or uninstall |
+| `B` | Install queue (pause, resume, stop, forget) |
+| `U` / `v` / `x` | Update, verify, or uninstall (optionally deleting the Wine prefix) |
 | `V` | Versions & pinning (downgrade to a manifest) |
 | `b` / `o` / `D` | Beta branches, depots, DLC |
 | `P` / `E` | Proton runtimes, runtime plugins (umu / luxtorpeda / Steam runtime) |
-| `C` / `W` / `a` / `I` | Cloud saves, Workshop, achievements, inventory |
+| `C` / `W` / `a` / `I` | Cloud saves (sync, up, down), Workshop, achievements, inventory |
 | `M` / `K` / `N` / `O` | Move, relink, import an install; collections |
 | `m` / `S` / `w` | Market listings, market search, wallet |
 | `R` | Running games |
 | `f` / `H` | Toggle favourite, hide the game |
-| `A` / `p` | Account, settings (HLTB, presence, proxy) |
+| `A` / `p` | Account, Settings |
+| `F` | Friends tab (chat, invite, profiles) |
 | `r` | Refresh the library from Steam |
 | `l` | Sign in again |
 | `?` | Toggle the help overlay |
@@ -123,15 +125,26 @@ version. Press `?` any time for the full key list.
 ### The Actions menu
 
 `Enter` opens a filterable command palette with every action that applies to the
-selected game — type to narrow it, `Enter` to run. Two entries live only here:
+selected game, grouped by topic — type to narrow it, `Enter` to run. Some entries
+live only here:
 
 - **Play as…** lists every way the game can be started (`aurelia
   launch-targets`): the native Linux build, or the Windows build with the in-Wine
-  Steam runtime, the host Steam client, or no Steam. Launching one applies to that
-  run only; unavailable targets say what's missing.
-- **Game settings** holds the per-game overrides: runner (auto / umu /
-  luxtorpeda), forced Proton, platform (auto / windows / linux), Steam runtime
-  (auto / on / off), Steam prefix (shared / per-game), and launch script.
+  Steam runtime, the host Steam client, or no Steam. `Enter` launches one for that
+  run only; `d` makes it your choice for Play, `a` goes back to automatic.
+  Unavailable targets say what's missing, and a missing Steam runtime can be
+  installed from here (`i`, asks first).
+- **Game settings** holds the per-game overrides: runner, forced Proton,
+  platform, Steam runtime, Steam prefix (each opens a picker), launch script,
+  Steam integration, launch options (Steam-style, `%command%` supported), a
+  custom Wine prefix, and Aurelia's per-game Steam Cloud switch.
+- **Change language** switches an installed game's language (Aurelia downloads
+  the language depots).
+- **Process Vulkan shaders** and **Play without shader processing**.
+- **Open on SteamDB**, **Aurelia log** (stderr of play, install and shader
+  runs), and **Reconnect Steam session**.
+
+Anything that downloads, deletes or changes your account asks for `y` first.
 
 Selecting a game fetches its details lazily — developer/publisher metadata
 (`aurelia info`), the ProtonDB compatibility tier, and cover art all load in the
@@ -148,6 +161,28 @@ a failed refresh. Failed lookups show `Fetch Failed`; press `,ct` to retry.
 See [HowLongToBeat](docs/HOWLONGTOBEAT.md) for matching,
 cache, and troubleshooting details. To disable HLTB lookups and hide its
 content, press `p`, then `h`; the setting is saved locally.
+
+### Settings
+
+`p` opens Settings: move with `j` / `k`, change a row with `Enter`. The TUI's own
+options (HowLongToBeat, syncing saves around Play, store language, `aurelia`
+binary) sit above Aurelia's (presence, profile wait, Steam Cloud sync, download
+limit, shader pre-caching, anti-cheat runtimes, proxy). Each row also has a
+shortcut letter, shown next to it.
+
+### Steam Cloud
+
+With "Sync saves around Play" on (the default), the TUI downloads a game's cloud
+saves before launch and uploads them after it exits, but never after a launch
+that failed to start. Conflicts ask whether to keep the cloud or the local copy.
+The list and detail pane show each game's last sync result.
+
+### Friends
+
+The Friends tab shows statuses, chat, game invites (`i`) and profiles (`p`, `m`
+for your own). While the Steam client runs on the same machine, Steam sends no
+friend names; the TUI then fills them in slowly in the background and remembers
+them between sessions.
 
 ## Features not in the help
 
@@ -173,8 +208,8 @@ field in the config to include any of `Game`, `DLC`, `Driver`, `Application`,
 
 | Path | Contents | Override |
 | --- | --- | --- |
-| `~/.config/aurelia-tui/` | `config.json` (favourites, hidden games, allowed types, highlight colour, HLTB preference) | `AURELIA_TUI_DIR` |
-| `~/.cache/aurelia-tui/` | cached library (`games.json`) | `AURELIA_TUI_CACHE_DIR` |
+| `~/.config/aurelia-tui/` | `config.json` (favourites, hidden games, allowed types, highlight colour, TUI settings, launch target choices, Steam integration), `pending_dlc.json` (DLC changes waiting for a Steam restart) | `AURELIA_TUI_DIR` |
+| `~/.cache/aurelia-tui/` | cached library (`games.json`), `cloud_sync_status.json`, `friend_names.json`, `aurelia.log` (rotated at 1 MiB) | `AURELIA_TUI_CACHE_DIR` |
 | `~/.cache/aurelia-tui/hltb/` | cached HowLongToBeat matches and completion times | `AURELIA_TUI_CACHE_DIR` (parent directory) |
 | `~/.cache/aurelia-tui/hltb/pcgamingwiki/` | cached Steam-to-HLTB page mappings | `AURELIA_TUI_CACHE_DIR` (parent directory) |
 | `~/.cache/aurelia-tui/icons/` | cached cover art | `AURELIA_TUI_ICON_DIR` |
