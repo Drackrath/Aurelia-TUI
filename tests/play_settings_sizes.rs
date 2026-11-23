@@ -329,6 +329,7 @@ fn protons_sort_naturally() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn default_resolves_through_symlink() {
     let names: Vec<String> = ["GE-Proton11-11", "Proton - Experimental"]
